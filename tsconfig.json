@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023"],
+    "declaration": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./build"
+  },
+  "include": [
+    "*.ts",
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "build",
+  ]
+}

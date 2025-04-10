@@ -1,0 +1,30 @@
+{
+  "name": "tuntap-bridge",
+  "version": "0.0.1-beta",
+  "description": "Native TUN/TAP interface module for Node.js",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "clean": " rm -rf build node_modules",
+    "build": "npm install && npx tsc"
+  },
+  "files": [
+    "build",
+    "build/Release/tuntap.node",
+    "package.json"
+  ],
+  "author": {
+    "name": "Sri Harsha",
+    "url": "https://github.com/harsha509"
+  },
+  "license": "MIT",
+  "gypfile": true,
+  "dependencies": {
+    "node-addon-api": "^8.3.1",
+    "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0"
+  }
+}
