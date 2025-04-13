@@ -1,6 +1,6 @@
 {
   "name": "tuntap-bridge",
-  "version": "0.0.1-beta",
+  "version": "0.0.3-beta",
   "description": "Native TUN/TAP interface module for Node.js",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -10,7 +10,9 @@
     "build": "npm install && npx tsc"
   },
   "files": [
+    "src",
     "build",
+    "binding.gyp",
     "build/Release/tuntap.node",
     "package.json"
   ],
