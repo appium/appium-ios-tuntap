@@ -9,14 +9,13 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "outDir": "./build"
+    "outDir": "./lib"
   },
   "include": [
     "*.ts",
     "src/**/*"
   ],
   "exclude": [
-    "node_modules",
-    "build",
+    "node_modules"
   ]
 }

@@ -14,7 +14,7 @@ interface NativeTuntapModule {
 }
 
 const require = createRequire(import.meta.url);
-const nativeTuntap = require('./Release/tuntap.node') as NativeTuntapModule;
+const nativeTuntap = require('../build/Release/tuntap.node') as NativeTuntapModule;
 
 const execPromise = promisify(exec);
 

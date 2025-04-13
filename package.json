@@ -1,19 +1,21 @@
 {
   "name": "tuntap-bridge",
-  "version": "0.0.3-beta",
+  "version": "0.0.12-beta",
   "description": "Native TUN/TAP interface module for Node.js",
-  "main": "build/index.js",
-  "types": "build/index.d.ts",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "type": "module",
   "scripts": {
-    "clean": " rm -rf build node_modules",
-    "build": "npm install && npx tsc"
+    "clean": "rm -rf build node_modules lib",
+    "build": "npx tsc",
+    "build:addon": "node-gyp rebuild",
+    "prepare": "npm run build:addon && npm run build"
   },
   "files": [
-    "src",
+    "src/tuntap.cc",
+    "lib",
     "build",
     "binding.gyp",
-    "build/Release/tuntap.node",
     "package.json"
   ],
   "author": {
