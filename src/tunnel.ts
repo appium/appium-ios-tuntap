@@ -238,18 +238,31 @@ export class TunnelManager extends EventEmitter {
     }
 
     stop(): void {
-        log(`Stopping tunnel manager for ${this.tun ? this.tun.name : 'unknown'}`);
+        const tunName = this.tun ? this.tun.name : 'unknown';
+        log(`Stopping tunnel manager for ${tunName}`);
+
+        // Signal cancellation
         this.cancelled = true;
 
+        // Clear read interval
         if (this.readInterval) {
             clearInterval(this.readInterval);
             this.readInterval = null;
         }
 
+        // Clear buffer
+        this.buffer = Buffer.alloc(0);
+
+        // Remove all listeners
+        this.removeAllListeners();
+
+        // Close TUN device
         if (this.tun) {
             this.tun.close();
             this.tun = null;
         }
+
+        log(`Tunnel for ${tunName} closed successfully`);
     }
 }
 
@@ -333,7 +346,7 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
     });
 }
 
-export async function connectToTunnelLockdown(ctx: any, secureServiceSocket: Socket): Promise<TunnelConnection> {
+export async function connectToTunnelLockdown(secureServiceSocket: Socket): Promise<TunnelConnection> {
     const tunnelManager = new TunnelManager();
 
     try {
