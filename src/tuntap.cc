@@ -4,10 +4,10 @@
 #include <string>
 #include <string.h>
 #include <errno.h>
+#include <sys/ioctl.h>
 
 #ifdef __APPLE__
 #include <sys/kern_control.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/sys_domain.h>
 #include <net/if_utun.h>
@@ -17,6 +17,7 @@
 #else
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#include <sys/stat.h>
 #endif
 
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
@@ -165,9 +166,22 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
 
 #else
   // Linux implementation using TUN/TAP
+  // First check if /dev/net/tun exists
+  struct stat statbuf;
+  if (stat("/dev/net/tun", &statbuf) != 0) {
+    std::string error = "TUN/TAP device not available: /dev/net/tun does not exist. ";
+    error += "Please ensure the TUN/TAP kernel module is loaded (modprobe tun).";
+    Napi::Error::New(env, error).ThrowAsJavaScriptException();
+    return Napi::Boolean::New(env, false);
+  }
+
   fd = open("/dev/net/tun", O_RDWR);
   if (fd < 0) {
-    Napi::Error::New(env, "Failed to open /dev/net/tun").ThrowAsJavaScriptException();
+    std::string error = "Failed to open /dev/net/tun: ";
+    error += strerror(errno);
+    error += ". This usually means you don't have sufficient permissions. ";
+    error += "Try running with sudo or add your user to the 'tun' group.";
+    Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return Napi::Boolean::New(env, false);
   }
 
@@ -183,9 +197,11 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   }
 
   if (ioctl(fd, TUNSETIFF, &ifr) < 0) {
+    std::string error = "Failed to configure TUN device: ";
+    error += strerror(errno);
     close(fd);
     fd = -1;
-    Napi::Error::New(env, "Failed to configure TUN device").ThrowAsJavaScriptException();
+    Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return Napi::Boolean::New(env, false);
   }
 
