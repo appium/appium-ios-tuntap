@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+        cache: 'npm'
+    
+    - name: Install Linux dependencies
+      run: |
+        sudo apt-get update
+        # Try to install specific kernel headers, fall back to generic if not available
+        if ! sudo apt-get install -y linux-headers-$(uname -r); then
+          echo "Specific kernel headers not found, installing generic headers"
+          sudo apt-get install -y linux-headers-generic
+        fi
+        # Install iproute2 for network configuration
+        sudo apt-get install -y iproute2
+        # Load the TUN module
+        sudo modprobe tun
+    
+    - name: Install npm dependencies
+      run: npm ci
+    
+    - name: Build native addon
+      run: npm run build:addon
+    
+    - name: Build TypeScript
+      run: npm run build
+    
+    - name: Check IPv6 configuration
+      run: |
+        echo "Checking IPv6 configuration..."
+        ip -6 addr
+        sysctl net.ipv6.conf.all.disable_ipv6
+        # Ensure IPv6 is enabled
+        sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+        sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
+        sudo sysctl -w net.ipv6.conf.lo.disable_ipv6=0
+    
+    - name: Run tests
+      run: |
+        # Check Linux prerequisites
+        sudo bash test/check-linux-prereqs.sh
+        
+        # Run the test with sudo
+        set +e  # Don't exit on error
+        sudo node test/test-tuntap.js
+        TEST_EXIT_CODE=$?
+        
+        # Collect diagnostic information if test fails
+        if [ $TEST_EXIT_CODE -ne 0 ]; then
+          echo "Test failed with exit code $TEST_EXIT_CODE"
+          echo "Collecting diagnostic information..."
+          sudo lsmod | grep tun
+          ls -la /dev/net/tun
+          ip link
+          ip -6 addr
+        fi
+        
+        exit $TEST_EXIT_CODE
