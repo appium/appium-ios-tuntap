@@ -9,14 +9,17 @@
     "clean": "rm -rf build node_modules lib",
     "build": "npx tsc",
     "build:addon": "node-gyp rebuild",
-    "prepare": "npm run build:addon && npm run build"
+    "prepare": "npm run build:addon && npm run build",
+    "test": "sudo node test/test-tuntap.js"
   },
   "files": [
     "src/tuntap.cc",
     "lib",
     "build",
     "binding.gyp",
-    "package.json"
+    "package.json",
+    "test",
+    "README.md"
   ],
   "author": {
     "name": "Sri Harsha",
@@ -29,6 +32,6 @@
     "typescript": "^5.8.3"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0"
+    "@types/node": "^22.15.2"
   }
 }
