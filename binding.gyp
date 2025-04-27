@@ -11,10 +11,15 @@
       ],
       "cflags!": [ "-fno-exceptions" ],
       "cflags_cc!": [ "-fno-exceptions" ],
+      "cflags_cc": [ "-Wno-vla-extension" ],
       "xcode_settings": {
         "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
         "CLANG_CXX_LIBRARY": "libc++",
-        "MACOSX_DEPLOYMENT_TARGET": "10.15"
+        "MACOSX_DEPLOYMENT_TARGET": "10.15",
+        "WARNING_CFLAGS": [
+          "-Wno-vla-extension",
+          "-Wno-error"
+        ]
       },
       "msvs_settings": {
         "VCCLCompilerTool": { "ExceptionHandling": 1 }

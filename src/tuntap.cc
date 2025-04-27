@@ -5,6 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include <vector>
 
 #ifdef __APPLE__
 #include <sys/kern_control.h>
@@ -249,9 +250,9 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
 #ifdef __APPLE__
   // On macOS, reads include a 4-byte protocol family prefix
   // We'll read the packet and then remove this prefix
-  uint8_t tmp_buffer[buffer_size + 4];
+  std::vector<uint8_t> tmp_buffer(buffer_size + 4);
 
-  ssize_t bytes_read = read(fd, tmp_buffer, buffer_size + 4);
+  ssize_t bytes_read = read(fd, tmp_buffer.data(), buffer_size + 4);
   if (bytes_read <= 0) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
       // No data available
@@ -264,7 +265,7 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
 
   // Skip the 4-byte protocol family header
   if (bytes_read > 4) {
-    memcpy(data, tmp_buffer + 4, bytes_read - 4);
+    memcpy(data, tmp_buffer.data() + 4, bytes_read - 4);
     return Napi::Buffer<uint8_t>::Copy(env, data, bytes_read - 4);
   } else {
     return Napi::Buffer<uint8_t>::New(env, 0);
@@ -306,13 +307,13 @@ Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
 #ifdef __APPLE__
   // On macOS, we need to prepend a 4-byte protocol family header
   // For IPv6, the protocol family is AF_INET6 (30 on macOS)
-  uint8_t tmp_buffer[length + 4];
+  std::vector<uint8_t> tmp_buffer(length + 4);
   uint32_t family = htonl(AF_INET6);
 
-  memcpy(tmp_buffer, &family, 4);
-  memcpy(tmp_buffer + 4, data, length);
+  memcpy(tmp_buffer.data(), &family, 4);
+  memcpy(tmp_buffer.data() + 4, data, length);
 
-  ssize_t bytes_written = write(fd, tmp_buffer, length + 4);
+  ssize_t bytes_written = write(fd, tmp_buffer.data(), length + 4);
   if (bytes_written < 0) {
     return Napi::Error::New(env, strerror(errno)).Value();
   }

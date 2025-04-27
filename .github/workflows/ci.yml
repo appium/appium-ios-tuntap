@@ -37,7 +37,10 @@ jobs:
       run: npm ci
     
     - name: Build native addon
-      run: npm run build:addon
+      run: |
+        # Set environment variable to treat warnings as non-fatal
+        export CXXFLAGS="-Wno-error"
+        npm run build:addon
     
     - name: Build TypeScript
       run: npm run build
