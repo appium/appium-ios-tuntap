@@ -1,10 +1,22 @@
 # TunTap Bridge
 
-A native TUN/TAP interface module for Node.js that works on both macOS and Linux.
+A native TUN/TAP interface module for Node.js that works on both macOS and Linux, with enhanced error handling, signal management, and thread safety.
 
 ## Description
 
 This module provides a Node.js interface to TUN/TAP virtual network devices, allowing you to create and manage network tunnels from JavaScript/TypeScript. It's useful for VPNs, network tunneling, and other network-related applications.
+
+## Features
+
+- **Cross-platform**: Works on macOS (utun) and Linux (TUN/TAP)
+- **TypeScript support**: Full TypeScript definitions included
+- **Signal handling**: Graceful shutdown on SIGINT/SIGTERM
+- **Thread safety**: Safe to use from multiple Node.js worker threads
+- **Resource management**: Automatic cleanup of file descriptors and network interfaces
+- **Enhanced error handling**: Custom error types for better debugging
+- **Input validation**: Validates IPv6 addresses, MTU ranges, and buffer sizes
+- **Performance optimized**: Built with C++17 and compiler optimizations
+- **Network statistics**: Get interface statistics (RX/TX bytes, packets, errors)
 
 ## Installation
 
@@ -78,6 +90,8 @@ On Linux, the module requires:
 
 ## Usage
 
+### Basic Usage
+
 ```javascript
 import { TunTap } from 'tuntap-bridge';
 
@@ -105,10 +119,105 @@ if (tun.open()) {
   const bytesWritten = tun.write(buffer);
   console.log(`Wrote ${bytesWritten} bytes`);
   
+  // Get interface statistics
+  const stats = await tun.getStats();
+  console.log('RX bytes:', stats.rxBytes);
+  console.log('TX bytes:', stats.txBytes);
+  
   // Close the device when done
   tun.close();
 }
 ```
+
+### Error Handling
+
+```javascript
+import { TunTap, TunTapError, TunTapPermissionError, TunTapDeviceError } from 'tuntap-bridge';
+
+try {
+  const tun = new TunTap();
+  tun.open();
+  await tun.configure('fe80::1', 1500);
+  // ... use the device ...
+  tun.close();
+} catch (err) {
+  if (err instanceof TunTapPermissionError) {
+    console.error('Permission denied. Please run with sudo.');
+  } else if (err instanceof TunTapDeviceError) {
+    console.error('Device error:', err.message);
+  } else if (err instanceof TunTapError) {
+    console.error('TUN/TAP error:', err.message);
+  } else {
+    console.error('Unexpected error:', err);
+  }
+}
+```
+
+### Tunnel Manager
+
+```javascript
+import { connectToTunnelLockdown } from 'tuntap-bridge';
+import { Socket } from 'net';
+
+// Create a socket connection to your tunnel endpoint
+const socket = new Socket();
+socket.connect(port, host, async () => {
+  try {
+    // Establish tunnel connection
+    const tunnel = await connectToTunnelLockdown(socket);
+    
+    console.log('Tunnel established:', tunnel.Address);
+    
+    // Add packet consumer
+    tunnel.addPacketConsumer({
+      onPacket: (packet) => {
+        console.log(`${packet.protocol} packet: ${packet.src}:${packet.sourcePort} → ${packet.dst}:${packet.destPort}`);
+      }
+    });
+    
+    // Or use async iteration
+    for await (const packet of tunnel.getPacketStream()) {
+      console.log('Received packet:', packet);
+    }
+    
+    // Close tunnel when done
+    await tunnel.closer();
+  } catch (err) {
+    console.error('Tunnel error:', err);
+  }
+});
+```
+
+## API Reference
+
+### TunTap Class
+
+#### Constructor
+- `new TunTap(name?: string)` - Create a new TUN/TAP device instance
+
+#### Methods
+- `open(): boolean` - Open the TUN device
+- `close(): boolean` - Close the TUN device
+- `read(maxSize?: number): Buffer` - Read data from the device (default: 4096 bytes)
+- `write(data: Buffer): number` - Write data to the device
+- `configure(address: string, mtu?: number): Promise<void>` - Configure IPv6 address and MTU
+- `addRoute(destination: string): Promise<void>` - Add a route to the device
+- `removeRoute(destination: string): Promise<void>` - Remove a route from the device
+- `getStats(): Promise<Stats>` - Get interface statistics
+
+#### Properties
+- `name: string` - The device name (e.g., 'utun0', 'tun0')
+- `fd: number` - The file descriptor of the device
+
+### Error Types
+
+- `TunTapError` - Base error class for all TUN/TAP errors
+- `TunTapPermissionError` - Thrown when there are permission issues
+- `TunTapDeviceError` - Thrown when the device is not available or cannot be opened
+
+### Signal Handling
+
+The module automatically handles SIGINT and SIGTERM signals for graceful shutdown. All open devices will be closed and network interfaces cleaned up when the process exits.
 
 ## Troubleshooting
 
@@ -133,6 +242,14 @@ if (tun.open()) {
 
 2. **"Could not find an available utun device"**: All utun devices are in use.
    - Solution: Close other applications that might be using utun devices.
+
+## Debug Mode
+
+Enable debug logging by running your application with the `--debug` flag:
+
+```bash
+node your-app.js --debug
+```
 
 ## License
 

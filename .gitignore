@@ -137,3 +137,4 @@ lib
 .pnp.*
 *.tgz
 .idea
+.DS_Store

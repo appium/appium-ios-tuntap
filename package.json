@@ -1,6 +1,6 @@
 {
   "name": "tuntap-bridge",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Native TUN/TAP interface module for Node.js",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -19,7 +19,8 @@
     "binding.gyp",
     "package.json",
     "test",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "author": {
     "name": "Sri Harsha",
@@ -32,6 +33,6 @@
     "typescript": "^5.8.3"
   },
   "devDependencies": {
-    "@types/node": "^22.15.2"
+    "@types/node": "^22.15.30"
   }
 }

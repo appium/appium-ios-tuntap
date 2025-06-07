@@ -38,6 +38,49 @@ export interface TunnelConnection {
     getPacketStream(): AsyncIterable<PacketData>;
 }
 
+// Global registry for active tunnel managers
+const activeTunnelManagers = new Set<TunnelManager>();
+
+// Setup process signal handlers
+let signalHandlersSetup = false;
+function setupSignalHandlers() {
+    if (signalHandlersSetup) return;
+    signalHandlersSetup = true;
+
+    const gracefulShutdown = async (signal: string) => {
+        log(`Received ${signal}, initiating graceful shutdown...`);
+        
+        // Copy the set to avoid modification during iteration
+        const managers = Array.from(activeTunnelManagers);
+        
+        // Stop all tunnel managers
+        await Promise.all(managers.map(manager => {
+            try {
+                return manager.stop();
+            } catch (err) {
+                console.error('Error stopping tunnel manager:', err);
+            }
+        }));
+
+        log('All tunnel managers stopped, exiting...');
+        process.exit(0);
+    };
+
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (err) => {
+        console.error('Uncaught exception:', err);
+        gracefulShutdown('uncaughtException').then(() => process.exit(1));
+    });
+    
+    // Handle unhandled promise rejections
+    process.on('unhandledRejection', (reason, promise) => {
+        console.error('Unhandled rejection at:', promise, 'reason:', reason);
+    });
+}
+
 export class TunnelManager extends EventEmitter {
     private tun: TunTap | null;
     private cancelled: boolean;
@@ -45,6 +88,8 @@ export class TunnelManager extends EventEmitter {
     private buffer: Buffer;
     private packetConsumers: Set<PacketConsumer>;
     private packetQueue: PacketData[];
+    private deviceConn: Socket | null;
+    private cleanupPromise: Promise<void> | null;
 
     constructor() {
         super();
@@ -54,6 +99,14 @@ export class TunnelManager extends EventEmitter {
         this.buffer = Buffer.alloc(0);
         this.packetConsumers = new Set();
         this.packetQueue = [];
+        this.deviceConn = null;
+        this.cleanupPromise = null;
+        
+        // Setup signal handlers on first tunnel manager creation
+        setupSignalHandlers();
+        
+        // Register this manager
+        activeTunnelManagers.add(this);
     }
 
     addPacketConsumer(consumer: PacketConsumer): void {
@@ -129,7 +182,11 @@ export class TunnelManager extends EventEmitter {
         } catch (err: any) {
             console.error(`Error setting up TUN interface: ${err.message}`);
             if (this.tun) {
-                this.tun.close();
+                try {
+                    this.tun.close();
+                } catch (closeErr) {
+                    console.error('Error closing TUN device:', closeErr);
+                }
                 this.tun = null;
             }
             throw err;
@@ -141,6 +198,8 @@ export class TunnelManager extends EventEmitter {
             console.error("TUN device is not set up");
             return;
         }
+        
+        this.deviceConn = deviceConn;
         log(`Starting bidirectional data forwarding for ${this.tun.name}`);
 
         // Handle data from the device connection
@@ -166,7 +225,7 @@ export class TunnelManager extends EventEmitter {
         // Listen for device connection close
         deviceConn.on('close', () => {
             log('Device connection closed, stopping tunnel');
-            this.stop();
+            this.stop().catch(err => console.error('Error stopping tunnel:', err));
         });
 
         deviceConn.on('error', (err: Error) => {
@@ -182,8 +241,9 @@ export class TunnelManager extends EventEmitter {
             // Extract IPv6 header (fixed 40 bytes)
             const header = this.buffer.slice(offset, offset + 40);
 
-            // Ensure this is an IPv6 packet
-            if (header[0] !== 0x60) {
+            // Ensure this is an IPv6 packet (version 6)
+            const version = (header[0] >> 4) & 0x0F;
+            if (version !== 6) {
                 offset++;
                 continue;
             }
@@ -208,7 +268,12 @@ export class TunnelManager extends EventEmitter {
             log(`Processing packet: nextHeader=${nextHeader}, totalLength=${40 + payloadLength}`);
 
             try {
-                const bytesWritten = this.tun!.write(packet);
+                if (!this.tun) {
+                    console.error('TUN device is null during packet processing');
+                    break;
+                }
+                
+                const bytesWritten = this.tun.write(packet);
                 log(`Device → TUN: ${bytesWritten} bytes, IPv6 src=${src}, dst=${dst}`);
 
                 // Handle UDP packets (nextHeader === 17)
@@ -230,7 +295,13 @@ export class TunnelManager extends EventEmitter {
                             payload: udpPayload
                         };
                         this.emit('data', packetData);
-                        this.packetConsumers.forEach(consumer => consumer.onPacket(packetData));
+                        this.packetConsumers.forEach(consumer => {
+                            try {
+                                consumer.onPacket(packetData);
+                            } catch (err) {
+                                console.error('Error in packet consumer:', err);
+                            }
+                        });
                         log('Emitted data event for UDP packet');
                     }
                 }
@@ -258,7 +329,13 @@ export class TunnelManager extends EventEmitter {
                                 payload: tcpPayload
                             };
                             this.emit('data', packetData);
-                            this.packetConsumers.forEach(consumer => consumer.onPacket(packetData));
+                            this.packetConsumers.forEach(consumer => {
+                                try {
+                                    consumer.onPacket(packetData);
+                                } catch (err) {
+                                    console.error('Error in packet consumer:', err);
+                                }
+                            });
                             log('Emitted data event for TCP packet');
                         }
                     }
@@ -295,7 +372,9 @@ export class TunnelManager extends EventEmitter {
                         log(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
                     }
 
-                    deviceConn.write(data);
+                    if (!deviceConn.destroyed) {
+                        deviceConn.write(data);
+                    }
                 }
             } catch (err: any) {
                 if (!this.cancelled) {
@@ -305,7 +384,17 @@ export class TunnelManager extends EventEmitter {
         }, 5); // Poll every 5ms
     }
 
-    stop(): void {
+    async stop(): Promise<void> {
+        // Prevent multiple concurrent stops
+        if (this.cleanupPromise) {
+            return this.cleanupPromise;
+        }
+
+        this.cleanupPromise = this._performStop();
+        return this.cleanupPromise;
+    }
+
+    private async _performStop(): Promise<void> {
         const tunName = this.tun ? this.tun.name : 'unknown';
         log(`Stopping tunnel manager for ${tunName}`);
 
@@ -318,17 +407,33 @@ export class TunnelManager extends EventEmitter {
             this.readInterval = null;
         }
 
+        // Close device connection if exists
+        if (this.deviceConn && !this.deviceConn.destroyed) {
+            this.deviceConn.destroy();
+            this.deviceConn = null;
+        }
+
         // Clear buffer
         this.buffer = Buffer.alloc(0);
+
+        // Clear packet consumers
+        this.packetConsumers.clear();
 
         // Remove all listeners
         this.removeAllListeners();
 
         // Close TUN device
         if (this.tun) {
-            this.tun.close();
+            try {
+                this.tun.close();
+            } catch (err) {
+                console.error('Error closing TUN device:', err);
+            }
             this.tun = null;
         }
+
+        // Unregister from active managers
+        activeTunnelManagers.delete(this);
 
         log(`Tunnel for ${tunName} closed successfully`);
     }
@@ -365,6 +470,16 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
 
         // For receiving the response
         let buffer = Buffer.alloc(0);
+        let timeoutHandle: NodeJS.Timeout;
+
+        function cleanup() {
+            socket.removeListener('data', handleData);
+            socket.removeListener('error', handleError);
+            socket.removeListener('end', handleEnd);
+            if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+            }
+        }
 
         function handleData(data: Buffer) {
             log("Received data chunk:", data.length, "bytes");
@@ -375,7 +490,7 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
             const receivedMagic = buffer.slice(0, 8).toString();
             if (receivedMagic !== 'CDTunnel') {
                 console.error("Invalid magic header:", receivedMagic);
-                socket.removeListener('data', handleData);
+                cleanup();
                 return reject(new Error("Invalid packet format"));
             }
 
@@ -389,28 +504,40 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
                 try {
                     const response = JSON.parse(payload.toString());
                     log("Parsed CDTunnel response:", response);
-                    socket.removeListener('data', handleData);
+                    cleanup();
                     resolve(response);
                 } catch (err) {
                     console.error("Failed to parse JSON:", err);
-                    socket.removeListener('data', handleData);
+                    cleanup();
                     reject(new Error("Invalid JSON response"));
                 }
             }
         }
 
-        socket.on('data', handleData);
-        socket.on('error', (err: Error) => {
+        function handleError(err: Error) {
             console.error("Socket error:", err);
+            cleanup();
             reject(err);
-        });
-        socket.on('end', () => {
+        }
+
+        function handleEnd() {
             log("Connection ended");
             if (buffer.length > 0) {
                 log("Buffer at end:", buffer.toString('hex'));
             }
+            cleanup();
             reject(new Error("Connection closed before receiving complete response"));
-        });
+        }
+
+        // Set a timeout for the handshake
+        timeoutHandle = setTimeout(() => {
+            cleanup();
+            reject(new Error("Tunnel handshake timeout"));
+        }, 30000); // 30 second timeout
+
+        socket.on('data', handleData);
+        socket.on('error', handleError);
+        socket.on('end', handleEnd);
     });
 }
 
@@ -432,13 +559,11 @@ export async function connectToTunnelLockdown(secureServiceSocket: Socket): Prom
         // Create close function
         const closeFunc = async () => {
             log("Closing tunnel connection");
-            tunnelManager.stop();
+            await tunnelManager.stop();
 
             if (!secureServiceSocket.destroyed) {
                 secureServiceSocket.end();
             }
-
-            return;
         };
 
         return {
@@ -452,7 +577,7 @@ export async function connectToTunnelLockdown(secureServiceSocket: Socket): Prom
         };
     } catch (err: any) {
         console.error("Failed to connect to tunnel:", err);
-        tunnelManager.stop();
+        await tunnelManager.stop();
         if (!secureServiceSocket.destroyed) {
             secureServiceSocket.end();
         }
