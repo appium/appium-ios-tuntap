@@ -15,11 +15,27 @@ interface TunnelInfo {
     serverRSDPort?: number;
 }
 
+export interface PacketData {
+    protocol: 'TCP' | 'UDP';
+    src: string;
+    dst: string;
+    sourcePort: number;
+    destPort: number;
+    payload: Buffer;
+}
+
+export interface PacketConsumer {
+    onPacket(packet: PacketData): void;
+}
+
 export interface TunnelConnection {
     Address: string;
     RsdPort?: number;
     tunnelManager: TunnelManager;
     closer: () => Promise<void>;
+    addPacketConsumer(consumer: PacketConsumer): void;
+    removePacketConsumer(consumer: PacketConsumer): void;
+    getPacketStream(): AsyncIterable<PacketData>;
 }
 
 export class TunnelManager extends EventEmitter {
@@ -27,6 +43,8 @@ export class TunnelManager extends EventEmitter {
     private cancelled: boolean;
     private readInterval: NodeJS.Timeout | null;
     private buffer: Buffer;
+    private packetConsumers: Set<PacketConsumer>;
+    private packetQueue: PacketData[];
 
     constructor() {
         super();
@@ -34,6 +52,52 @@ export class TunnelManager extends EventEmitter {
         this.cancelled = false;
         this.readInterval = null;
         this.buffer = Buffer.alloc(0);
+        this.packetConsumers = new Set();
+        this.packetQueue = [];
+    }
+
+    addPacketConsumer(consumer: PacketConsumer): void {
+        this.packetConsumers.add(consumer);
+    }
+
+    removePacketConsumer(consumer: PacketConsumer): void {
+        this.packetConsumers.delete(consumer);
+    }
+
+    async *getPacketStream(): AsyncIterable<PacketData> {
+        const queue: PacketData[] = [];
+        let resolver: ((value: IteratorResult<PacketData>) => void) | null = null;
+        
+        const consumer: PacketConsumer = {
+            onPacket: (packet) => {
+                if (resolver) {
+                    resolver({ value: packet, done: false });
+                    resolver = null;
+                } else {
+                    queue.push(packet);
+                }
+            }
+        };
+
+        this.addPacketConsumer(consumer);
+
+        try {
+            while (!this.cancelled) {
+                if (queue.length > 0) {
+                    yield queue.shift()!;
+                } else {
+                    yield await new Promise<PacketData>((resolve) => {
+                        resolver = (result) => {
+                            if (!result.done) {
+                                resolve(result.value);
+                            }
+                        };
+                    });
+                }
+            }
+        } finally {
+            this.removePacketConsumer(consumer);
+        }
     }
 
     async setupInterface(tunnelInfo: TunnelInfo): Promise<{ name: string; mtu: number; interface: TunTap }> {
@@ -157,14 +221,16 @@ export class TunnelManager extends EventEmitter {
                         const sourcePort = payload.readUInt16BE(0);
                         const destPort = payload.readUInt16BE(2);
                         const udpPayload = payload.slice(8);
-                        this.emit('data', {
+                        const packetData: PacketData = {
                             protocol: 'UDP',
                             src,
                             dst,
                             sourcePort,
                             destPort,
                             payload: udpPayload
-                        });
+                        };
+                        this.emit('data', packetData);
+                        this.packetConsumers.forEach(consumer => consumer.onPacket(packetData));
                         log('Emitted data event for UDP packet');
                     }
                 }
@@ -183,14 +249,16 @@ export class TunnelManager extends EventEmitter {
                         } else {
                             const tcpPayload = packet.slice(tcpHeaderStart + tcpHeaderLength);
                             log(`TCP packet detected: headerLength=${tcpHeaderLength}, payload length=${tcpPayload.length}`);
-                            this.emit('data', {
+                            const packetData: PacketData = {
                                 protocol: 'TCP',
                                 src,
                                 dst,
                                 sourcePort,
                                 destPort,
                                 payload: tcpPayload
-                            });
+                            };
+                            this.emit('data', packetData);
+                            this.packetConsumers.forEach(consumer => consumer.onPacket(packetData));
                             log('Emitted data event for TCP packet');
                         }
                     }
@@ -377,7 +445,10 @@ export async function connectToTunnelLockdown(secureServiceSocket: Socket): Prom
             Address: tunnelInfo.serverAddress,
             RsdPort: tunnelInfo.serverRSDPort,
             tunnelManager: tunnelManager,
-            closer: closeFunc
+            closer: closeFunc,
+            addPacketConsumer: (consumer: PacketConsumer) => tunnelManager.addPacketConsumer(consumer),
+            removePacketConsumer: (consumer: PacketConsumer) => tunnelManager.removePacketConsumer(consumer),
+            getPacketStream: () => tunnelManager.getPacketStream()
         };
     } catch (err: any) {
         console.error("Failed to connect to tunnel:", err);
