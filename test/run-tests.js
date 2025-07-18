@@ -7,7 +7,8 @@ const __dirname = path.dirname(__filename);
 
 const runTestFile = (file) => {
     return new Promise((resolve, reject) => {
-        const testProcess = spawn('sudo', ['mocha', path.resolve(__dirname, file)], {
+        const mochaPath = path.resolve(__dirname, '..', 'node_modules', '.bin', 'mocha');
+        const testProcess = spawn('sudo', [mochaPath, path.resolve(__dirname, file)], {
             stdio: 'inherit',
             shell: true
         });
