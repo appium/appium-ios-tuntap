@@ -59,9 +59,9 @@ jobs:
       run: |
         # Check Linux prerequisites
         sudo bash test/check-linux-prereqs.sh
-
-        # Run all Mocha tests with sudo
-        sudo npx mocha || {
+        
+        # Run all Mocha tests
+        sudo $(which npm) test || {
           echo "Mocha tests failed. Collecting diagnostic information..."
           sudo lsmod | grep tun
           ls -la /dev/net/tun
