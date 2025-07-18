@@ -10,7 +10,7 @@
     "build": "npx tsc",
     "build:addon": "node-gyp rebuild",
     "prepare": "npm run build:addon && npm run build",
-    "test": "sudo node test/test-tuntap.js"
+    "test": "sudo mocha test/*.spec.js"
   },
   "files": [
     "src/tuntap.cc",
@@ -35,6 +35,7 @@
     "typescript": "^5.8.3"
   },
   "devDependencies": {
-    "@types/node": "^22.15.30"
+    "@types/node": "^22.15.30",
+    "mocha": "^10.0.0"
   }
 }
