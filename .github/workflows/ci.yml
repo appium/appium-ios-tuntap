@@ -59,20 +59,13 @@ jobs:
       run: |
         # Check Linux prerequisites
         sudo bash test/check-linux-prereqs.sh
-        
-        # Run the test with sudo
-        set +e  # Don't exit on error
-        sudo node test/test-tuntap.js
-        TEST_EXIT_CODE=$?
-        
-        # Collect diagnostic information if test fails
-        if [ $TEST_EXIT_CODE -ne 0 ]; then
-          echo "Test failed with exit code $TEST_EXIT_CODE"
-          echo "Collecting diagnostic information..."
+
+        # Run all Mocha tests with sudo
+        sudo npx mocha || {
+          echo "Mocha tests failed. Collecting diagnostic information..."
           sudo lsmod | grep tun
           ls -la /dev/net/tun
           ip link
           ip -6 addr
-        fi
-        
-        exit $TEST_EXIT_CODE
+          exit 1
+        }

@@ -30,45 +30,32 @@ static std::atomic<bool> g_shutdown_requested(false);
 static std::mutex g_devices_mutex;
 static std::vector<class TunDevice*> g_active_devices;
 
-// Signal handler
-static void signal_handler(int sig) {
-  if (sig == SIGINT || sig == SIGTERM) {
-    g_shutdown_requested.store(true);
-    
-    // Close all active devices
-    std::lock_guard<std::mutex> lock(g_devices_mutex);
-    for (auto device : g_active_devices) {
-      if (device) {
-        // This will be handled in the device's close method
-      }
-    }
-  }
-}
+static void signal_handler(int sig);
 
 // RAII wrapper for file descriptors
 class FileDescriptor {
 private:
   int fd_;
-  
+
 public:
   FileDescriptor() : fd_(-1) {}
   explicit FileDescriptor(int fd) : fd_(fd) {}
-  
+
   ~FileDescriptor() {
     if (fd_ >= 0) {
       ::close(fd_);
     }
   }
-  
+
   // Disable copy
   FileDescriptor(const FileDescriptor&) = delete;
   FileDescriptor& operator=(const FileDescriptor&) = delete;
-  
+
   // Enable move
   FileDescriptor(FileDescriptor&& other) noexcept : fd_(other.fd_) {
     other.fd_ = -1;
   }
-  
+
   FileDescriptor& operator=(FileDescriptor&& other) noexcept {
     if (this != &other) {
       if (fd_ >= 0) {
@@ -79,17 +66,17 @@ public:
     }
     return *this;
   }
-  
+
   int get() const { return fd_; }
-  
+
   int release() {
     int temp = fd_;
     fd_ = -1;
     return temp;
   }
-  
+
   bool is_valid() const { return fd_ >= 0; }
-  
+
   void reset(int fd = -1) {
     if (fd_ >= 0) {
       ::close(fd_);
@@ -97,6 +84,8 @@ public:
     fd_ = fd;
   }
 };
+
+#include <uv.h>
 
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
 public:
@@ -108,25 +97,55 @@ private:
   static Napi::FunctionReference constructor;
   static std::once_flag signal_handler_flag;
 
+public:
+  void CloseInternal();
+
+private:
   Napi::Value Open(const Napi::CallbackInfo& info);
   Napi::Value Close(const Napi::CallbackInfo& info);
   Napi::Value Read(const Napi::CallbackInfo& info);
   Napi::Value Write(const Napi::CallbackInfo& info);
   Napi::Value GetName(const Napi::CallbackInfo& info);
   Napi::Value GetFd(const Napi::CallbackInfo& info);
+  Napi::Value StartPolling(const Napi::CallbackInfo& info);
 
   FileDescriptor fd_;
   std::string name_;
   std::atomic<bool> is_open_;
   std::mutex device_mutex_;
-  
+
+  uv_poll_t* poll_handle_ = nullptr;
+  Napi::ThreadSafeFunction tsfn_;
+
   void RegisterDevice();
   void UnregisterDevice();
-  void CloseInternal();
+  void StopPolling();
+  static void PollCallback(uv_poll_t* handle, int status, int events);
 };
 
 Napi::FunctionReference TunDevice::constructor;
 std::once_flag TunDevice::signal_handler_flag;
+
+// Signal handler definition
+static void signal_handler(int sig) {
+  if (sig == SIGINT || sig == SIGTERM) {
+    g_shutdown_requested.store(true);
+
+    // Close all active devices
+    std::lock_guard<std::mutex> lock(g_devices_mutex);
+    for (auto device : g_active_devices) {
+      if (device) {
+        device->CloseInternal();
+      }
+    }
+
+    // Stop the default libuv event loop
+    uv_stop(uv_default_loop());
+
+    // As a last resort, force exit if process is still alive after cleanup
+    _exit(0);
+  }
+}
 
 Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
   Napi::HandleScope scope(env);
@@ -144,6 +163,7 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("write", &TunDevice::Write),
     InstanceMethod("getName", &TunDevice::GetName),
     InstanceMethod("getFd", &TunDevice::GetFd),
+    InstanceMethod("startPolling", &TunDevice::StartPolling),
   });
 
   constructor = Napi::Persistent(func);
@@ -184,6 +204,7 @@ void TunDevice::UnregisterDevice() {
 void TunDevice::CloseInternal() {
   std::lock_guard<std::mutex> lock(device_mutex_);
   if (is_open_.exchange(false)) {
+    StopPolling(); // Ensure polling and threadsafe function are released
     fd_.reset();
   }
 }
@@ -334,7 +355,7 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
     Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return Napi::Boolean::New(env, false);
   }
-  
+
   if (fcntl(temp_fd.get(), F_SETFL, flags | O_NONBLOCK) < 0) {
     std::string error = "Failed to set non-blocking mode: ";
     error += strerror(errno);
@@ -345,15 +366,16 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   // Transfer ownership to member variable
   fd_ = std::move(temp_fd);
   is_open_ = true;
-  
+
   // Register this device for signal handling
   RegisterDevice();
-  
+
   return Napi::Boolean::New(env, true);
 }
 
 Napi::Value TunDevice::Close(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
+  StopPolling();
   CloseInternal();
   return Napi::Boolean::New(env, true);
 }
@@ -491,6 +513,63 @@ Napi::Value TunDevice::GetName(const Napi::CallbackInfo& info) {
 Napi::Value TunDevice::GetFd(const Napi::CallbackInfo& info) {
   std::lock_guard<std::mutex> lock(device_mutex_);
   return Napi::Number::New(info.Env(), fd_.get());
+}
+
+Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (!is_open_ || !fd_.is_valid()) {
+    Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  if (!info[0].IsFunction()) {
+    Napi::TypeError::New(env, "Expected function as first argument").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  StopPolling();
+
+  tsfn_ = Napi::ThreadSafeFunction::New(
+    env,
+    info[0].As<Napi::Function>(),
+    "TunDeviceDataCallback",
+    0,
+    1
+  );
+
+  poll_handle_ = new uv_poll_t;
+  uv_poll_init(uv_default_loop(), poll_handle_, fd_.get());
+  poll_handle_->data = this;
+  uv_poll_start(poll_handle_, UV_READABLE, PollCallback);
+
+  return env.Undefined();
+}
+
+void TunDevice::StopPolling() {
+  if (poll_handle_) {
+    uv_poll_stop(poll_handle_);
+    delete poll_handle_;
+    poll_handle_ = nullptr;
+  }
+  if (tsfn_) {
+    tsfn_.Release();
+    tsfn_ = nullptr;
+  }
+}
+
+void TunDevice::PollCallback(uv_poll_t* handle, int status, int events) {
+  if (status < 0 || !(events & UV_READABLE)) {
+    return;
+  }
+  TunDevice* self = static_cast<TunDevice*>(handle->data);
+  if (!self || !self->is_open_ || !self->fd_.is_valid()) return;
+
+  // Read data
+  std::vector<uint8_t> buffer(4096);
+  ssize_t bytes_read = read(self->fd_.get(), buffer.data(), buffer.size());
+  if (bytes_read > 0) {
+    self->tsfn_.BlockingCall([data = std::move(buffer), bytes_read](Napi::Env env, Napi::Function jsCallback) {
+      jsCallback.Call({ Napi::Buffer<uint8_t>::Copy(env, data.data(), bytes_read) });
+    });
+  }
 }
 
 // Module initialization
