@@ -66,7 +66,7 @@ export class TunTap {
         };
         
         process.once('exit', cleanup);
-        process.once('SIGINT', () => { cleanup(); process.exit(0); });
+        process.once('SIGINT', cleanup);
         process.once('SIGTERM', cleanup);
         
         this.cleanupHandlers.push(() => {
