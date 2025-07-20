@@ -3,6 +3,7 @@ import { TunTap } from "../lib/index.js";
 import { spawn } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+import { isRoot } from "./utils.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -10,16 +11,13 @@ describe("TunTap Integration Tests", function () {
   let tun;
 
   before(function () {
-    if (typeof process.getuid === "function" && process.getuid() !== 0) {
-      this.skip();
+    if (!isRoot()) {
+      this.skip("Must be run as root");
     }
   });
 
 describe("TunTap CLI Utility Signal Handling", function () {
   it("should exit promptly and clean up on SIGINT", function (done) {
-    if (typeof process.getuid === "function" && process.getuid() !== 0) {
-      this.skip();
-    }
     this.timeout(10000);
 
     const cliPath = path.resolve(__dirname, "test-tuntap.mjs");

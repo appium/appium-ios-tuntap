@@ -1,5 +1,6 @@
 import assert from "assert";
 import { TunTap } from "../lib/index.js";
+import { isRoot } from "./utils.mjs";
 
 /**
  * NOTE: Most TunTap tests require root privileges (sudo) to run.
@@ -8,11 +9,10 @@ import { TunTap } from "../lib/index.js";
 
 describe("TunTap Unit Tests", function () {
   let tun;
-  let isRoot = typeof process.getuid === "function" ? process.getuid() === 0 : false;
 
   before(function () {
-    if (!isRoot) {
-      this.skip(); // Skip all tests if not running as root
+    if (!isRoot()) {
+      this.skip("Must be run as root");
     }
   });
 
