@@ -21,7 +21,7 @@ This module provides a Node.js interface to TUN/TAP virtual network devices, all
 ## Installation
 
 ```bash
-npm install tuntap-bridge
+npm install appium-ios-tuntap
 ```
 
 ## Prerequisites
