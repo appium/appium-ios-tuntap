@@ -3,15 +3,22 @@ import { TunTap } from "../lib/index.js";
 let tun;
 let shuttingDown = false;
 
+/**
+ * Cleanup function to close the TUN/TAP device.
+ * Uses a flag to ensure cleanup is only performed once.
+ */
 function cleanup() {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
-    tun?.isOpen && !tun.isClosed && tun.close();
-  } catch {}
+    // Only close if tun exists, is open, and not already closed
+    if (tun && tun.isOpen && !tun.isClosed) {
+      tun.close();
+    }
+  } catch (err) {
+    console.error("Error during cleanup:", err);
+  }
 }
-
-process.on("exit", cleanup);
 
 // Handle signals and exit
 function cleanupAndExit() {
@@ -31,8 +38,9 @@ async function main() {
   // Print the expected output for the test to detect
   console.log("Step 4: Testing read/write");
 
-  // Wait indefinitely until SIGINT is received
-  setInterval(() => {}, 1000);
+  while (tun.isOpen) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 main();
