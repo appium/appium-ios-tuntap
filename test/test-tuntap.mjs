@@ -3,16 +3,19 @@ import { TunTap } from "../lib/index.js";
 let tun;
 let shuttingDown = false;
 
-function cleanupAndExit() {
+function cleanup() {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
-    if (tun && tun.isOpen && !tun.isClosed) {
-      tun.close();
-    }
-  } catch (e) {
-    // Ignore errors during cleanup
-  }
+    tun?.isOpen && !tun.isClosed && tun.close();
+  } catch {}
+}
+
+process.on("exit", cleanup);
+
+// Handle signals and exit
+function cleanupAndExit() {
+  cleanup();
   process.exit(0);
 }
 
@@ -32,7 +35,4 @@ async function main() {
   setInterval(() => {}, 1000);
 }
 
-main().catch((err) => {
-  console.error("Error in test-tuntap.js:", err);
-  process.exit(1);
-});
+main();

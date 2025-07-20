@@ -22,7 +22,7 @@ describe("TunTap CLI Utility Signal Handling", function () {
     }
     this.timeout(10000);
 
-    const cliPath = path.resolve(__dirname, "test-tuntap.js");
+    const cliPath = path.resolve(__dirname, "test-tuntap.mjs");
     const child = spawn("node", [cliPath], { stdio: ["ignore", "pipe", "pipe"] });
 
     let started = false;

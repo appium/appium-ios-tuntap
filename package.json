@@ -10,7 +10,9 @@
     "build": "npx tsc",
     "build:addon": "node-gyp rebuild",
     "prepare": "npm run build:addon && npm run build",
-    "test": "node test/run-tests.js"
+    "test": "sudo npm run test:integration && npm run test:unit",
+    "test:unit": "sudo mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
+    "test:integration": "sudo mocha 'test/tuntap-integration.spec.mjs' --exit --timeout 2m"
   },
   "files": [
     "src/tuntap.cc",
