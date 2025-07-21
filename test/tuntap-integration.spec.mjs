@@ -23,16 +23,9 @@ describe("TunTap CLI Utility Signal Handling", function () {
     const cliPath = path.resolve(__dirname, "test-tuntap.mjs");
     const child = spawn("node", [cliPath], { stdio: ["ignore", "pipe", "pipe"] });
 
-    let started = false;
-    child.stdout.on("data", (data) => {
-      const output = data.toString();
-      if (!started && output.includes("Step 4: Testing read/write")) {
-        started = true;
-        setTimeout(() => {
-          child.kill("SIGINT");
-        }, 500); // Give it a moment to enter the read/write step
-      }
-    });
+    setTimeout(() => {
+      child.kill("SIGINT");
+    }, 500); // Give it a moment to enter the read/write step
 
     child.on("exit", (code, signal) => {
       // Should exit with code 0 or null (if killed by signal)

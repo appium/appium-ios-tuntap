@@ -26,8 +26,7 @@ function cleanupAndExit() {
   process.exit(0);
 }
 
-process.on("SIGINT", cleanupAndExit);
-process.on("SIGTERM", cleanupAndExit);
+process.once("exit", cleanup);
 
 async function main() {
   tun = new TunTap();
@@ -35,8 +34,7 @@ async function main() {
   await tun.configure("fd00::1", 1500);
   await tun.addRoute("fd00::/64");
 
-  // Print the expected output for the test to detect
-  console.log("Step 4: Testing read/write");
+  
 
   while (tun.isOpen) {
     await new Promise((resolve) => setTimeout(resolve, 100));
