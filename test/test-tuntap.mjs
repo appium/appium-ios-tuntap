@@ -20,12 +20,6 @@ function cleanup() {
   }
 }
 
-// Handle signals and exit
-function cleanupAndExit() {
-  cleanup();
-  process.exit(0);
-}
-
 process.once("exit", cleanup);
 
 async function main() {
@@ -33,8 +27,6 @@ async function main() {
   tun.open();
   await tun.configure("fd00::1", 1500);
   await tun.addRoute("fd00::/64");
-
-  
 
   while (tun.isOpen) {
     await new Promise((resolve) => setTimeout(resolve, 100));
