@@ -1,3 +1,9 @@
+## [0.0.4](https://github.com/appium/appium-ios-tuntap/compare/v0.0.3...v0.0.4) (2025-07-22)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @types/node from 22.16.5 to 24.1.0 ([#9](https://github.com/appium/appium-ios-tuntap/issues/9)) ([60a0d4b](https://github.com/appium/appium-ios-tuntap/commit/60a0d4beb1e36b4ccbf73a0cacda1179df75c834))
+
 ## [0.0.3](https://github.com/appium/appium-ios-tuntap/compare/v0.0.2...v0.0.3) (2025-07-22)
 
 ### Bug Fixes
