@@ -1,3 +1,9 @@
+## [0.0.3](https://github.com/appium/appium-ios-tuntap/compare/v0.0.2...v0.0.3) (2025-07-22)
+
+### Bug Fixes
+
+* ensure clean shutdown and resource release on SIGINT (Ctrl+C) ([#1](https://github.com/appium/appium-ios-tuntap/issues/1)) ([d527960](https://github.com/appium/appium-ios-tuntap/commit/d5279605ac30a253382cbcd932926edd5dc285a2))
+
 ## [0.0.2](https://github.com/appium/appium-ios-tuntap/compare/v0.0.1...v0.0.2) (2025-07-22)
 
 ### Miscellaneous Chores
