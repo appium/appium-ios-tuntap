@@ -63,38 +63,39 @@ describe('TunTap CLI Utility Signal Handling', function () {
     assert.strictEqual(tun.close(), true, 'TUN device should close');
   });
 
-  it('should read and write data (simulate traffic)', async function (done) {
+  it('should read and write data (simulate traffic)', async function () {
     tun = new TunTap();
     assert.strictEqual(tun.open(), true, 'TUN device should open');
     await tun.configure('fd00::1', 1500);
+    await new Promise((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      let readCount = 0;
+      const timeout = setTimeout(() => {
+        // No data received, this is normal if no traffic is sent
+        tun.close();
+        return resolve();
+      }, 3000);
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    let readCount = 0;
-    const timeout = setTimeout(() => {
-      // No data received, this is normal if no traffic is sent
-      tun.close();
-      done();
-    }, 3000);
-
-    const interval = setInterval(() => {
-      try {
-        const data = tun.read(4096);
-        if (data && data.length > 0) {
-          readCount++;
-          const bytesWritten = tun.write(data);
-          assert.strictEqual(bytesWritten, data.length, 'Should echo back same number of bytes');
+      const interval = setInterval(() => {
+        try {
+          const data = tun.read(4096);
+          if (data && data.length > 0) {
+            readCount++;
+            const bytesWritten = tun.write(data);
+            assert.strictEqual(bytesWritten, data.length, 'Should echo back same number of bytes');
+            clearTimeout(timeout);
+            clearInterval(interval);
+            tun.close();
+            return resolve();
+          }
+        } catch (err) {
           clearTimeout(timeout);
           clearInterval(interval);
           tun.close();
-          done();
+          return reject(err);
         }
-      } catch (err) {
-        clearTimeout(timeout);
-        clearInterval(interval);
-        tun.close();
-        done(err);
-      }
-    }, 100);
+      }, 100);
+    });
   });
 
   it('should fail to open an already closed device', function () {
