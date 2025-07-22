@@ -9,6 +9,8 @@
     "clean": "rm -rf build node_modules lib",
     "build": "npx tsc",
     "build:addon": "node-gyp rebuild",
+    "lint": "eslint .",
+    "lint:fix": "npm run lint -- --fix",
     "prepare": "npm run build:addon && npm run build",
     "test": "sudo npm run test:integration && npm run test:unit",
     "test:unit": "sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
@@ -43,6 +45,8 @@
     "typescript": "^5.8.3"
   },
   "devDependencies": {
+    "@appium/eslint-config-appium-ts": "^1.0.0",
+    "@appium/support": "^6.0.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
     "@types/node": "^22.15.30",

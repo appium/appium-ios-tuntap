@@ -1,4 +1,5 @@
-import { TunTap } from "../lib/index.js";
+import { TunTap } from '../lib/index.js';
+import { log } from '../lib/logger.js';
 
 let tun;
 let shuttingDown = false;
@@ -8,7 +9,7 @@ let shuttingDown = false;
  * Uses a flag to ensure cleanup is only performed once.
  */
 function cleanup() {
-  if (shuttingDown) return;
+  if (shuttingDown) {return;}
   shuttingDown = true;
   try {
     // Only close if tun exists, is open, and not already closed
@@ -16,17 +17,17 @@ function cleanup() {
       tun.close();
     }
   } catch (err) {
-    console.error("Error during cleanup:", err);
+    log.error('Error during cleanup:', err);
   }
 }
 
-process.once("exit", cleanup);
+process.once('exit', cleanup);
 
 async function main() {
   tun = new TunTap();
   tun.open();
-  await tun.configure("fd00::1", 1500);
-  await tun.addRoute("fd00::/64");
+  await tun.configure('fd00::1', 1500);
+  await tun.addRoute('fd00::/64');
 
   while (tun.isOpen) {
     await new Promise((resolve) => setTimeout(resolve, 100));
