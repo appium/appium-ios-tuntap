@@ -33,6 +33,9 @@ jobs:
       # "--no-package-lock" prevent adding dev dependencies in the shrinkwrap
     - run: npm install --only=dev --no-package-lock
       name: Install dev dependencies for the release
+
+    - run: find . -type f -links +1
+
     - run: npx semantic-release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
