@@ -1,3 +1,9 @@
+## [0.0.2](https://github.com/appium/appium-ios-tuntap/compare/v0.0.1...v0.0.2) (2025-07-22)
+
+### Miscellaneous Chores
+
+* update changelog to release it ([4e8fe0a](https://github.com/appium/appium-ios-tuntap/commit/4e8fe0a610a908c2f3a56bff7031f7580eb011c1))
+
 ## [0.0.1] - [2025-07-22]
 
 ### Features
