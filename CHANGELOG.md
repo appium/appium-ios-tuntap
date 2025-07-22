@@ -1,3 +1,21 @@
+## 1.0.0 (2025-07-22)
+
+### Features
+
+* add packet streaming api instead of eventEmitter ([8c4df4b](https://github.com/appium/appium-ios-tuntap/commit/8c4df4bace59c2b29a567e2f9c81b1737500c42b))
+
+### Bug Fixes
+
+* add proper headers for linux ([967ea00](https://github.com/appium/appium-ios-tuntap/commit/967ea007b198f77f7e3aaaa1489dc5a0977bc5e6))
+* add test to ci ([8753e01](https://github.com/appium/appium-ios-tuntap/commit/8753e0109f0ad4120ac4db1318c103fc2be0f7c7))
+
+### Miscellaneous Chores
+
+* add semantics release ([#7](https://github.com/appium/appium-ios-tuntap/issues/7)) ([a52b2e6](https://github.com/appium/appium-ios-tuntap/commit/a52b2e6010e99f1e5518726a93b313efab6475fb))
+* **release:** bump version to 0.0.2 ([ed690cf](https://github.com/appium/appium-ios-tuntap/commit/ed690cfcc56c22a33cfc303960b46091619fe7e1))
+* **release:** initial release of tuntap-bridge npm package v0.0.1 ([0b68aea](https://github.com/appium/appium-ios-tuntap/commit/0b68aeaae2af9d0a7af386055f3667b6826c6d22))
+* turn release ([#8](https://github.com/appium/appium-ios-tuntap/issues/8)) ([3efc5a4](https://github.com/appium/appium-ios-tuntap/commit/3efc5a4eb7cb4e4f59daffb2623ead811292fa69))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
