@@ -21,7 +21,7 @@ This module provides a Node.js interface to TUN/TAP virtual network devices, all
 ## Installation
 
 ```bash
-npm install tuntap-bridge
+npm install appium-ios-tuntap
 ```
 
 ## Prerequisites
@@ -93,7 +93,7 @@ On Linux, the module requires:
 ### Basic Usage
 
 ```javascript
-import { TunTap } from 'tuntap-bridge';
+import { TunTap } from 'appium-ios-tuntap';
 
 // Create a TUN device
 const tun = new TunTap();
@@ -132,7 +132,7 @@ if (tun.open()) {
 ### Error Handling
 
 ```javascript
-import { TunTap, TunTapError, TunTapPermissionError, TunTapDeviceError } from 'tuntap-bridge';
+import { TunTap, TunTapError, TunTapPermissionError, TunTapDeviceError } from 'appium-ios-tuntap';
 
 try {
   const tun = new TunTap();
@@ -156,7 +156,7 @@ try {
 ### Tunnel Manager
 
 ```javascript
-import { connectToTunnelLockdown } from 'tuntap-bridge';
+import { connectToTunnelLockdown } from 'appium-ios-tuntap';
 import { Socket } from 'net';
 
 // Create a socket connection to your tunnel endpoint
