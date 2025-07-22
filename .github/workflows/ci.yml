@@ -48,7 +48,7 @@ jobs:
         sudo modprobe tun
 
     - name: Install npm dependencies
-      run: npm ci
+      run: npm install
 
     - name: Build native addon
       run: |
