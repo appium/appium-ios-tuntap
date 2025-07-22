@@ -1,6 +1,6 @@
 {
   "name": "appium-ios-tuntap",
-  "version": "0.0.4",
+  "version": "0.0.2",
   "description": "Native TUN/TAP interface module for Node.js",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -20,7 +20,6 @@
     "build",
     "binding.gyp",
     "package.json",
-    "test",
     "README.md",
     "!.DS_Store",
     "CHANGELOG.md",
@@ -30,7 +29,14 @@
     "name": "Appium Contributors",
     "url": "https://github.com/appium/appium-ios-tuntap"
   },
-  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/appium/appium-ios-tuntap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/appium/appium-ios-tuntap/issues"
+  },
+  "license": "Apache-2.0",
   "gypfile": true,
   "dependencies": {
     "node-addon-api": "^8.5.0",
@@ -38,13 +44,9 @@
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/git": "^10.0.1",
-    "@semantic-release/github": "^11.0.3",
-    "@semantic-release/npm": "^12.0.2",
-    "@semantic-release/release-notes-generator": "^14.0.3",
     "@types/node": "^22.15.30",
-    "mocha": "^10.0.0",
-    "semantic-release": "^24.2.7"
+    "conventional-changelog-conventionalcommits": "^9.0.0",
+    "semantic-release": "^24.0.0"
   }
 }
