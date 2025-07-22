@@ -39,10 +39,10 @@ On Linux, the module requires:
    ```bash
    # Check if the module is loaded
    lsmod | grep tun
-   
+
    # If not loaded, load it
    sudo modprobe tun
-   
+
    # To load it automatically at boot
    echo "tun" | sudo tee -a /etc/modules
    ```
@@ -52,10 +52,10 @@ On Linux, the module requires:
    ```bash
    # Option 1: Run your application with sudo
    sudo node your-app.js
-   
+
    # Option 2: Add your user to the 'tun' group (if it exists)
    sudo usermod -a -G tun your-username
-   
+
    # Option 3: Create a udev rule to set permissions
    echo 'KERNEL=="tun", GROUP="your-username", MODE="0660"' | sudo tee /etc/udev/rules.d/99-tuntap.rules
    sudo udevadm control --reload-rules
@@ -67,10 +67,10 @@ On Linux, the module requires:
    ```bash
    # Debian/Ubuntu
    sudo apt install iproute2
-   
+
    # CentOS/RHEL
    sudo yum install iproute
-   
+
    # Arch Linux
    sudo pacman -S iproute2
    ```
@@ -80,10 +80,10 @@ On Linux, the module requires:
    ```bash
    # Debian/Ubuntu
    sudo apt install linux-headers-$(uname -r)
-   
+
    # CentOS/RHEL
    sudo yum install kernel-devel
-   
+
    # Arch Linux
    sudo pacman -S linux-headers
    ```
@@ -101,29 +101,29 @@ const tun = new TunTap();
 // Open the device
 if (tun.open()) {
   console.log(`Opened TUN device: ${tun.name}`);
-  
+
   // Configure the device with an IPv6 address and MTU
   await tun.configure('fd00::1', 1500);
-  
+
   // Add a route
   await tun.addRoute('fd00::/64');
-  
+
   // Read from the device
   const data = tun.read(4096);
   if (data.length > 0) {
     console.log(`Read ${data.length} bytes`);
   }
-  
+
   // Write to the device
   const buffer = Buffer.from([/* your packet data */]);
   const bytesWritten = tun.write(buffer);
   console.log(`Wrote ${bytesWritten} bytes`);
-  
+
   // Get interface statistics
   const stats = await tun.getStats();
   console.log('RX bytes:', stats.rxBytes);
   console.log('TX bytes:', stats.txBytes);
-  
+
   // Close the device when done
   tun.close();
 }
@@ -165,21 +165,21 @@ socket.connect(port, host, async () => {
   try {
     // Establish tunnel connection
     const tunnel = await connectToTunnelLockdown(socket);
-    
+
     console.log('Tunnel established:', tunnel.Address);
-    
+
     // Add packet consumer
     tunnel.addPacketConsumer({
       onPacket: (packet) => {
         console.log(`${packet.protocol} packet: ${packet.src}:${packet.sourcePort} → ${packet.dst}:${packet.destPort}`);
       }
     });
-    
+
     // Or use async iteration
     for await (const packet of tunnel.getPacketStream()) {
       console.log('Received packet:', packet);
     }
-    
+
     // Close tunnel when done
     await tunnel.closer();
   } catch (err) {
@@ -253,4 +253,4 @@ node your-app.js --debug
 
 ## License
 
-MIT
+Apache-2.0
