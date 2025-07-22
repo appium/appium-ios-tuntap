@@ -251,6 +251,51 @@ Enable debug logging by running your application with the `--debug` flag:
 node your-app.js --debug
 ```
 
+## Testing
+
+Most tests for this module require **root privileges** (sudo) to create and manage TUN/TAP devices.
+
+- If you run the tests without root, privileged tests will be automatically skipped.
+- Some tests may interact with system networking; use caution on production systems.
+- The test suite is designed to clean up after itself, but always verify no stray TUN/TAP devices remain after running.
+
+### Running the Tests
+
+From the project root, run:
+
+```sh
+sudo npx mocha test/tuntap-unit.spec.js
+```
+
+Or, to run all tests in the `test/` directory:
+
+```sh
+sudo npx mocha
+```
+
+If you are **not** running as root, you will see a message that tests are skipped.
+
+### Manual Testing for Signal Handling (v0.0.4+)
+
+Automated tests cannot reliably verify process cleanup on SIGINT/SIGTERM due to test runner limitations.  
+To manually verify the fix for signal handling (introduced in v0.0.4):
+
+1. Run the CLI utility:
+   ```sh
+   sudo node test/test-tuntap.js
+   ```
+2. While it is running, press `Ctrl+C` to send SIGINT.
+3. Confirm that:
+   - The process exits immediately.
+   - All TUN/TAP devices are closed and cleaned up.
+
+This ensures the signal handler works as intended.
+
+Apache-2.0
+>>>>>>> upstream/main
 ## License
 
 Apache-2.0
+=======
+Apache-2.0
+>>>>>>> upstream/main

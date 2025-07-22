@@ -10,7 +10,9 @@
     "build": "npx tsc",
     "build:addon": "node-gyp rebuild",
     "prepare": "npm run build:addon && npm run build",
-    "test": "sudo node test/test-tuntap.js"
+    "test": "sudo npm run test:integration && npm run test:unit",
+    "test:unit": "sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
+    "test:integration": "sudo npx mocha 'test/tuntap-integration.spec.mjs' --exit --timeout 2m"
   },
   "files": [
     "src/tuntap.cc",
@@ -19,11 +21,13 @@
     "binding.gyp",
     "package.json",
     "README.md",
-    "CHANGELOG.md"
+    "!.DS_Store",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "author": {
-    "name": "Sri Harsha",
-    "url": "https://github.com/harsha509"
+    "name": "Appium Contributors",
+    "url": "https://github.com/appium/appium-ios-tuntap"
   },
   "repository": {
     "type": "git",
@@ -35,7 +39,7 @@
   "license": "Apache-2.0",
   "gypfile": true,
   "dependencies": {
-    "node-addon-api": "^8.3.1",
+    "node-addon-api": "^8.5.0",
     "typescript": "^5.8.3"
   },
   "devDependencies": {

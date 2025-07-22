@@ -76,7 +76,7 @@ jobs:
 
         # Run the test with sudo
         set +e  # Don't exit on error
-        sudo node test/test-tuntap.js
+        sudo npm test
         TEST_EXIT_CODE=$?
 
         # Collect diagnostic information if test fails

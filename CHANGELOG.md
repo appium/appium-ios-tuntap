@@ -29,6 +29,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] - 2025-07-18
+
+### Changed
+- **Shutdown Responsibility**: Refactored the shutdown logic to be managed entirely by the TypeScript application layer, removing the signal handler from the C++ addon. This creates a single, reliable source of truth for shutdown orchestration and resolves the race condition.
+- **Improved Thread Safety**: Hardened mutex locking around all public C++ methods to prevent potential race conditions during concurrent access.
+- **Memory Safety**: Implemented smart pointers (`std::unique_ptr`) for libuv handle management in the C++ addon to prevent potential memory leaks.
+
+### Fixed
+- **Process Hanging on Shutdown**: Resolved an issue where the Node.js process would hang on `Ctrl+C` (SIGINT). This was caused by a race condition between competing signal handlers in the C++ addon and the TypeScript application layer.
+
+
 ## [0.0.3] - 2025-01-07
 
 ### Added
