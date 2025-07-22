@@ -26,6 +26,13 @@
     "name": "Sri Harsha",
     "url": "https://github.com/harsha509"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/appium/appium-ios-tuntap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/appium/appium-ios-tuntap/issues"
+  },
   "license": "Apache-2.0",
   "gypfile": true,
   "dependencies": {
