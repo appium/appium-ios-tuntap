@@ -1,3 +1,9 @@
+## [0.0.10](https://github.com/appium/appium-ios-tuntap/compare/v0.0.9...v0.0.10) (2025-07-23)
+
+### Reverts
+
+* Revert "chore: include npm-shrinkwrap.json" ([6fc113f](https://github.com/appium/appium-ios-tuntap/commit/6fc113fb87ee213d5f23829493336aab3c9cb9e9))
+
 ## [0.0.9](https://github.com/appium/appium-ios-tuntap/compare/v0.0.8...v0.0.9) (2025-07-23)
 
 ### Miscellaneous Chores
