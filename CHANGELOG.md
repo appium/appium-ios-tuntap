@@ -1,3 +1,9 @@
+## [0.0.7](https://github.com/appium/appium-ios-tuntap/compare/v0.0.6...v0.0.7) (2025-07-23)
+
+### Bug Fixes
+
+* resolve npm publish error by removing hard links ([#12](https://github.com/appium/appium-ios-tuntap/issues/12)) ([7b06fa7](https://github.com/appium/appium-ios-tuntap/commit/7b06fa741b43005bbae6375c8bae4e923b6f4cb1))
+
 ## [0.0.6](https://github.com/appium/appium-ios-tuntap/compare/v0.0.5...v0.0.6) (2025-07-23)
 
 ### Miscellaneous Chores
