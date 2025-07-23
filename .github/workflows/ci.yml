@@ -9,7 +9,7 @@ on:
 
 jobs:
   prepare_matrix:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     outputs:
       versions: ${{ steps.generate-matrix.outputs.lts }}
     steps:
@@ -18,13 +18,15 @@ jobs:
       uses: msimerson/node-lts-versions@v1
 
   build-and-test:
-    runs-on: macos-latest
     needs:
     - prepare_matrix
     strategy:
       fail-fast: false
       matrix:
         node-version: ${{ fromJSON(needs.prepare_matrix.outputs.versions) }}
+        image: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.image }}
 
     steps:
     - uses: actions/checkout@v4
@@ -35,6 +37,7 @@ jobs:
         node-version: ${{ matrix.node-version }}
 
     - name: Install Linux dependencies
+      if: ${{ contains(matrix.image, 'ubuntu') }}
       run: |
         sudo apt-get update
         # Try to install specific kernel headers, fall back to generic if not available
