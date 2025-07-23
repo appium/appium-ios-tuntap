@@ -1,3 +1,9 @@
+## [0.0.8](https://github.com/appium/appium-ios-tuntap/compare/v0.0.7...v0.0.8) (2025-07-23)
+
+### Miscellaneous Chores
+
+* use macos for ci to publish ([#13](https://github.com/appium/appium-ios-tuntap/issues/13)) ([1facca1](https://github.com/appium/appium-ios-tuntap/commit/1facca1011399ad3cea7876427d1c7f7cf6cee72))
+
 ## [0.0.7](https://github.com/appium/appium-ios-tuntap/compare/v0.0.6...v0.0.7) (2025-07-23)
 
 ### Bug Fixes
