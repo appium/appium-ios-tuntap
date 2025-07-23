@@ -1,3 +1,9 @@
+## [0.0.5](https://github.com/appium/appium-ios-tuntap/compare/v0.0.4...v0.0.5) (2025-07-23)
+
+### Bug Fixes
+
+* hard link release issue ([#10](https://github.com/appium/appium-ios-tuntap/issues/10)) ([e7152b7](https://github.com/appium/appium-ios-tuntap/commit/e7152b7af519425d2045e61719fd460c251db391))
+
 ## [0.0.4](https://github.com/appium/appium-ios-tuntap/compare/v0.0.3...v0.0.4) (2025-07-22)
 
 ### Miscellaneous Chores
