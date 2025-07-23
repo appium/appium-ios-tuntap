@@ -41,12 +41,12 @@
   "license": "Apache-2.0",
   "gypfile": true,
   "dependencies": {
+    "@appium/support": "^6.0.0",
     "node-addon-api": "^8.5.0",
     "typescript": "^5.8.3"
   },
   "devDependencies": {
     "@appium/eslint-config-appium-ts": "^1.0.0",
-    "@appium/support": "^6.0.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
     "@types/node": "^24.1.0",
