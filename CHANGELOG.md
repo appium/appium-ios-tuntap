@@ -1,3 +1,9 @@
+## [0.0.9](https://github.com/appium/appium-ios-tuntap/compare/v0.0.8...v0.0.9) (2025-07-23)
+
+### Miscellaneous Chores
+
+* include npm-shrinkwrap.json ([99721fd](https://github.com/appium/appium-ios-tuntap/commit/99721fde2bb4de2e57da2f785feffa6d481fe5c6))
+
 ## [0.0.8](https://github.com/appium/appium-ios-tuntap/compare/v0.0.7...v0.0.8) (2025-07-23)
 
 ### Miscellaneous Chores
