@@ -25,7 +25,8 @@
     "README.md",
     "!.DS_Store",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "npm-shrinkwrap.json"
   ],
   "author": {
     "name": "Appium Contributors",
