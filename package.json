@@ -1,6 +1,6 @@
 {
   "name": "appium-ios-tuntap",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Native TUN/TAP interface module for Node.js",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

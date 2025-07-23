@@ -1,3 +1,9 @@
+## [0.0.6](https://github.com/appium/appium-ios-tuntap/compare/v0.0.5...v0.0.6) (2025-07-23)
+
+### Miscellaneous Chores
+
+* Apply standard Appium linter ([#11](https://github.com/appium/appium-ios-tuntap/issues/11)) ([a55693a](https://github.com/appium/appium-ios-tuntap/commit/a55693a90cca41f54ced506404b8456ea6994875))
+
 ## [0.0.5](https://github.com/appium/appium-ios-tuntap/compare/v0.0.4...v0.0.5) (2025-07-23)
 
 ### Bug Fixes
