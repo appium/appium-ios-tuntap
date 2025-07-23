@@ -65,7 +65,8 @@ jobs:
     - name: Run Linter
       run: npm run lint
 
-    - name: Check IPv6 configuration
+    - name: Check IPv6 configuration on Linux
+      if: ${{ contains(matrix.image, 'ubuntu') }}
       run: |
         echo "Checking IPv6 configuration..."
         ip -6 addr
@@ -75,11 +76,12 @@ jobs:
         sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
         sudo sysctl -w net.ipv6.conf.lo.disable_ipv6=0
 
+    - name: Check Linux prerequisites
+      if: ${{ contains(matrix.image, 'ubuntu') }}
+      run: sudo bash test/check-linux-prereqs.sh
+
     - name: Run tests
       run: |
-        # Check Linux prerequisites
-        sudo bash test/check-linux-prereqs.sh
-
         # Run the test with sudo
         set +e  # Don't exit on error
         sudo npm test
