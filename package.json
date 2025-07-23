@@ -12,7 +12,6 @@
     "lint": "eslint .",
     "lint:fix": "npm run lint -- --fix",
     "prepare": "npm run build:addon && npm run build",
-    "prepublishOnly": "find build/Release -type f -links +1 -exec sh -c 'cp -p \"$0\" \"$0.tmp\" && mv \"$0.tmp\" \"$0\"' {} \\;",
     "test": "sudo npm run test:integration && npm run test:unit",
     "test:unit": "sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
     "test:integration": "sudo npx mocha 'test/tuntap-integration.spec.mjs' --exit --timeout 2m"

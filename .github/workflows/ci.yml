@@ -9,7 +9,7 @@ on:
 
 jobs:
   prepare_matrix:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     outputs:
       versions: ${{ steps.generate-matrix.outputs.lts }}
     steps:
@@ -18,7 +18,7 @@ jobs:
       uses: msimerson/node-lts-versions@v1
 
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     needs:
     - prepare_matrix
     strategy:
