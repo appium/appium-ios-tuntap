@@ -1,3 +1,9 @@
+## [0.0.11](https://github.com/appium/appium-ios-tuntap/compare/v0.0.10...v0.0.11) (2025-07-23)
+
+### Bug Fixes
+
+* Move appium support to dependencies section ([44d0270](https://github.com/appium/appium-ios-tuntap/commit/44d0270106c0643942955d69cdb560c30783262a))
+
 ## [0.0.10](https://github.com/appium/appium-ios-tuntap/compare/v0.0.9...v0.0.10) (2025-07-23)
 
 ### Reverts
