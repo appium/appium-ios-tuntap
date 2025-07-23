@@ -18,13 +18,15 @@ jobs:
       uses: msimerson/node-lts-versions@v1
 
   build-and-test:
-    runs-on: ubuntu-latest
     needs:
     - prepare_matrix
     strategy:
       fail-fast: false
       matrix:
         node-version: ${{ fromJSON(needs.prepare_matrix.outputs.versions) }}
+        image: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.image }}
 
     steps:
     - uses: actions/checkout@v4
@@ -35,6 +37,7 @@ jobs:
         node-version: ${{ matrix.node-version }}
 
     - name: Install Linux dependencies
+      if: ${{ contains(matrix.image, 'ubuntu') }}
       run: |
         sudo apt-get update
         # Try to install specific kernel headers, fall back to generic if not available
@@ -62,7 +65,8 @@ jobs:
     - name: Run Linter
       run: npm run lint
 
-    - name: Check IPv6 configuration
+    - name: Check IPv6 configuration on Linux
+      if: ${{ contains(matrix.image, 'ubuntu') }}
       run: |
         echo "Checking IPv6 configuration..."
         ip -6 addr
@@ -72,11 +76,12 @@ jobs:
         sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
         sudo sysctl -w net.ipv6.conf.lo.disable_ipv6=0
 
+    - name: Check Linux prerequisites
+      if: ${{ contains(matrix.image, 'ubuntu') }}
+      run: sudo bash test/check-linux-prereqs.sh
+
     - name: Run tests
       run: |
-        # Check Linux prerequisites
-        sudo bash test/check-linux-prereqs.sh
-
         # Run the test with sudo
         set +e  # Don't exit on error
         sudo npm test
