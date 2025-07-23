@@ -34,7 +34,9 @@ jobs:
     - run: npm install --only=dev --no-package-lock
       name: Install dev dependencies for the release
 
-    - run: find . -type f -links +1
+    - name: Find and remove hard links
+      run: |
+        find . -type f -links +1 -exec sh -c 'cp -p "$0" "$0.tmp" && mv "$0.tmp" "$0"' {} \;
 
     - run: npx semantic-release
       env:
