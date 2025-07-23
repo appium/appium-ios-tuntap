@@ -1,6 +1,7 @@
 import { createRequire } from 'module';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { log } from './logger.js';
 
 interface NativeTuntapModule {
     TunDevice: new (name?: string) => {
@@ -53,22 +54,22 @@ export class TunTap {
         this.device = new nativeTuntap.TunDevice(name);
         this.isOpen = false;
         this.isClosed = false;
-        
+
         // Register cleanup on process exit
         const cleanup = () => {
             if (this.isOpen && !this.isClosed) {
                 try {
                     this.close();
                 } catch (err) {
-                    console.error('Error closing TUN device during cleanup:', err);
+                    log.error('Error closing TUN device during cleanup:', err);
                 }
             }
         };
-        
+
         process.once('exit', cleanup);
         process.once('SIGINT', cleanup);
         process.once('SIGTERM', cleanup);
-        
+
         this.cleanupHandlers.push(() => {
             process.removeListener('exit', cleanup);
             process.removeListener('SIGINT', cleanup);
@@ -80,7 +81,7 @@ export class TunTap {
         if (this.isClosed) {
             throw new TunTapError('Device has been closed and cannot be reopened');
         }
-        
+
         if (!this.isOpen) {
             try {
                 this.isOpen = this.device.open();
@@ -108,9 +109,9 @@ export class TunTap {
                     this.isOpen = false;
                 }
                 this.isClosed = true;
-                
+
                 // Run cleanup handlers
-                this.cleanupHandlers.forEach(handler => handler());
+                this.cleanupHandlers.forEach((handler) => handler());
                 this.cleanupHandlers = [];
             } catch (err: any) {
                 throw new TunTapError(`Failed to close device: ${err.message}`);
@@ -126,11 +127,11 @@ export class TunTap {
         if (this.isClosed) {
             throw new TunTapError('Device has been closed');
         }
-        
+
         if (maxSize <= 0 || maxSize > 65536) {
             throw new RangeError('Read size must be between 1 and 65536 bytes');
         }
-        
+
         try {
             return this.device.read(maxSize);
         } catch (err: any) {
@@ -145,19 +146,19 @@ export class TunTap {
         if (this.isClosed) {
             throw new TunTapError('Device has been closed');
         }
-        
+
         if (!Buffer.isBuffer(data)) {
             throw new TypeError('Data must be a Buffer');
         }
-        
+
         if (data.length === 0) {
             return 0;
         }
-        
+
         if (data.length > 65536) {
             throw new RangeError('Write data too large (max 65536 bytes)');
         }
-        
+
         try {
             const result = this.device.write(data);
             if (result < 0) {
@@ -187,7 +188,7 @@ export class TunTap {
 
         // Validate IPv6 address format
         const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
-        
+
         if (!ipv6Regex.test(address)) {
             throw new TypeError('Invalid IPv6 address format');
         }
@@ -209,10 +210,10 @@ export class TunTap {
                 try {
                     // Check if ip command is available
                     await execPromise('which ip');
-                } catch (err) {
+                } catch {
                     throw new TunTapError('The "ip" command is not available. Please install the iproute2 package (e.g., sudo apt install iproute2)');
                 }
-                
+
                 try {
                     await execPromise(`sudo ip -6 addr add ${address}/64 dev ${this.name}`);
                     await execPromise(`sudo ip link set dev ${this.name} up mtu ${mtu}`);
@@ -221,7 +222,7 @@ export class TunTap {
                         throw new TunTapPermissionError(`Permission denied when configuring network interface. Make sure you have sudo privileges or run the application with sudo.`);
                     } else if (err.message.includes('File exists')) {
                         // Address already configured, which might be okay
-                        console.warn(`Address ${address} may already be configured on ${this.name}`);
+                        log.warn(`Address ${address} may already be configured on ${this.name}`);
                     } else {
                         throw err;
                     }
@@ -265,7 +266,7 @@ export class TunTap {
                         throw new TunTapPermissionError(`Permission denied when adding route. Make sure you have sudo privileges or run the application with sudo.`);
                     } else if (err.message.includes('File exists')) {
                         // Route already exists, which is fine
-                        console.log(`Route to ${destination} already exists`);
+                        log.info(`Route to ${destination} already exists`);
                     } else {
                         throw err;
                     }
@@ -334,7 +335,7 @@ export class TunTap {
                 if (lines.length < 2) {
                     throw new Error('Unexpected netstat output');
                 }
-                
+
                 const stats = lines[1].split(/\s+/);
                 return {
                     rxPackets: parseInt(stats[4], 10) || 0,
@@ -348,23 +349,23 @@ export class TunTap {
                 const { stdout } = await execPromise(`ip -s link show ${this.name}`);
                 // Parse Linux ip command output
                 const lines = stdout.trim().split('\n');
-                
+
                 // Find RX and TX statistics
                 let rxIndex = -1;
                 let txIndex = -1;
-                
+
                 for (let i = 0; i < lines.length; i++) {
-                    if (lines[i].includes('RX:')) rxIndex = i + 1;
-                    if (lines[i].includes('TX:')) txIndex = i + 1;
+                    if (lines[i].includes('RX:')) {rxIndex = i + 1;}
+                    if (lines[i].includes('TX:')) {txIndex = i + 1;}
                 }
-                
+
                 if (rxIndex === -1 || txIndex === -1) {
                     throw new Error('Could not parse interface statistics');
                 }
-                
+
                 const rxStats = lines[rxIndex].trim().split(/\s+/);
                 const txStats = lines[txIndex].trim().split(/\s+/);
-                
+
                 return {
                     rxBytes: parseInt(rxStats[0], 10) || 0,
                     rxPackets: parseInt(rxStats[1], 10) || 0,
