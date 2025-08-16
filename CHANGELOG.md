@@ -1,3 +1,14 @@
+## [0.1.0](https://github.com/appium/appium-ios-tuntap/compare/v0.0.11...v0.1.0) (2025-08-16)
+
+### ⚠ BREAKING CHANGES
+
+* Required Node.js version has been bumped to ^20.19.0 || ^22.12.0 || >=24.0.0
+* Required npm version has been bumped to >=10
+
+### Features
+
+* Set minium Node.js version ([#16](https://github.com/appium/appium-ios-tuntap/issues/16)) ([3493f7b](https://github.com/appium/appium-ios-tuntap/commit/3493f7bb7b66b036f362f5c0780503dd1a324cee))
+
 ## [0.0.11](https://github.com/appium/appium-ios-tuntap/compare/v0.0.10...v0.0.11) (2025-07-23)
 
 ### Bug Fixes
