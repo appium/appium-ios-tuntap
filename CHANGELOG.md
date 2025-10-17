@@ -1,3 +1,9 @@
+## [0.1.1](https://github.com/appium/appium-ios-tuntap/compare/v0.1.0...v0.1.1) (2025-10-17)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump semantic-release from 24.2.9 to 25.0.0 ([#18](https://github.com/appium/appium-ios-tuntap/issues/18)) ([58a93f9](https://github.com/appium/appium-ios-tuntap/commit/58a93f9a7e0d9882272a943fad63dabb5c00dc33))
+
 ## [0.1.0](https://github.com/appium/appium-ios-tuntap/compare/v0.0.11...v0.1.0) (2025-08-16)
 
 ### ⚠ BREAKING CHANGES
