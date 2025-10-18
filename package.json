@@ -9,20 +9,24 @@
     "clean": "rm -rf build node_modules lib",
     "build": "npx tsc",
     "build:addon": "node-gyp rebuild",
+    "setup:windows": "powershell -ExecutionPolicy Bypass -File setup-windows.ps1",
     "lint": "eslint .",
     "lint:fix": "npm run lint -- --fix",
     "prepare": "npm run build:addon && npm run build",
     "test": "sudo npm run test:integration && npm run test:unit",
-    "test:unit": "sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
-    "test:integration": "sudo npx mocha 'test/tuntap-integration.spec.mjs' --exit --timeout 2m"
+    "test:unit": "sudo npx mocha test/tuntap-unit.spec.mjs --exit --timeout 2m",
+    "test:integration": "sudo npx mocha test/tuntap-integration.spec.mjs --exit --timeout 2m"
   },
   "files": [
     "src/tuntap.cc",
+    "src/tuntap_win.cc",
     "lib",
     "build",
     "binding.gyp",
     "package.json",
     "README.md",
+    "WINDOWS.md",
+    "setup-windows.ps1",
     "!.DS_Store",
     "CHANGELOG.md",
     "LICENSE"
