@@ -1,6 +1,6 @@
 # TunTap Bridge
 
-A native TUN/TAP interface module for Node.js that works on both macOS and Linux, with enhanced error handling, signal management, and thread safety.
+A native TUN/TAP interface module for Node.js that works on macOS, Linux, and Windows, with enhanced error handling, signal management, and thread safety.
 
 ## Description
 
@@ -8,7 +8,7 @@ This module provides a Node.js interface to TUN/TAP virtual network devices, all
 
 ## Features
 
-- **Cross-platform**: Works on macOS (utun) and Linux (TUN/TAP)
+- **Cross-platform**: Works on macOS (utun), Linux (TUN/TAP), and Windows (WinTun)
 - **TypeScript support**: Full TypeScript definitions included
 - **Signal handling**: Graceful shutdown on SIGINT/SIGTERM
 - **Thread safety**: Safe to use from multiple Node.js worker threads
@@ -29,6 +29,16 @@ npm install appium-ios-tuntap
 ### macOS
 
 On macOS, the module uses the built-in utun interfaces. No additional setup is required, but you'll need administrator privileges to create and configure the interfaces.
+
+### Windows
+
+On Windows, the module uses WinTun.
+
+**Quick Start for Windows:**
+1. Run PowerShell as Administrator
+2. Execute: `npm run setup:windows`
+3. Build the addon: `npm run build:addon`
+4. Always run your application as Administrator
 
 ### Linux
 
@@ -277,7 +287,7 @@ If you are **not** running as root, you will see a message that tests are skippe
 
 ### Manual Testing for Signal Handling (v0.0.4+)
 
-Automated tests cannot reliably verify process cleanup on SIGINT/SIGTERM due to test runner limitations.  
+Automated tests cannot reliably verify process cleanup on SIGINT/SIGTERM due to test runner limitations.
 To manually verify the fix for signal handling (introduced in v0.0.4):
 
 1. Run the CLI utility:
