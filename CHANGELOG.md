@@ -1,3 +1,9 @@
+## [0.1.2](https://github.com/appium/appium-ios-tuntap/compare/v0.1.1...v0.1.2) (2025-11-15)
+
+### Miscellaneous Chores
+
+* publish via trusted publisher ([e01e51c](https://github.com/appium/appium-ios-tuntap/commit/e01e51c7a54849b7ae450ce5278c970756dd6aee))
+
 ## [0.1.1](https://github.com/appium/appium-ios-tuntap/compare/v0.1.0...v0.1.1) (2025-10-17)
 
 ### Miscellaneous Chores
