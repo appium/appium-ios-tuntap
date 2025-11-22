@@ -139,3 +139,10 @@ lib
 .idea
 .DS_Store
 package-lock.json
+
+# Windows-specific
+wintun.dll
+bin/
+*.pdb
+*.iobj
+*.ipdb
