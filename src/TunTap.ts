@@ -227,6 +227,44 @@ export class TunTap {
                         throw err;
                     }
                 }
+            } else if (platform === 'win32') {
+                // Windows configuration using PowerShell
+                try {
+                    // Find the adapter by name (partial match since Windows may add prefixes)
+                    const findCmd = `powershell -Command "Get-NetAdapter | Where-Object {$_.Name -like '*${this.name}*' -or $_.InterfaceDescription -like '*${this.name}*'} | Select-Object -ExpandProperty ifIndex"`;
+                    const { stdout: ifIndexStr } = await execPromise(findCmd);
+                    const ifIndex = ifIndexStr.trim();
+
+                    if (!ifIndex) {
+                        throw new TunTapError(`Could not find network adapter with name matching '${this.name}'`);
+                    }
+
+                    // Add IPv6 address
+                    const addAddrCmd = `powershell -Command "New-NetIPAddress -InterfaceIndex ${ifIndex} -IPAddress '${address}' -PrefixLength 64 -AddressFamily IPv6 -ErrorAction Stop"`;
+                    await execPromise(addAddrCmd);
+
+                    // Set MTU (optional, may not be supported on all adapters)
+                    try {
+                        const setMtuCmd = `powershell -Command "Set-NetIPInterface -InterfaceIndex ${ifIndex} -NlMtu ${mtu} -ErrorAction Stop"`;
+                        await execPromise(setMtuCmd);
+                    } catch (err: any) {
+                        // MTU setting may fail on some adapters, log but don't fail
+                        log.warn(`Failed to set MTU on ${this.name}: ${err.message}`);
+                    }
+
+                    // Enable the adapter
+                    const enableCmd = `powershell -Command "$adapter = Get-NetAdapter -InterfaceIndex ${ifIndex}; Enable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop"`;
+                    await execPromise(enableCmd);
+                } catch (err: any) {
+                    if (err.message.includes('Access is denied') || err.message.includes('Administrator')) {
+                        throw new TunTapPermissionError(`Permission denied when configuring network interface. Make sure you are running as Administrator.`);
+                    } else if (err.message.includes('already exists') || err.message.includes('duplicate')) {
+                        // Address already configured, which might be okay
+                        log.warn(`Address ${address} may already be configured on ${this.name}`);
+                    } else {
+                        throw err;
+                    }
+                }
             } else {
                 throw new TunTapError(`Unsupported platform: ${platform}`);
             }
@@ -271,6 +309,31 @@ export class TunTap {
                         throw err;
                     }
                 }
+            } else if (platform === 'win32') {
+                // Windows route using netsh or route command
+                try {
+                    // Find the adapter interface index
+                    const findCmd = `powershell -Command "Get-NetAdapter | Where-Object {$_.Name -like '*${this.name}*' -or $_.InterfaceDescription -like '*${this.name}*'} | Select-Object -ExpandProperty ifIndex"`;
+                    const { stdout: ifIndexStr } = await execPromise(findCmd);
+                    const ifIndex = ifIndexStr.trim();
+
+                    if (!ifIndex) {
+                        throw new TunTapError(`Could not find network adapter with name matching '${this.name}'`);
+                    }
+
+                    // Add IPv6 route using PowerShell
+                    const addRouteCmd = `powershell -Command "New-NetRoute -DestinationPrefix '${destination}' -InterfaceIndex ${ifIndex} -ErrorAction Stop"`;
+                    await execPromise(addRouteCmd);
+                } catch (err: any) {
+                    if (err.message.includes('Access is denied') || err.message.includes('Administrator')) {
+                        throw new TunTapPermissionError(`Permission denied when adding route. Make sure you are running as Administrator.`);
+                    } else if (err.message.includes('already exists') || err.message.includes('duplicate')) {
+                        // Route already exists, which is fine
+                        log.info(`Route to ${destination} already exists`);
+                    } else {
+                        throw err;
+                    }
+                }
             } else {
                 throw new TunTapError(`Unsupported platform: ${platform}`);
             }
@@ -299,6 +362,27 @@ export class TunTap {
             } else if (platform === 'linux') {
                 // Linux route removal
                 await execPromise(`sudo ip -6 route del ${destination} dev ${this.name}`);
+            } else if (platform === 'win32') {
+                // Windows route removal
+                try {
+                    // Find the adapter interface index
+                    const findCmd = `powershell -Command "Get-NetAdapter | Where-Object {$_.Name -like '*${this.name}*' -or $_.InterfaceDescription -like '*${this.name}*'} | Select-Object -ExpandProperty ifIndex"`;
+                    const { stdout: ifIndexStr } = await execPromise(findCmd);
+                    const ifIndex = ifIndexStr.trim();
+
+                    if (!ifIndex) {
+                        throw new TunTapError(`Could not find network adapter with name matching '${this.name}'`);
+                    }
+
+                    // Remove IPv6 route using PowerShell
+                    const removeRouteCmd = `powershell -Command "Remove-NetRoute -DestinationPrefix '${destination}' -InterfaceIndex ${ifIndex} -Confirm:$false -ErrorAction Stop"`;
+                    await execPromise(removeRouteCmd);
+                } catch (err: any) {
+                    // Ignore if route doesn't exist
+                    if (!err.message.includes('No matching') && !err.message.includes('not found')) {
+                        throw err;
+                    }
+                }
             } else {
                 throw new TunTapError(`Unsupported platform: ${platform}`);
             }
@@ -373,6 +457,31 @@ export class TunTap {
                     txBytes: parseInt(txStats[0], 10) || 0,
                     txPackets: parseInt(txStats[1], 10) || 0,
                     txErrors: parseInt(txStats[2], 10) || 0
+                };
+            } else if (platform === 'win32') {
+                // Windows statistics using PowerShell
+                // First get the adapter name (not just matching, but exact name)
+                const findCmd = `powershell -NoProfile -Command "Get-NetAdapter | Where-Object {$_.Name -like '*${this.name}*' -or $_.InterfaceDescription -like '*${this.name}*'} | Select-Object -First 1 -ExpandProperty Name"`;
+                const { stdout: adapterName } = await execPromise(findCmd);
+                const trimmedName = adapterName.trim();
+
+                if (!trimmedName) {
+                    throw new TunTapError(`Could not find network adapter with name matching '${this.name}'`);
+                }
+
+                // Get adapter statistics using the adapter name
+                // Use Get-NetAdapterStatistics which requires -Name parameter
+                const statsCmd = `powershell -NoProfile -Command "$adapter = Get-NetAdapter -Name '${trimmedName}'; $stats = Get-NetAdapterStatistics -Name $adapter.Name; @{ReceivedBytes=$stats.ReceivedBytes; SentBytes=$stats.SentBytes; ReceivedUnicastPackets=$stats.ReceivedUnicastPackets; SentUnicastPackets=$stats.SentUnicastPackets; ReceivedDiscardedPackets=$stats.ReceivedDiscardedPackets; OutboundDiscardedPackets=$stats.OutboundDiscardedPackets} | ConvertTo-Json"`;
+                const { stdout: statsJson } = await execPromise(statsCmd);
+                const stats = JSON.parse(statsJson);
+
+                return {
+                    rxBytes: parseInt(stats.ReceivedBytes, 10) || 0,
+                    rxPackets: parseInt(stats.ReceivedUnicastPackets, 10) || 0,
+                    rxErrors: parseInt(stats.ReceivedDiscardedPackets, 10) || 0,
+                    txBytes: parseInt(stats.SentBytes, 10) || 0,
+                    txPackets: parseInt(stats.SentUnicastPackets, 10) || 0,
+                    txErrors: parseInt(stats.OutboundDiscardedPackets, 10) || 0
                 };
             } else {
                 throw new TunTapError(`Unsupported platform: ${platform}`);
