@@ -1,3 +1,10 @@
+## [0.1.3](https://github.com/appium/appium-ios-tuntap/compare/v0.1.2...v0.1.3) (2026-01-28)
+
+### Miscellaneous Chores
+
+* **deps-dev:** bump @appium/eslint-config-appium-ts from 2.0.5 to 3.0.0 ([#21](https://github.com/appium/appium-ios-tuntap/issues/21)) ([d6ad919](https://github.com/appium/appium-ios-tuntap/commit/d6ad91935c2e0a3ac46c6db55a8ac229276df0f4))
+* **deps-dev:** bump @types/node from 24.10.3 to 25.0.1 ([#20](https://github.com/appium/appium-ios-tuntap/issues/20)) ([ed4d95c](https://github.com/appium/appium-ios-tuntap/commit/ed4d95c64d9ed0b94b170b081efea4c7e635b1d9))
+
 ## [0.1.2](https://github.com/appium/appium-ios-tuntap/compare/v0.1.1...v0.1.2) (2025-11-15)
 
 ### Miscellaneous Chores
