@@ -1,6 +1,6 @@
-import { createRequire } from 'module';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { createRequire } from 'node:module';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import { log } from './logger.js';
 
 interface NativeTuntapModule {

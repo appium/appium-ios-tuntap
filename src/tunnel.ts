@@ -1,8 +1,8 @@
 import { log } from './logger.js';
 import { TunTap } from './TunTap.js';
-import { EventEmitter } from 'events';
-import { Socket } from 'net';
-import { Buffer } from 'buffer';
+import { EventEmitter } from 'node:events';
+import { Socket } from 'node:net';
+import { Buffer } from 'node:buffer';
 
 interface TunnelClientParameters {
     address: string;
