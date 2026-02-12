@@ -2,7 +2,7 @@
   "targets": [
     {
       "target_name": "tuntap",
-      "sources": [ "src/tuntap.cc" ],
+      "sources": [],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")"
       ],
@@ -18,7 +18,7 @@
         "-Wno-unused-parameter",
         "-fPIC"
       ],
-      "cflags_cc": [ 
+      "cflags_cc": [
         "-std=c++17",
         "-Wno-vla-extension",
         "-O3",
@@ -46,7 +46,7 @@
         ]
       },
       "msvs_settings": {
-        "VCCLCompilerTool": { 
+        "VCCLCompilerTool": {
           "ExceptionHandling": 1,
           "AdditionalOptions": [
             "/std:c++17",
@@ -54,12 +54,25 @@
           ]
         }
       },
-      "defines": [ 
+      "defines": [
         "NAPI_CPP_EXCEPTIONS",
         "NAPI_VERSION=8"
       ],
       "conditions": [
+        ["OS=='win'", {
+          "sources": [ "src/tuntap_win.cc" ],
+          "libraries": [
+            "ws2_32.lib",
+            "iphlpapi.lib",
+            "ole32.lib"
+          ],
+          "defines": [
+            "_WIN32_WINNT=0x0600",
+            "WIN32_LEAN_AND_MEAN"
+          ]
+        }],
         ["OS=='linux'", {
+          "sources": [ "src/tuntap.cc" ],
           "cflags": [
             "-pthread"
           ],
@@ -71,6 +84,7 @@
           ]
         }],
         ["OS=='mac'", {
+          "sources": [ "src/tuntap.cc" ],
           "xcode_settings": {
             "OTHER_LDFLAGS": [
               "-framework", "SystemConfiguration",
