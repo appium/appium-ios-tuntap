@@ -43,7 +43,7 @@
   "dependencies": {
     "@appium/support": "^7.0.0-rc.1",
     "node-addon-api": "^8.5.0",
-    "typescript": "^5.8.3"
+    "typescript": "^6.0.2"
   },
   "devDependencies": {
     "@appium/eslint-config-appium-ts": "^3.0.0",
