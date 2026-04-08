@@ -24,7 +24,7 @@ const execFileAsync = promisify(execFile);
  * Validates that a string is a safe IPv6 route destination (address or prefix).
  * Rejects shell metacharacters to prevent injection even though execFile is safe.
  */
-export function isValidIPv6Route(destination: string): boolean {
+function isValidIPv6Route(destination: string): boolean {
     if (!destination || typeof destination !== 'string') {
         return false;
     }
