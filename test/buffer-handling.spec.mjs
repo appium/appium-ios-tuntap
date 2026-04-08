@@ -38,7 +38,7 @@ describe('Buffer Handling: Buffer.from(subarray) copies data, breaks reference',
 
   it('should confirm deprecated slice() retains the original reference', function () {
     const largeBuffer = Buffer.alloc(1024 * 1024); // 1MB
-    // eslint-disable-next-line no-restricted-syntax
+
     const sliced = largeBuffer.slice(1024 * 1024 - 10);
 
     assert.strictEqual(sliced.length, 10);

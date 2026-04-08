@@ -30,27 +30,33 @@ import assert from 'node:assert';
 import { exchangeCoreTunnelParameters } from '../lib/index.js';
 import { createMockSocket } from './utils.mjs';
 
+function buildCDTunnelPacket(jsonPayload) {
+  const jsonBuf = Buffer.from(JSON.stringify(jsonPayload));
+  const magic = Buffer.from('CDTunnel');
+  const lengthBuf = Buffer.alloc(2);
+  lengthBuf.writeUInt16BE(jsonBuf.length);
+  return Buffer.concat([magic, lengthBuf, jsonBuf]);
+}
+
 describe('CDTunnel Protocol: Reject oversized handshake responses', function () {
   this.timeout(10000);
 
-  it('should reject when declared payload exceeds MAX_HANDSHAKE_RESPONSE_SIZE', function (done) {
+  it('should reject when declared payload exceeds MAX_HANDSHAKE_RESPONSE_SIZE', async function () {
     const socket = createMockSocket();
     const promise = exchangeCoreTunnelParameters(socket);
 
-    // Build a valid CDTunnel header claiming a 60,000-byte JSON payload.
-    // The declared size (10 + 60000 = 60010) exceeds the 8,192-byte limit.
     const magic = Buffer.from('CDTunnel');
     const lengthBuf = Buffer.alloc(2);
     lengthBuf.writeUInt16BE(60000);
     const partialPayload = Buffer.alloc(100, 0x41);
     socket.emit('data', Buffer.concat([magic, lengthBuf, partialPayload]));
 
-    promise.catch((err) => {
+    await assert.rejects(promise, (err) => {
       assert.ok(
         err.message.includes('exceeds maximum size'),
         `Expected "exceeds maximum size" error, got: ${err.message}`,
       );
-      done();
+      return true;
     });
   });
 });
@@ -58,82 +64,58 @@ describe('CDTunnel Protocol: Reject oversized handshake responses', function () 
 describe('CDTunnel Protocol: Preserve pipelined tunnel traffic', function () {
   this.timeout(10000);
 
-  it('should unshift excess bytes when handshake + tunnel data arrive together', function (done) {
+  it('should unshift excess bytes when handshake + tunnel data arrive together', async function () {
     const socket = createMockSocket();
     const promise = exchangeCoreTunnelParameters(socket);
 
-    // Build a valid CDTunnel handshake response
-    const payload = {
+    const fakeIPv6Packet = Buffer.alloc(80, 0x00);
+    fakeIPv6Packet[0] = 0x60;
+
+    const handshake = buildCDTunnelPacket({
       clientParameters: { address: 'fd00::1', mtu: 1500 },
       serverAddress: 'fd00::2',
       serverRSDPort: 58783,
-    };
-    const jsonBuf = Buffer.from(JSON.stringify(payload));
-    const magic = Buffer.from('CDTunnel');
-    const lengthBuf = Buffer.alloc(2);
-    lengthBuf.writeUInt16BE(jsonBuf.length);
+    });
+    socket.emit('data', Buffer.concat([handshake, fakeIPv6Packet]));
 
-    // Simulate pipelined IPv6 tunnel traffic arriving in the same TCP segment
-    const fakeIPv6Packet = Buffer.alloc(80, 0x00);
-    fakeIPv6Packet[0] = 0x60; // IPv6 version nibble
+    const result = await promise;
+    assert.strictEqual(result.clientParameters.address, 'fd00::1');
+    assert.strictEqual(result.serverRSDPort, 58783);
 
-    // Send handshake + tunnel data in a single chunk (TCP pipelining)
-    const combined = Buffer.concat([magic, lengthBuf, jsonBuf, fakeIPv6Packet]);
-    socket.emit('data', combined);
-
-    promise
-      .then((result) => {
-        assert.strictEqual(result.clientParameters.address, 'fd00::1');
-        assert.strictEqual(result.serverRSDPort, 58783);
-
-        // Verify the pipelined bytes were preserved via unshift
-        assert.strictEqual(socket.unshiftedData.length, 1, 'Should have unshifted excess data');
-        assert.strictEqual(
-          socket.unshiftedData[0].length,
-          fakeIPv6Packet.length,
-          'Unshifted data should match the pipelined packet size',
-        );
-        assert.strictEqual(
-          socket.unshiftedData[0][0],
-          0x60,
-          'Unshifted data should start with IPv6 version byte',
-        );
-        done();
-      })
-      .catch(done);
+    assert.strictEqual(socket.unshiftedData.length, 1, 'Should have unshifted excess data');
+    assert.strictEqual(
+      socket.unshiftedData[0].length,
+      fakeIPv6Packet.length,
+      'Unshifted data should match the pipelined packet size',
+    );
+    assert.strictEqual(
+      socket.unshiftedData[0][0],
+      0x60,
+      'Unshifted data should start with IPv6 version byte',
+    );
   });
 
-  it('should not unshift when handshake response has no trailing data', function (done) {
+  it('should not unshift when handshake response has no trailing data', async function () {
     const socket = createMockSocket();
     const promise = exchangeCoreTunnelParameters(socket);
 
-    const payload = {
+    const handshake = buildCDTunnelPacket({
       clientParameters: { address: 'fd00::1', mtu: 1500 },
       serverAddress: 'fd00::2',
       serverRSDPort: 58783,
-    };
-    const jsonBuf = Buffer.from(JSON.stringify(payload));
-    const magic = Buffer.from('CDTunnel');
-    const lengthBuf = Buffer.alloc(2);
-    lengthBuf.writeUInt16BE(jsonBuf.length);
+    });
+    socket.emit('data', handshake);
 
-    // Send only the handshake — no trailing data
-    socket.emit('data', Buffer.concat([magic, lengthBuf, jsonBuf]));
-
-    promise
-      .then((result) => {
-        assert.strictEqual(result.serverAddress, 'fd00::2');
-        assert.strictEqual(socket.unshiftedData.length, 0, 'Should not unshift when no excess data');
-        done();
-      })
-      .catch(done);
+    const result = await promise;
+    assert.strictEqual(result.serverAddress, 'fd00::2');
+    assert.strictEqual(socket.unshiftedData.length, 0, 'Should not unshift when no excess data');
   });
 });
 
 describe('CDTunnel Protocol: Reject invalid magic header', function () {
   this.timeout(10000);
 
-  it('should reject responses that do not start with "CDTunnel"', function (done) {
+  it('should reject responses that do not start with "CDTunnel"', async function () {
     const socket = createMockSocket();
     const promise = exchangeCoreTunnelParameters(socket);
 
@@ -142,9 +124,9 @@ describe('CDTunnel Protocol: Reject invalid magic header', function () {
     lengthBuf.writeUInt16BE(2);
     socket.emit('data', Buffer.concat([badMagic, lengthBuf, Buffer.from('{}')]));
 
-    promise.catch((err) => {
+    await assert.rejects(promise, (err) => {
       assert.ok(err.message.includes('Invalid packet format'));
-      done();
+      return true;
     });
   });
 });
@@ -152,7 +134,7 @@ describe('CDTunnel Protocol: Reject invalid magic header', function () {
 describe('CDTunnel Protocol: Reject invalid JSON payload', function () {
   this.timeout(10000);
 
-  it('should reject syntactically invalid JSON in the response body', function (done) {
+  it('should reject syntactically invalid JSON in the response body', async function () {
     const socket = createMockSocket();
     const promise = exchangeCoreTunnelParameters(socket);
 
@@ -163,9 +145,9 @@ describe('CDTunnel Protocol: Reject invalid JSON payload', function () {
 
     socket.emit('data', Buffer.concat([magic, lengthBuf, invalidJson]));
 
-    promise.catch((err) => {
+    await assert.rejects(promise, (err) => {
       assert.ok(err.message.includes('Invalid JSON response'));
-      done();
+      return true;
     });
   });
 });
@@ -173,29 +155,20 @@ describe('CDTunnel Protocol: Reject invalid JSON payload', function () {
 describe('CDTunnel Protocol: Parse valid response correctly', function () {
   this.timeout(10000);
 
-  it('should extract clientParameters, serverAddress, and serverRSDPort', function (done) {
+  it('should extract clientParameters, serverAddress, and serverRSDPort', async function () {
     const socket = createMockSocket();
     const promise = exchangeCoreTunnelParameters(socket);
 
-    const payload = {
+    const handshake = buildCDTunnelPacket({
       clientParameters: { address: 'fd00::1', mtu: 1500 },
       serverAddress: 'fd00::2',
       serverRSDPort: 58783,
-    };
-    const jsonBuf = Buffer.from(JSON.stringify(payload));
-    const magic = Buffer.from('CDTunnel');
-    const lengthBuf = Buffer.alloc(2);
-    lengthBuf.writeUInt16BE(jsonBuf.length);
+    });
+    socket.emit('data', handshake);
 
-    socket.emit('data', Buffer.concat([magic, lengthBuf, jsonBuf]));
-
-    promise
-      .then((result) => {
-        assert.strictEqual(result.clientParameters.address, 'fd00::1');
-        assert.strictEqual(result.serverAddress, 'fd00::2');
-        assert.strictEqual(result.serverRSDPort, 58783);
-        done();
-      })
-      .catch(done);
+    const result = await promise;
+    assert.strictEqual(result.clientParameters.address, 'fd00::1');
+    assert.strictEqual(result.serverAddress, 'fd00::2');
+    assert.strictEqual(result.serverRSDPort, 58783);
   });
 });

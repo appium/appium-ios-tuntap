@@ -38,7 +38,7 @@ function compressIPv6(buffer) {
 
   for (let i = 0; i < 8; i++) {
     if (groups[i] === 0) {
-      if (runStart === -1) runStart = i;
+      if (runStart === -1) {runStart = i;}
       const runLen = i - runStart + 1;
       if (runLen > bestLen) {
         bestStart = runStart;
@@ -56,9 +56,9 @@ function compressIPv6(buffer) {
   const before = groups.slice(0, bestStart).map((g) => g.toString(16));
   const after = groups.slice(bestStart + bestLen).map((g) => g.toString(16));
 
-  if (before.length === 0 && after.length === 0) return '::';
-  if (before.length === 0) return `::${after.join(':')}`;
-  if (after.length === 0) return `${before.join(':')}::`;
+  if (before.length === 0 && after.length === 0) {return '::';}
+  if (before.length === 0) {return `::${after.join(':')}`;}
+  if (after.length === 0) {return `${before.join(':')}::`;}
   return `${before.join(':')}::${after.join(':')}`;
 }
 

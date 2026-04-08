@@ -92,7 +92,7 @@ export class TunnelManager extends EventEmitter {
 
         const consumer: PacketConsumer = {
             onPacket: (packet: PacketData) => {
-                if (done) return;
+                if (done) {return;}
                 if (resolver) {
                     const r = resolver;
                     resolver = null;
@@ -133,7 +133,7 @@ export class TunnelManager extends EventEmitter {
                         }
                         resolver = resolve;
                     });
-                    if (packet === null) break;
+                    if (packet === null) {break;}
                     yield packet;
                 }
             }
@@ -193,7 +193,7 @@ export class TunnelManager extends EventEmitter {
 
         // Socket → TUN: incoming device data
         deviceConn.on('data', (data: Buffer) => {
-            if (this.cancelled) return;
+            if (this.cancelled) {return;}
             try {
                 this.pendingChunks.push(data);
                 this.pendingLength += data.length;
@@ -207,7 +207,7 @@ export class TunnelManager extends EventEmitter {
 
         // TUN → Socket: event-driven reading via native libuv poll
         this.tun.startPolling((data: Buffer) => {
-            if (this.cancelled || !deviceConn || deviceConn.destroyed) return;
+            if (this.cancelled || !deviceConn || deviceConn.destroyed) {return;}
             try {
                 if (data.length >= IPV6_HEADER_SIZE) {
                     log.debug(
@@ -306,7 +306,7 @@ export class TunnelManager extends EventEmitter {
 
     private dispatchPacket(packet: Buffer, nextHeader: number, src: string, dst: string): void {
         const packetData = this.parseTransportPacket(packet, nextHeader, src, dst);
-        if (!packetData) return;
+        if (!packetData) {return;}
 
         this.emit('data', packetData);
         for (const consumer of this.packetConsumers) {
@@ -429,7 +429,7 @@ function formatIPv6Address(buffer: Buffer): string {
 
     for (const [i, group] of groups.entries()) {
         if (group === 0) {
-            if (runStart === -1) runStart = i;
+            if (runStart === -1) {runStart = i;}
             const runLen = i - runStart + 1;
             if (runLen > bestLen) {
                 bestStart = runStart;
@@ -448,9 +448,9 @@ function formatIPv6Address(buffer: Buffer): string {
     const before = groups.slice(0, bestStart).map((g) => g.toString(16));
     const after = groups.slice(bestStart + bestLen).map((g) => g.toString(16));
 
-    if (before.length === 0 && after.length === 0) return '::';
-    if (before.length === 0) return `::${after.join(':')}`;
-    if (after.length === 0) return `${before.join(':')}::`;
+    if (before.length === 0 && after.length === 0) {return '::';}
+    if (before.length === 0) {return `::${after.join(':')}`;}
+    if (after.length === 0) {return `${before.join(':')}::`;}
     return `${before.join(':')}::${after.join(':')}`;
 }
 
@@ -491,7 +491,7 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
             outcome: 'resolve' | 'reject',
             value: TunnelInfo | Error,
         ) {
-            if (settled) return;
+            if (settled) {return;}
             settled = true;
             cleanup();
             if (outcome === 'resolve') {
@@ -507,7 +507,7 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
                 chunks.push(data);
                 totalLength += data.length;
 
-                if (totalLength < CDTUNNEL_HEADER_SIZE) return;
+                if (totalLength < CDTUNNEL_HEADER_SIZE) {return;}
 
                 const buffer = Buffer.concat(chunks, totalLength);
 

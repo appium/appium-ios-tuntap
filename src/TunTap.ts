@@ -52,10 +52,10 @@ export class TunTapDeviceError extends TunTapError {
  */
 function isValidIPv6Route(destination: string): boolean {
     const parts = destination.split('/');
-    if (parts.length > 2) return false;
+    if (parts.length > 2) {return false;}
     if (parts.length === 2) {
         const prefix = parseInt(parts[1], 10);
-        if (isNaN(prefix) || prefix < 0 || prefix > 128 || parts[1] !== String(prefix)) return false;
+        if (isNaN(prefix) || prefix < 0 || prefix > 128 || parts[1] !== String(prefix)) {return false;}
     }
     return isIPv6(parts[0]);
 }
@@ -233,7 +233,7 @@ export class TunTap {
                 throw new TunTapError(`Unsupported platform: ${PLATFORM}`);
             }
         } catch (err: unknown) {
-            if (err instanceof TunTapError) throw err;
+            if (err instanceof TunTapError) {throw err;}
             throw new TunTapError(`Failed to configure TUN interface: ${(err as Error).message}`);
         }
     }
@@ -283,7 +283,7 @@ export class TunTap {
                 throw new TunTapError(`Unsupported platform: ${PLATFORM}`);
             }
         } catch (err: unknown) {
-            if (err instanceof TunTapError) throw err;
+            if (err instanceof TunTapError) {throw err;}
             throw new TunTapError(`Failed to add route: ${(err as Error).message}`);
         }
     }
@@ -352,7 +352,7 @@ export class TunTap {
             }
             throw new TunTapError(`Unsupported platform: ${PLATFORM}`);
         } catch (err: unknown) {
-            if (err instanceof TunTapError) throw err;
+            if (err instanceof TunTapError) {throw err;}
             throw new TunTapError(`Failed to get interface statistics: ${(err as Error).message}`);
         }
     }

@@ -24,14 +24,13 @@ describe('Packet Stream: Bounded queue drops oldest on overflow', function () {
   it('should cap queue at MAX_PACKET_QUEUE_SIZE and drop oldest packets', function () {
     const MAX_QUEUE = 10000; // matches MAX_PACKET_QUEUE_SIZE in tunnel.ts
 
-    // Simulate the bounded queue behavior used inside getPacketStream()
     const queue = [];
     let resolver = null;
-    const done = false;
+    let done = false;
 
     const consumer = {
       onPacket: (packet) => {
-        if (done) return;
+        if (done) { return; }
         if (resolver) {
           const r = resolver;
           resolver = null;
@@ -45,10 +44,11 @@ describe('Packet Stream: Bounded queue drops oldest on overflow', function () {
       },
     };
 
-    // Push MAX_QUEUE + 500 packets
     for (let i = 0; i < MAX_QUEUE + 500; i++) {
       consumer.onPacket({ protocol: 'UDP', sourcePort: i });
     }
+
+    done = true;
 
     assert.strictEqual(queue.length, MAX_QUEUE, 'Queue should be bounded at MAX_PACKET_QUEUE_SIZE');
     assert.strictEqual(queue[0].sourcePort, 500, 'First 500 packets should have been dropped');
@@ -70,20 +70,18 @@ describe('Packet Stream: Pending next() resolves on stop()', function () {
 
     let resolved = false;
 
-    // Start consuming — this blocks waiting for the first packet
-    const pendingNext = iterator.next().then((result) => {
+    // Kick off a non-blocking read that will hang until stop() fires 'stopped'
+    const pendingNext = (async () => {
+      await iterator.next();
       resolved = true;
-    });
+    })();
 
-    // Give the pending promise a tick to settle
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     assert.strictEqual(resolved, false, 'Should be pending before stop');
 
-    // Stop the manager — emits "stopped", unblocking the iterator
     await manager.stop();
 
-    // Allow resolution to propagate
-    await new Promise((r) => setTimeout(r, 100));
+    await pendingNext;
     assert.strictEqual(resolved, true, 'Pending next() should resolve after stop()');
   });
 });
