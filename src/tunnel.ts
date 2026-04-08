@@ -1,8 +1,25 @@
-import { log } from './logger.js';
-import { TunTap } from './TunTap.js';
+import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
 import { Socket } from 'node:net';
-import { Buffer } from 'node:buffer';
+
+import { log } from './logger.js';
+import { TunTap } from './TunTap.js';
+
+// Protocol constants
+const IPV6_HEADER_SIZE = 40;
+const CDTUNNEL_MAGIC = 'CDTunnel';
+const CDTUNNEL_HEADER_SIZE = 10; // 8 (magic) + 2 (length)
+
+// Limits
+const MAX_PACKET_QUEUE_SIZE = 10_000;
+const MAX_HANDSHAKE_RESPONSE_SIZE = 8_192; // Practical limit for CDTunnel JSON response
+const HANDSHAKE_TIMEOUT_MS = 30_000;
+
+// IPv6 next-header protocol numbers
+const NEXT_HEADER_TCP = 6;
+const NEXT_HEADER_UDP = 17;
+const MIN_TCP_HEADER_SIZE = 20;
+const MIN_UDP_HEADER_SIZE = 8;
 
 interface TunnelClientParameters {
     address: string;
@@ -38,57 +55,13 @@ export interface TunnelConnection {
     getPacketStream(): AsyncIterable<PacketData>;
 }
 
-// Global registry for active tunnel managers
-const activeTunnelManagers = new Set<TunnelManager>();
-
-// Setup process signal handlers
-let signalHandlersSetup = false;
-function setupSignalHandlers() {
-    if (signalHandlersSetup) {return;}
-    signalHandlersSetup = true;
-
-    const gracefulShutdown = async (signal: string) => {
-        log.debug(`Received ${signal}, initiating graceful shutdown...`);
-
-        // Copy the set to avoid modification during iteration
-        const managers = Array.from(activeTunnelManagers);
-
-        // Stop all tunnel managers
-        await Promise.all(managers.map((manager) => {
-            try {
-                return manager.stop();
-            } catch (err) {
-                log.error('Error stopping tunnel manager:', err);
-            }
-        }));
-
-        log.debug('All tunnel managers stopped, exiting...');
-        process.exit(0);
-    };
-
-    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
-    // Handle uncaught exceptions
-    process.on('uncaughtException', async (err) => {
-        log.error('Uncaught exception:', err);
-        await gracefulShutdown('uncaughtException');
-        process.exit(1);
-    });
-
-    // Handle unhandled promise rejections
-    process.on('unhandledRejection', (reason, promise) => {
-        log.error(`Unhandled rejection at: ${promise} reason: ${reason}`);
-    });
-}
-
 export class TunnelManager extends EventEmitter {
     private tun: TunTap | null;
     private cancelled: boolean;
-    private readInterval: NodeJS.Timeout | null;
+    private pendingChunks: Buffer[];
+    private pendingLength: number;
     private buffer: Buffer;
     private packetConsumers: Set<PacketConsumer>;
-    private packetQueue: PacketData[];
     private deviceConn: Socket | null;
     private cleanupPromise: Promise<void> | null;
 
@@ -96,18 +69,12 @@ export class TunnelManager extends EventEmitter {
         super();
         this.tun = null;
         this.cancelled = false;
-        this.readInterval = null;
+        this.pendingChunks = [];
+        this.pendingLength = 0;
         this.buffer = Buffer.alloc(0);
         this.packetConsumers = new Set();
-        this.packetQueue = [];
         this.deviceConn = null;
         this.cleanupPromise = null;
-
-        // Setup signal handlers on first tunnel manager creation
-        setupSignalHandlers();
-
-        // Register this manager
-        activeTunnelManagers.add(this);
     }
 
     addPacketConsumer(consumer: PacketConsumer): void {
@@ -120,74 +87,94 @@ export class TunnelManager extends EventEmitter {
 
     async *getPacketStream(): AsyncIterable<PacketData> {
         const queue: PacketData[] = [];
-        let resolver: ((value: IteratorResult<PacketData>) => void) | null = null;
+        let resolver: ((packet: PacketData | null) => void) | null = null;
+        let done = false;
 
         const consumer: PacketConsumer = {
-            onPacket: (packet) => {
+            onPacket: (packet: PacketData) => {
+                if (done) return;
                 if (resolver) {
-                    resolver({ value: packet, done: false });
+                    const r = resolver;
                     resolver = null;
+                    r(packet);
+                } else if (queue.length < MAX_PACKET_QUEUE_SIZE) {
+                    queue.push(packet);
                 } else {
+                    // Drop oldest to make room (bounded queue)
+                    log.warn('Packet queue full, dropping oldest packet');
+                    queue.shift();
                     queue.push(packet);
                 }
             }
         };
 
+        const onStopped = () => {
+            done = true;
+            if (resolver) {
+                const r = resolver;
+                resolver = null;
+                r(null);
+            }
+        };
+
         this.addPacketConsumer(consumer);
+        this.once('stopped', onStopped);
 
         try {
-            while (!this.cancelled) {
+            while (!this.cancelled && !done) {
                 if (queue.length > 0) {
                     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
                     yield queue.shift()!;
                 } else {
-                    yield await new Promise<PacketData>((resolve) => {
-                        resolver = (result) => {
-                            if (!result.done) {
-                                resolve(result.value);
-                            }
-                        };
+                    const packet = await new Promise<PacketData | null>((resolve) => {
+                        if (this.cancelled || done) {
+                            resolve(null);
+                            return;
+                        }
+                        resolver = resolve;
                     });
+                    if (packet === null) break;
+                    yield packet;
                 }
             }
         } finally {
+            done = true;
+            resolver = null;
             this.removePacketConsumer(consumer);
+            this.removeListener('stopped', onStopped);
         }
     }
 
     async setupInterface(tunnelInfo: TunnelInfo): Promise<{ name: string; mtu: number; interface: TunTap }> {
-        log.debug(`Setting up tunnel with parameters:`, tunnelInfo);
+        log.debug('Setting up tunnel with parameters:', tunnelInfo);
 
         try {
             this.tun = new TunTap();
 
-            // Open the TUN device
             if (!this.tun.open()) {
                 throw new Error('Failed to open TUN device');
             }
 
             log.debug(`Opened TUN device: ${this.tun.name}`);
 
-            // Configure the TUN device with IPv6 address and MTU
             await this.tun.configure(tunnelInfo.clientParameters.address, tunnelInfo.clientParameters.mtu);
-
-            // Add route for the server address
             await this.tun.addRoute(`${tunnelInfo.serverAddress}/128`);
 
-            log.debug(`Configured TUN interface ${this.tun.name} with address ${tunnelInfo.clientParameters.address} and MTU ${tunnelInfo.clientParameters.mtu}`);
+            log.debug(
+                `Configured TUN interface ${this.tun.name} with ` +
+                `address ${tunnelInfo.clientParameters.address} and MTU ${tunnelInfo.clientParameters.mtu}`
+            );
 
             return {
                 name: this.tun.name,
                 mtu: tunnelInfo.clientParameters.mtu,
                 interface: this.tun
             };
-        } catch (err: any) {
-            log.error(`Error setting up TUN interface: ${err.message}`);
+        } catch (err: unknown) {
+            log.error(`Error setting up TUN interface: ${(err as Error).message}`);
             if (this.tun) {
-                try {
-                    this.tun.close();
-                } catch (closeErr) {
-                    log.error('Error closing TUN device:', closeErr);
+                try { this.tun.close(); } catch (closeErr: unknown) {
+                    log.error('Error closing TUN device:', (closeErr as Error).message);
                 }
                 this.tun = null;
             }
@@ -204,74 +191,93 @@ export class TunnelManager extends EventEmitter {
         this.deviceConn = deviceConn;
         log.debug(`Starting bidirectional data forwarding for ${this.tun.name}`);
 
-        // Handle data from the device connection
+        // Socket → TUN: incoming device data
         deviceConn.on('data', (data: Buffer) => {
-            if (this.cancelled) {return;}
-
+            if (this.cancelled) return;
             try {
-                // Add data to buffer
-                this.buffer = Buffer.concat([this.buffer, data]);
-
-                // Process IPv6 packets
+                this.pendingChunks.push(data);
+                this.pendingLength += data.length;
                 this.processBuffer();
-            } catch (err: any) {
+            } catch (err: unknown) {
                 if (!this.cancelled) {
-                    log.error('Error processing device data:', err.message);
+                    log.error('Error processing device data:', (err as Error).message);
                 }
             }
         });
 
-        // Set up TUN read loop
-        this.startTunReadLoop(deviceConn);
+        // TUN → Socket: event-driven reading via native libuv poll
+        this.tun.startPolling((data: Buffer) => {
+            if (this.cancelled || !deviceConn || deviceConn.destroyed) return;
+            try {
+                if (data.length >= IPV6_HEADER_SIZE) {
+                    log.debug(
+                        `TUN → Device: ${data.length} bytes, ` +
+                        `IPv6 src=${formatIPv6Address(data.subarray(8, 24))}, ` +
+                        `dst=${formatIPv6Address(data.subarray(24, 40))}`
+                    );
+                } else {
+                    log.debug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
+                }
+                deviceConn.write(data);
+            } catch (err: unknown) {
+                if (!this.cancelled) {
+                    log.error('Error writing to device connection:', (err as Error).message);
+                }
+            }
+        });
 
-        // Listen for device connection close
         deviceConn.on('close', async () => {
             log.debug('Device connection closed, stopping tunnel');
-            try {
-                await this.stop();
-            } catch (err) {
-                log.error('Error stopping tunnel: ', err);
+            try { await this.stop(); } catch (err) {
+                log.error('Error stopping tunnel:', err);
             }
         });
 
         deviceConn.on('error', (err: Error) => {
-            log.error('Device connection error: ', err);
+            log.error('Device connection error:', err);
         });
     }
 
     private processBuffer(): void {
+        // Merge pending chunks with existing leftover buffer
+        if (this.pendingChunks.length > 0) {
+            const chunks = this.buffer.length > 0
+                ? [this.buffer, ...this.pendingChunks]
+                : this.pendingChunks;
+            const totalLength = this.buffer.length + this.pendingLength;
+            this.buffer = Buffer.concat(chunks, totalLength);
+            this.pendingChunks = [];
+            this.pendingLength = 0;
+        }
+
         let offset = 0;
+        const bufferLength = this.buffer.length;
 
-        // Process as many complete packets as available
-        while (offset + 40 <= this.buffer.length) {
-            // Extract IPv6 header (fixed 40 bytes)
-            const header = this.buffer.slice(offset, offset + 40);
-
-            // Ensure this is an IPv6 packet (version 6)
-            const version = (header[0] >> 4) & 0x0F;
+        while (offset + IPV6_HEADER_SIZE <= bufferLength) {
+            const version = (this.buffer[offset] >> 4) & 0x0f;
             if (version !== 6) {
+                // Corrupted data — scan forward for next potential IPv6 header
+                log.warn(`Non-IPv6 data at offset ${offset}, scanning for next valid header`);
                 offset++;
+                while (offset + IPV6_HEADER_SIZE <= bufferLength && (this.buffer[offset] >> 4) !== 6) {
+                    offset++;
+                }
                 continue;
             }
 
-            // Get payload length from the IPv6 header
-            const payloadLength = header.readUInt16BE(4);
+            const payloadLength = this.buffer.readUInt16BE(offset + 4);
+            const packetLength = IPV6_HEADER_SIZE + payloadLength;
 
-            // Ensure we have the full packet (IPv6 header + payload)
-            if (offset + 40 + payloadLength > this.buffer.length) {
-                break; // Wait for more data
+            if (offset + packetLength > bufferLength) {
+                break; // Incomplete packet — wait for more data
             }
 
-            // Extract the complete IPv6 packet
-            const packet = this.buffer.slice(offset, offset + 40 + payloadLength);
+            const packet = this.buffer.subarray(offset, offset + packetLength);
+            const src = formatIPv6Address(packet.subarray(8, 24));
+            const dst = formatIPv6Address(packet.subarray(24, 40));
+            const nextHeader = this.buffer[offset + 6];
 
-            // Extract source and destination IPv6 addresses
-            const src = formatIPv6Address(packet.slice(8, 24));
-            const dst = formatIPv6Address(packet.slice(24, 40));
-
-            // Get the IPv6 next header value
-            const nextHeader = header[6];
-            log.debug(`Processing packet: nextHeader=${nextHeader}, totalLength=${40 + payloadLength}`);
+            log.debug(`Processing packet: nextHeader=${nextHeader}, totalLength=${packetLength}`);
 
             try {
                 if (!this.tun) {
@@ -279,148 +285,111 @@ export class TunnelManager extends EventEmitter {
                     break;
                 }
 
-                const bytesWritten = this.tun.write(packet);
+                const bytesWritten = this.tun.write(Buffer.from(packet));
                 log.debug(`Device → TUN: ${bytesWritten} bytes, IPv6 src=${src}, dst=${dst}`);
 
-                // Handle UDP packets (nextHeader === 17)
-                if (nextHeader === 17) {
-                    const payload = packet.slice(40);
-                    log.debug(`UDP packet detected: payload length=${payload.length}`);
-                    if (payload.length < 8) {
-                        log.debug('UDP payload too short, not emitting event.');
-                    } else {
-                        const sourcePort = payload.readUInt16BE(0);
-                        const destPort = payload.readUInt16BE(2);
-                        const udpPayload = payload.slice(8);
-                        const packetData: PacketData = {
-                            protocol: 'UDP',
-                            src,
-                            dst,
-                            sourcePort,
-                            destPort,
-                            payload: udpPayload
-                        };
-                        this.emit('data', packetData);
-                        this.packetConsumers.forEach((consumer) => {
-                            try {
-                                consumer.onPacket(packetData);
-                            } catch (err) {
-                                log.error('Error in packet consumer:', err);
-                            }
-                        });
-                        log.debug('Emitted data event for UDP packet');
-                    }
-                }
-                // Handle TCP packets (nextHeader === 6)
-                else if (nextHeader === 6) {
-                    const tcpHeaderStart = 40;
-                    if (packet.length < tcpHeaderStart + 20) {
-                        log.debug('TCP packet too short for minimum header, skipping.');
-                    } else {
-                        const sourcePort = packet.readUInt16BE(tcpHeaderStart);
-                        const destPort = packet.readUInt16BE(tcpHeaderStart + 2);
-                        const dataOffsetByte = packet.readUInt8(tcpHeaderStart + 12);
-                        const tcpHeaderLength = (dataOffsetByte >> 4) * 4;
-                        if (packet.length < tcpHeaderStart + tcpHeaderLength) {
-                            log.debug('TCP header length exceeds packet length, skipping.');
-                        } else {
-                            const tcpPayload = packet.slice(tcpHeaderStart + tcpHeaderLength);
-                            log.debug(`TCP packet detected: headerLength=${tcpHeaderLength}, payload length=${tcpPayload.length}`);
-                            const packetData: PacketData = {
-                                protocol: 'TCP',
-                                src,
-                                dst,
-                                sourcePort,
-                                destPort,
-                                payload: tcpPayload
-                            };
-                            this.emit('data', packetData);
-                            this.packetConsumers.forEach((consumer) => {
-                                try {
-                                    consumer.onPacket(packetData);
-                                } catch (err) {
-                                    log.error('Error in packet consumer:', err);
-                                }
-                            });
-                            log.debug('Emitted data event for TCP packet');
-                        }
-                    }
-                } else {
-                    log.debug('Packet is not UDP or TCP (nextHeader !== 17 and !== 6)');
-                }
-            } catch (err: any) {
-                log.error(`Error writing to TUN: ${err.message}`);
+                this.dispatchPacket(packet, nextHeader, src, dst);
+            } catch (err: unknown) {
+                log.error(`Error writing to TUN: ${(err as Error).message}`);
             }
 
-            // Move to the next packet
-            offset += 40 + payloadLength;
+            offset += packetLength;
         }
 
-        // Keep any remaining partial data
+        // Copy remaining data to free the original large buffer
         if (offset > 0) {
-            this.buffer = this.buffer.slice(offset);
+            this.buffer = offset < bufferLength
+                ? Buffer.from(this.buffer.subarray(offset))
+                : Buffer.alloc(0);
         }
     }
 
-    private startTunReadLoop(deviceConn: Socket): void {
-        this.readInterval = setInterval(() => {
-            if (this.cancelled || !this.tun) {return;}
+    private dispatchPacket(packet: Buffer, nextHeader: number, src: string, dst: string): void {
+        const packetData = this.parseTransportPacket(packet, nextHeader, src, dst);
+        if (!packetData) return;
 
+        this.emit('data', packetData);
+        for (const consumer of this.packetConsumers) {
             try {
-                // Read from TUN
-                const data = this.tun.read(16384); // A large buffer for MTU
-
-                // If we got data, send it to the device
-                if (data && data.length > 0) {
-                    if (data.length >= 40) { // Minimum IPv6 header size
-                        log.debug(`TUN → Device: ${data.length} bytes, IPv6 src=${formatIPv6Address(data.slice(8, 24))}, dst=${formatIPv6Address(data.slice(24, 40))}`);
-                    } else {
-                        log.debug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
-                    }
-
-                    if (!deviceConn.destroyed) {
-                        deviceConn.write(data);
-                    }
-                }
-            } catch (err: any) {
-                if (!this.cancelled) {
-                    log.error('Error reading from TUN:', err.message);
-                }
+                consumer.onPacket(packetData);
+            } catch (err: unknown) {
+                log.error('Error in packet consumer:', (err as Error).message);
             }
-        }, 5); // Poll every 5ms
+        }
+        log.debug(`Emitted data event for ${packetData.protocol} packet`);
+    }
+
+    private parseTransportPacket(
+        packet: Buffer, nextHeader: number, src: string, dst: string,
+    ): PacketData | null {
+        if (nextHeader === NEXT_HEADER_UDP) {
+            const payload = packet.subarray(IPV6_HEADER_SIZE);
+            if (payload.length < MIN_UDP_HEADER_SIZE) {
+                log.debug('UDP payload too short, skipping');
+                return null;
+            }
+            return {
+                protocol: 'UDP',
+                src,
+                dst,
+                sourcePort: payload.readUInt16BE(0),
+                destPort: payload.readUInt16BE(2),
+                payload: Buffer.from(payload.subarray(MIN_UDP_HEADER_SIZE)),
+            };
+        }
+
+        if (nextHeader === NEXT_HEADER_TCP) {
+            if (packet.length < IPV6_HEADER_SIZE + MIN_TCP_HEADER_SIZE) {
+                log.debug('TCP packet too short for minimum header, skipping');
+                return null;
+            }
+            const dataOffsetByte = packet.readUInt8(IPV6_HEADER_SIZE + 12);
+            const tcpHeaderLength = (dataOffsetByte >> 4) * 4;
+            if (packet.length < IPV6_HEADER_SIZE + tcpHeaderLength) {
+                log.debug('TCP header length exceeds packet length, skipping');
+                return null;
+            }
+            return {
+                protocol: 'TCP',
+                src,
+                dst,
+                sourcePort: packet.readUInt16BE(IPV6_HEADER_SIZE),
+                destPort: packet.readUInt16BE(IPV6_HEADER_SIZE + 2),
+                payload: Buffer.from(packet.subarray(IPV6_HEADER_SIZE + tcpHeaderLength)),
+            };
+        }
+
+        log.debug(`Packet with unsupported next header: ${nextHeader}`);
+        return null;
     }
 
     async stop(): Promise<void> {
-        // Prevent multiple concurrent stops
         if (this.cleanupPromise) {
             return this.cleanupPromise;
         }
-
         this.cleanupPromise = this._performStop();
         return this.cleanupPromise;
     }
 
     private async _performStop(): Promise<void> {
-        const tunName = this.tun ? this.tun.name : 'unknown';
-        log.debug(`Stopping tunnel manager for ${tunName}`);
+        const tunName = this.tun?.name;
+        log.debug(`Stopping tunnel manager${tunName ? ` for ${tunName}` : ''}`);
 
-        // Signal cancellation
         this.cancelled = true;
 
-        // Clear read interval
-        if (this.readInterval) {
-            clearInterval(this.readInterval);
-            this.readInterval = null;
-        }
+        // Signal pending getPacketStream consumers before clearing
+        this.emit('stopped');
 
-        // Close device connection if exists
+        // Close device connection
         if (this.deviceConn && !this.deviceConn.destroyed) {
             this.deviceConn.destroy();
             this.deviceConn = null;
         }
 
-        // Clear buffer
+        // Clear buffers
         this.buffer = Buffer.alloc(0);
+        this.pendingChunks = [];
+        this.pendingLength = 0;
 
         // Clear packet consumers
         this.packetConsumers.clear();
@@ -428,32 +397,61 @@ export class TunnelManager extends EventEmitter {
         // Remove all listeners
         this.removeAllListeners();
 
-        // Close TUN device
+        // Close TUN device (also stops native polling via CloseInternal → StopPolling)
         if (this.tun) {
-            try {
-                this.tun.close();
-            } catch (err) {
-                log.error('Error closing TUN device:', err);
+            try { this.tun.close(); } catch (err: unknown) {
+                log.error('Error closing TUN device:', (err as Error).message);
             }
             this.tun = null;
         }
 
-        // Unregister from active managers
-        activeTunnelManagers.delete(this);
-
-        log.debug(`Tunnel for ${tunName} closed successfully`);
+        log.debug(`Tunnel${tunName ? ` for ${tunName}` : ''} closed successfully`);
     }
 }
 
+/**
+ * Formats a 16-byte buffer as a compressed IPv6 address string (RFC 5952).
+ */
 function formatIPv6Address(buffer: Buffer): string {
     if (!buffer || buffer.length !== 16) {
         return 'invalid-address';
     }
-    const parts: string[] = [];
+
+    const groups: number[] = [];
     for (let i = 0; i < 16; i += 2) {
-        parts.push(buffer.readUInt16BE(i).toString(16));
+        groups.push(buffer.readUInt16BE(i));
     }
-    return parts.join(':');
+
+    // Find the longest consecutive run of zero groups for :: compression
+    let bestStart = -1;
+    let bestLen = 0;
+    let runStart = -1;
+
+    for (const [i, group] of groups.entries()) {
+        if (group === 0) {
+            if (runStart === -1) runStart = i;
+            const runLen = i - runStart + 1;
+            if (runLen > bestLen) {
+                bestStart = runStart;
+                bestLen = runLen;
+            }
+        } else {
+            runStart = -1;
+        }
+    }
+
+    // Only compress runs of 2+ zero groups (RFC 5952 §4.2.2)
+    if (bestLen < 2) {
+        return groups.map((g) => g.toString(16)).join(':');
+    }
+
+    const before = groups.slice(0, bestStart).map((g) => g.toString(16));
+    const after = groups.slice(bestStart + bestLen).map((g) => g.toString(16));
+
+    if (before.length === 0 && after.length === 0) return '::';
+    if (before.length === 0) return `::${after.join(':')}`;
+    if (after.length === 0) return `${before.join(':')}::`;
+    return `${before.join(':')}::${after.join(':')}`;
 }
 
 export async function exchangeCoreTunnelParameters(socket: Socket): Promise<TunnelInfo> {
@@ -464,18 +462,20 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
         };
         const requestJSON = JSON.stringify(request);
         const jsonBuffer = Buffer.from(requestJSON);
-        const magic = Buffer.from('CDTunnel');
-        const length = Buffer.alloc(2);
-        length.writeUInt16BE(jsonBuffer.length);
+        const magicBuf = Buffer.from(CDTUNNEL_MAGIC);
+        const lengthBuf = Buffer.alloc(2);
+        lengthBuf.writeUInt16BE(jsonBuffer.length);
 
-        const message = Buffer.concat([magic, length, jsonBuffer]);
+        const message = Buffer.concat([magicBuf, lengthBuf, jsonBuffer]);
 
-        log.debug(`Sending CDTunnel packet: magic=${magic.toString()}, length=${jsonBuffer.length}, body=${requestJSON}`);
+        log.debug(`Sending CDTunnel packet: magic=${CDTUNNEL_MAGIC}, length=${jsonBuffer.length}, body=${requestJSON}`);
 
         socket.write(message);
 
-        // For receiving the response
-        let buffer = Buffer.alloc(0);
+        const chunks: Buffer[] = [];
+        let totalLength = 0;
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        let settled = false;
 
         function cleanup() {
             socket.removeListener('data', handleData);
@@ -483,62 +483,92 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
             socket.removeListener('end', handleEnd);
             if (timeoutHandle) {
                 clearTimeout(timeoutHandle);
+                timeoutHandle = null;
+            }
+        }
+
+        function settle(
+            outcome: 'resolve' | 'reject',
+            value: TunnelInfo | Error,
+        ) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            if (outcome === 'resolve') {
+                resolve(value as TunnelInfo);
+            } else {
+                reject(value as Error);
             }
         }
 
         function handleData(data: Buffer) {
-            log.debug('Received data chunk:', data.length, 'bytes');
-            buffer = Buffer.concat([buffer, data]);
+            try {
+                log.debug('Received data chunk:', data.length, 'bytes');
+                chunks.push(data);
+                totalLength += data.length;
 
-            if (buffer.length < 10) {return;}
+                if (totalLength < CDTUNNEL_HEADER_SIZE) return;
 
-            const receivedMagic = buffer.slice(0, 8).toString();
-            if (receivedMagic !== 'CDTunnel') {
-                log.error('Invalid magic header:', receivedMagic);
-                cleanup();
-                return reject(new Error('Invalid packet format'));
-            }
+                const buffer = Buffer.concat(chunks, totalLength);
 
-            const payloadLength = buffer.readUInt16BE(8);
-            const totalLength = 8 + 2 + payloadLength;
-
-            log.debug('Expected total packet length:', totalLength, 'current buffer:', buffer.length);
-
-            if (buffer.length >= totalLength) {
-                const payload = buffer.slice(10, totalLength);
-                try {
-                    const response = JSON.parse(payload.toString());
-                    log.debug('Parsed CDTunnel response:', response);
-                    cleanup();
-                    resolve(response);
-                } catch (err) {
-                    log.error('Failed to parse JSON:', err);
-                    cleanup();
-                    reject(new Error('Invalid JSON response'));
+                const receivedMagic = buffer.subarray(0, 8).toString();
+                if (receivedMagic !== CDTUNNEL_MAGIC) {
+                    log.error('Invalid magic header:', receivedMagic);
+                    settle('reject', new Error('Invalid packet format'));
+                    return;
                 }
+
+                const payloadLength = buffer.readUInt16BE(8);
+                const expectedTotal = CDTUNNEL_HEADER_SIZE + payloadLength;
+
+                // Validate the declared handshake size, not the total bytes buffered.
+                // totalLength can exceed expectedTotal when the peer pipelines IPv6
+                // tunnel traffic immediately after the handshake response.
+                if (expectedTotal > MAX_HANDSHAKE_RESPONSE_SIZE) {
+                    settle('reject', new Error('Handshake response exceeds maximum size'));
+                    return;
+                }
+
+                log.debug('Expected total packet length:', expectedTotal, 'current buffer:', totalLength);
+
+                if (totalLength >= expectedTotal) {
+                    const payload = buffer.subarray(CDTUNNEL_HEADER_SIZE, expectedTotal);
+                    const parsed = JSON.parse(payload.toString());
+                    log.debug('Parsed CDTunnel response:', parsed);
+
+                    // Preserve pipelined bytes (tunnel traffic that arrived in the
+                    // same TCP segment) by pushing them back into the socket's
+                    // internal readable buffer for startForwarding() to consume.
+                    if (totalLength > expectedTotal) {
+                        const excess = buffer.subarray(expectedTotal);
+                        log.debug(`Preserving ${excess.length} pipelined bytes via unshift`);
+                        socket.unshift(excess);
+                    }
+
+                    settle('resolve', parsed);
+                }
+            } catch (err: unknown) {
+                const message = err instanceof SyntaxError
+                    ? `Invalid JSON response: ${err.message}`
+                    : `Unexpected error during handshake: ${(err as Error).message}`;
+                log.error(message);
+                settle('reject', new Error(message));
             }
         }
 
         function handleError(err: Error) {
-            log.error('Socket error:', err);
-            cleanup();
-            reject(err);
+            log.error('Socket error:', err.message);
+            settle('reject', err);
         }
 
         function handleEnd() {
             log.debug('Connection ended');
-            if (buffer.length > 0) {
-                log.debug('Buffer at end:', buffer.toString('hex'));
-            }
-            cleanup();
-            reject(new Error('Connection closed before receiving complete response'));
+            settle('reject', new Error('Connection closed before receiving complete response'));
         }
 
-        // Set a timeout for the handshake
-        const timeoutHandle = setTimeout(() => {
-            cleanup();
-            reject(new Error('Tunnel handshake timeout'));
-        }, 30000); // 30 second timeout
+        timeoutHandle = setTimeout(() => {
+            settle('reject', new Error('Tunnel handshake timeout'));
+        }, HANDSHAKE_TIMEOUT_MS);
 
         socket.on('data', handleData);
         socket.on('error', handleError);
@@ -550,18 +580,14 @@ export async function connectToTunnelLockdown(secureServiceSocket: Socket): Prom
     const tunnelManager = new TunnelManager();
 
     try {
-        // Exchange tunnel parameters with the device
         const tunnelInfo = await exchangeCoreTunnelParameters(secureServiceSocket);
         log.debug('Tunnel parameters exchanged:', tunnelInfo);
 
-        // Setup tunnel interface
         const tunInterfaceInfo = await tunnelManager.setupInterface(tunnelInfo);
         log.debug('Tunnel interface set up:', tunInterfaceInfo.name);
 
-        // Start bidirectional forwarding
         tunnelManager.startForwarding(secureServiceSocket);
 
-        // Create close function
         const closeFunc = async () => {
             log.debug('Closing tunnel connection');
             await tunnelManager.stop();
@@ -580,8 +606,8 @@ export async function connectToTunnelLockdown(secureServiceSocket: Socket): Prom
             removePacketConsumer: (consumer: PacketConsumer) => tunnelManager.removePacketConsumer(consumer),
             getPacketStream: () => tunnelManager.getPacketStream()
         };
-    } catch (err: any) {
-        log.error('Failed to connect to tunnel:', err);
+    } catch (err: unknown) {
+        log.error('Failed to connect to tunnel:', (err as Error).message);
         await tunnelManager.stop();
         if (!secureServiceSocket.destroyed) {
             secureServiceSocket.end();

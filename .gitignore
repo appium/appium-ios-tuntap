@@ -139,3 +139,8 @@ lib
 .idea
 .DS_Store
 package-lock.json
+
+# duetcode sessions
+.duet/
+
+CLAUDE.md

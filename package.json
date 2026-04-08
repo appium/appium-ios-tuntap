@@ -12,9 +12,15 @@
     "lint": "eslint .",
     "lint:fix": "npm run lint -- --fix",
     "prepare": "npm run build:addon && npm run build",
-    "test": "sudo npm run test:integration && npm run test:unit",
-    "test:unit": "sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
-    "test:integration": "sudo npx mocha 'test/tuntap-integration.spec.mjs' --exit --timeout 2m"
+    "test": "npm run test:security && npm run test:tunnel-manager && npm run test:packet-stream && npm run test:cdtunnel-protocol && npm run test:buffer-handling && npm run test:ipv6-format && npm run test:unit && npm run test:integration",
+    "test:security": "npx mocha 'test/security.spec.mjs' --exit --timeout 30s",
+    "test:tunnel-manager": "npx mocha 'test/tunnel-manager.spec.mjs' --exit --timeout 30s",
+    "test:packet-stream": "npx mocha 'test/packet-stream.spec.mjs' --exit --timeout 30s",
+    "test:cdtunnel-protocol": "npx mocha 'test/cdtunnel-protocol.spec.mjs' --exit --timeout 30s",
+    "test:buffer-handling": "npx mocha 'test/buffer-handling.spec.mjs' --exit --timeout 30s",
+    "test:ipv6-format": "npx mocha 'test/ipv6-format.spec.mjs' --exit --timeout 30s",
+    "test:unit": "npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
+    "test:integration": "npx mocha 'test/tuntap-integration.spec.mjs' --exit --timeout 2m"
   },
   "files": [
     "src/tuntap.cc",
