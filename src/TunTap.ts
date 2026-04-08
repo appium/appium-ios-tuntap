@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { isIPv6 } from 'node:net';
 import { promisify } from 'node:util';
 import { log } from './logger.js';
 
@@ -17,7 +18,32 @@ interface NativeTuntapModule {
 const require = createRequire(import.meta.url);
 const nativeTuntap = require('../build/Release/tuntap.node') as NativeTuntapModule;
 
-const execPromise = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * Validates that a string is a safe IPv6 route destination (address or prefix).
+ * Rejects shell metacharacters to prevent injection even though execFile is safe.
+ */
+function isValidIPv6Route(destination: string): boolean {
+    if (!destination || typeof destination !== 'string') {
+        return false;
+    }
+    const parts = destination.split('/');
+    if (parts.length > 2) {
+        return false;
+    }
+    const [addr, prefixLen] = parts;
+    if (!isIPv6(addr)) {
+        return false;
+    }
+    if (prefixLen !== undefined) {
+        const len = Number(prefixLen);
+        if (!Number.isInteger(len) || len < 0 || len > 128) {
+            return false;
+        }
+    }
+    return true;
+}
 
 // Custom error types
 export class TunTapError extends Error {
@@ -186,10 +212,7 @@ export class TunTap {
             throw new TunTapError('Device has been closed');
         }
 
-        // Validate IPv6 address format
-        const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
-
-        if (!ipv6Regex.test(address)) {
+        if (!isIPv6(address)) {
             throw new TypeError('Invalid IPv6 address format');
         }
 
@@ -202,26 +225,22 @@ export class TunTap {
 
         try {
             if (platform === 'darwin') {
-                // macOS configuration
-                await execPromise(`sudo ifconfig ${this.name} inet6 ${address} prefixlen 64 up`);
-                await execPromise(`sudo ifconfig ${this.name} mtu ${mtu}`);
+                await execFileAsync('sudo', ['ifconfig', this.name, 'inet6', address, 'prefixlen', '64', 'up']);
+                await execFileAsync('sudo', ['ifconfig', this.name, 'mtu', String(mtu)]);
             } else if (platform === 'linux') {
-                // Linux configuration
                 try {
-                    // Check if ip command is available
-                    await execPromise('which ip');
+                    await execFileAsync('which', ['ip']);
                 } catch {
                     throw new TunTapError('The "ip" command is not available. Please install the iproute2 package (e.g., sudo apt install iproute2)');
                 }
 
                 try {
-                    await execPromise(`sudo ip -6 addr add ${address}/64 dev ${this.name}`);
-                    await execPromise(`sudo ip link set dev ${this.name} up mtu ${mtu}`);
+                    await execFileAsync('sudo', ['ip', '-6', 'addr', 'add', `${address}/64`, 'dev', this.name]);
+                    await execFileAsync('sudo', ['ip', 'link', 'set', 'dev', this.name, 'up', 'mtu', String(mtu)]);
                 } catch (err: any) {
                     if (err.message.includes('Permission denied')) {
                         throw new TunTapPermissionError(`Permission denied when configuring network interface. Make sure you have sudo privileges or run the application with sudo.`);
                     } else if (err.message.includes('File exists')) {
-                        // Address already configured, which might be okay
                         log.warn(`Address ${address} may already be configured on ${this.name}`);
                     } else {
                         throw err;
@@ -246,26 +265,22 @@ export class TunTap {
             throw new TunTapError('Device has been closed');
         }
 
-        // Basic validation of destination format
-        if (!destination || typeof destination !== 'string') {
-            throw new TypeError('Destination must be a non-empty string');
+        if (!isValidIPv6Route(destination)) {
+            throw new TypeError('Destination must be a valid IPv6 address or prefix (e.g. fd00::1/64)');
         }
 
         const platform = process.platform;
 
         try {
             if (platform === 'darwin') {
-                // macOS route
-                await execPromise(`sudo route -n add -inet6 ${destination} -interface ${this.name}`);
+                await execFileAsync('sudo', ['route', '-n', 'add', '-inet6', destination, '-interface', this.name]);
             } else if (platform === 'linux') {
-                // Linux route
                 try {
-                    await execPromise(`sudo ip -6 route add ${destination} dev ${this.name}`);
+                    await execFileAsync('sudo', ['ip', '-6', 'route', 'add', destination, 'dev', this.name]);
                 } catch (err: any) {
                     if (err.message.includes('Permission denied')) {
                         throw new TunTapPermissionError(`Permission denied when adding route. Make sure you have sudo privileges or run the application with sudo.`);
                     } else if (err.message.includes('File exists')) {
-                        // Route already exists, which is fine
                         log.info(`Route to ${destination} already exists`);
                     } else {
                         throw err;
@@ -275,7 +290,6 @@ export class TunTap {
                 throw new TunTapError(`Unsupported platform: ${platform}`);
             }
         } catch (err: any) {
-            // Only throw if it's not the "route already exists" case we handled above
             if (err instanceof TunTapError) {
                 throw err;
             }
@@ -290,20 +304,21 @@ export class TunTap {
             throw new TunTapError('Device not open');
         }
 
+        if (!isValidIPv6Route(destination)) {
+            throw new TypeError('Destination must be a valid IPv6 address or prefix (e.g. fd00::1/64)');
+        }
+
         const platform = process.platform;
 
         try {
             if (platform === 'darwin') {
-                // macOS route removal
-                await execPromise(`sudo route -n delete -inet6 ${destination}`);
+                await execFileAsync('sudo', ['route', '-n', 'delete', '-inet6', destination]);
             } else if (platform === 'linux') {
-                // Linux route removal
-                await execPromise(`sudo ip -6 route del ${destination} dev ${this.name}`);
+                await execFileAsync('sudo', ['ip', '-6', 'route', 'del', destination, 'dev', this.name]);
             } else {
                 throw new TunTapError(`Unsupported platform: ${platform}`);
             }
         } catch (err: any) {
-            // Ignore errors if route doesn't exist
             if (!err.message.includes('not in table') && !err.message.includes('No such process')) {
                 throw new TunTapError(`Failed to remove route: ${err.message}`);
             }
@@ -329,8 +344,7 @@ export class TunTap {
 
         try {
             if (platform === 'darwin') {
-                const { stdout } = await execPromise(`netstat -I ${this.name} -b`);
-                // Parse macOS netstat output
+                const { stdout } = await execFileAsync('netstat', ['-I', this.name, '-b']);
                 const lines = stdout.trim().split('\n');
                 if (lines.length < 2) {
                     throw new Error('Unexpected netstat output');
@@ -343,14 +357,12 @@ export class TunTap {
                     rxBytes: parseInt(stats[6], 10) || 0,
                     txPackets: parseInt(stats[7], 10) || 0,
                     txErrors: parseInt(stats[8], 10) || 0,
-                    txBytes: parseInt(stats[9], 10) || 0
+                    txBytes: parseInt(stats[9], 10) || 0,
                 };
             } else if (platform === 'linux') {
-                const { stdout } = await execPromise(`ip -s link show ${this.name}`);
-                // Parse Linux ip command output
+                const { stdout } = await execFileAsync('ip', ['-s', 'link', 'show', this.name]);
                 const lines = stdout.trim().split('\n');
 
-                // Find RX and TX statistics
                 let rxIndex = -1;
                 let txIndex = -1;
 
@@ -372,7 +384,7 @@ export class TunTap {
                     rxErrors: parseInt(rxStats[2], 10) || 0,
                     txBytes: parseInt(txStats[0], 10) || 0,
                     txPackets: parseInt(txStats[1], 10) || 0,
-                    txErrors: parseInt(txStats[2], 10) || 0
+                    txErrors: parseInt(txStats[2], 10) || 0,
                 };
             } else {
                 throw new TunTapError(`Unsupported platform: ${platform}`);

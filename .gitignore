@@ -139,3 +139,6 @@ lib
 .idea
 .DS_Store
 package-lock.json
+
+
+.duet/
