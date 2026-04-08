@@ -1,3 +1,9 @@
+## [0.1.4](https://github.com/appium/appium-ios-tuntap/compare/v0.1.3...v0.1.4) (2026-04-08)
+
+### Bug Fixes
+
+* replace exec with execFile to prevent shell injection ([9614041](https://github.com/appium/appium-ios-tuntap/commit/9614041375fb5f9edfcd14d6cf4c65b002f19e4a))
+
 ## [0.1.3](https://github.com/appium/appium-ios-tuntap/compare/v0.1.2...v0.1.3) (2026-01-28)
 
 ### Miscellaneous Chores
