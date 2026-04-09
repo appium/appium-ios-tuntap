@@ -81,6 +81,7 @@ export class TunTap {
         this.isOpen = false;
         this.isClosed = false;
 
+        // Register cleanup on process exit
         const cleanup = () => {
             if (this.isOpen && !this.isClosed) {
                 try {
