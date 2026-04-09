@@ -38,50 +38,6 @@ export interface TunnelConnection {
     getPacketStream(): AsyncIterable<PacketData>;
 }
 
-// Global registry for active tunnel managers
-const activeTunnelManagers = new Set<TunnelManager>();
-
-// Setup process signal handlers
-let signalHandlersSetup = false;
-function setupSignalHandlers() {
-    if (signalHandlersSetup) {return;}
-    signalHandlersSetup = true;
-
-    const gracefulShutdown = async (signal: string) => {
-        log.debug(`Received ${signal}, initiating graceful shutdown...`);
-
-        // Copy the set to avoid modification during iteration
-        const managers = Array.from(activeTunnelManagers);
-
-        // Stop all tunnel managers
-        await Promise.all(managers.map((manager) => {
-            try {
-                return manager.stop();
-            } catch (err) {
-                log.error('Error stopping tunnel manager:', err);
-            }
-        }));
-
-        log.debug('All tunnel managers stopped, exiting...');
-        process.exit(0);
-    };
-
-    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
-    // Handle uncaught exceptions
-    process.on('uncaughtException', async (err) => {
-        log.error('Uncaught exception:', err);
-        await gracefulShutdown('uncaughtException');
-        process.exit(1);
-    });
-
-    // Handle unhandled promise rejections
-    process.on('unhandledRejection', (reason, promise) => {
-        log.error(`Unhandled rejection at: ${promise} reason: ${reason}`);
-    });
-}
-
 export class TunnelManager extends EventEmitter {
     private tun: TunTap | null;
     private cancelled: boolean;
@@ -102,12 +58,6 @@ export class TunnelManager extends EventEmitter {
         this.packetQueue = [];
         this.deviceConn = null;
         this.cleanupPromise = null;
-
-        // Setup signal handlers on first tunnel manager creation
-        setupSignalHandlers();
-
-        // Register this manager
-        activeTunnelManagers.add(this);
     }
 
     addPacketConsumer(consumer: PacketConsumer): void {
@@ -437,9 +387,6 @@ export class TunnelManager extends EventEmitter {
             }
             this.tun = null;
         }
-
-        // Unregister from active managers
-        activeTunnelManagers.delete(this);
 
         log.debug(`Tunnel for ${tunName} closed successfully`);
     }
