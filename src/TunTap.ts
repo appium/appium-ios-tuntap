@@ -74,14 +74,13 @@ export class TunTap {
     private device: any;
     private isOpen: boolean;
     private isClosed: boolean;
-    private cleanupHandlers: (() => void)[] = [];
+    private cleanupHandler: (() => void) | null = null;
 
     constructor(name: string = '') {
         this.device = new nativeTuntap.TunDevice(name);
         this.isOpen = false;
         this.isClosed = false;
 
-        // Register cleanup on process exit
         const cleanup = () => {
             if (this.isOpen && !this.isClosed) {
                 try {
@@ -93,14 +92,10 @@ export class TunTap {
         };
 
         process.once('exit', cleanup);
-        process.once('SIGINT', cleanup);
-        process.once('SIGTERM', cleanup);
 
-        this.cleanupHandlers.push(() => {
+        this.cleanupHandler = () => {
             process.removeListener('exit', cleanup);
-            process.removeListener('SIGINT', cleanup);
-            process.removeListener('SIGTERM', cleanup);
-        });
+        };
     }
 
     open(): boolean {
@@ -128,6 +123,11 @@ export class TunTap {
     }
 
     close(): boolean {
+        if (this.cleanupHandler) {
+            this.cleanupHandler();
+            this.cleanupHandler = null;
+        }
+
         if (!this.isClosed) {
             try {
                 if (this.isOpen) {
@@ -135,10 +135,6 @@ export class TunTap {
                     this.isOpen = false;
                 }
                 this.isClosed = true;
-
-                // Run cleanup handlers
-                this.cleanupHandlers.forEach((handler) => handler());
-                this.cleanupHandlers = [];
             } catch (err: any) {
                 throw new TunTapError(`Failed to close device: ${err.message}`);
             }
