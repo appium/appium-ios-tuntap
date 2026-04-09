@@ -74,7 +74,7 @@ export class TunTap {
     private device: any;
     private isOpen: boolean;
     private isClosed: boolean;
-    private cleanupHandler: (() => void) | null = null;
+    private removeExitListener: (() => void) | null = null;
 
     constructor(name: string = '') {
         this.device = new nativeTuntap.TunDevice(name);
@@ -94,7 +94,7 @@ export class TunTap {
 
         process.once('exit', cleanup);
 
-        this.cleanupHandler = () => {
+        this.removeExitListener = () => {
             process.removeListener('exit', cleanup);
         };
     }
@@ -124,9 +124,9 @@ export class TunTap {
     }
 
     close(): boolean {
-        if (this.cleanupHandler) {
-            this.cleanupHandler();
-            this.cleanupHandler = null;
+        if (this.removeExitListener) {
+            this.removeExitListener();
+            this.removeExitListener = null;
         }
 
         if (!this.isClosed) {
