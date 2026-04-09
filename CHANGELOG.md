@@ -1,3 +1,9 @@
+## [0.1.5](https://github.com/appium/appium-ios-tuntap/compare/v0.1.4...v0.1.5) (2026-04-09)
+
+### Code Refactoring
+
+* remove global signal handlers from library code ([6e267df](https://github.com/appium/appium-ios-tuntap/commit/6e267dffe1785acfcd57d431090e4cd4995bfa39))
+
 ## [0.1.4](https://github.com/appium/appium-ios-tuntap/compare/v0.1.3...v0.1.4) (2026-04-08)
 
 ### Bug Fixes
