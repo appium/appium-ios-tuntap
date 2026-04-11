@@ -1,3 +1,9 @@
+## [0.1.7](https://github.com/appium/appium-ios-tuntap/compare/v0.1.6...v0.1.7) (2026-04-11)
+
+### Miscellaneous Chores
+
+* **deps:** bump typescript from 5.9.3 to 6.0.2 ([#22](https://github.com/appium/appium-ios-tuntap/issues/22)) ([07c2620](https://github.com/appium/appium-ios-tuntap/commit/07c2620f5743d59fee236f6e835045047b91c7f8))
+
 ## [0.1.6](https://github.com/appium/appium-ios-tuntap/compare/v0.1.5...v0.1.6) (2026-04-11)
 
 ### Code Refactoring
