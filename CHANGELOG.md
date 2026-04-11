@@ -1,3 +1,9 @@
+## [0.1.6](https://github.com/appium/appium-ios-tuntap/compare/v0.1.5...v0.1.6) (2026-04-11)
+
+### Code Refactoring
+
+* refactor TUN/TAP native layer and harden TunTap TypeScript interface ([3fa00fe](https://github.com/appium/appium-ios-tuntap/commit/3fa00fe57a7cc44e6490d8e97d7defe2f782c0dc))
+
 ## [0.1.5](https://github.com/appium/appium-ios-tuntap/compare/v0.1.4...v0.1.5) (2026-04-09)
 
 ### Code Refactoring
