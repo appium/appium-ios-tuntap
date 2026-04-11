@@ -24,7 +24,25 @@ export interface PacketData {
     payload: Buffer;
 }
 
+/**
+ * Event names and listener argument tuples for {@link TunnelManager}
+ * (matches Node’s `EventEmitter` event map shape).
+ *
+ * @example
+ * tunnelManager.on('data', (packet) => {
+ *   // `packet` is PacketData
+ * });
+ */
+export interface TunnelManagerEvents {
+    data: [packet: PacketData];
+}
+
 export interface PacketConsumer {
+    /**
+     * Invoked for each parsed TCP/UDP payload extracted from the tunnel stream.
+     *
+     * @param packet — decoded addresses, ports, and payload
+     */
     onPacket(packet: PacketData): void;
 }
 
@@ -32,13 +50,21 @@ export interface TunnelConnection {
     Address: string;
     RsdPort?: number;
     tunnelManager: TunnelManager;
+    /** Tear down the tunnel, close the TUN device, and end the socket when appropriate. */
     closer: () => Promise<void>;
+    /** @param consumer — receives packets for the lifetime of the registration */
     addPacketConsumer(consumer: PacketConsumer): void;
+    /** @param consumer — must be the same reference passed to {@link TunnelConnection.addPacketConsumer} */
     removePacketConsumer(consumer: PacketConsumer): void;
+    /** @returns async iterator of packets until the tunnel is stopped */
     getPacketStream(): AsyncIterable<PacketData>;
 }
 
-export class TunnelManager extends EventEmitter {
+/**
+ * Bridges a CoreDevice tunnel `Socket` and a {@link TunTap} interface: IPv6 framing, TUN I/O, and packet fan-out.
+ * Emits {@link TunnelManagerEvents} (currently `data` with {@link PacketData}) for TCP/UDP packets, same as registered consumers.
+ */
+export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     private tun: TunTap | null;
     private cancelled: boolean;
     private readInterval: NodeJS.Timeout | null;
@@ -48,6 +74,7 @@ export class TunnelManager extends EventEmitter {
     private deviceConn: Socket | null;
     private cleanupPromise: Promise<void> | null;
 
+    /** Creates a manager with no TUN device until {@link TunnelManager.setupInterface} succeeds. */
     constructor() {
         super();
         this.tun = null;
@@ -60,14 +87,29 @@ export class TunnelManager extends EventEmitter {
         this.cleanupPromise = null;
     }
 
+    /**
+     * Register a listener for parsed tunnel packets (in addition to the `data` event).
+     *
+     * @param consumer — object with {@link PacketConsumer.onPacket}
+     */
     addPacketConsumer(consumer: PacketConsumer): void {
         this.packetConsumers.add(consumer);
     }
 
+    /**
+     * Unregister a consumer previously added with {@link TunnelManager.addPacketConsumer}.
+     *
+     * @param consumer — same reference as passed to `addPacketConsumer`
+     */
     removePacketConsumer(consumer: PacketConsumer): void {
         this.packetConsumers.delete(consumer);
     }
 
+    /**
+     * Async iterator over tunnel packets until {@link TunnelManager.stop} sets `cancelled`.
+     *
+     * @yields {@link PacketData} for each TCP/UDP packet
+     */
     async *getPacketStream(): AsyncIterable<PacketData> {
         const queue: PacketData[] = [];
         let resolver: ((value: IteratorResult<PacketData>) => void) | null = null;
@@ -105,6 +147,12 @@ export class TunnelManager extends EventEmitter {
         }
     }
 
+    /**
+     * Open a {@link TunTap}, assign the client IPv6 address/MTU, and add a /128 route to the server.
+     *
+     * @param tunnelInfo — handshake result (client address, MTU, server address)
+     * @returns interface name, MTU, and the live {@link TunTap} instance
+     */
     async setupInterface(tunnelInfo: TunnelInfo): Promise<{ name: string; mtu: number; interface: TunTap }> {
         log.debug(`Setting up tunnel with parameters:`, tunnelInfo);
 
@@ -145,6 +193,11 @@ export class TunnelManager extends EventEmitter {
         }
     }
 
+    /**
+     * Begin bidirectional forwarding: device socket ↔ TUN (requires {@link TunnelManager.setupInterface} first).
+     *
+     * @param deviceConn — connected tunnel socket after the CDTunnel handshake
+     */
     startForwarding(deviceConn: Socket): void {
         if (!this.tun) {
             log.error('TUN device is not set up');
@@ -187,6 +240,21 @@ export class TunnelManager extends EventEmitter {
         deviceConn.on('error', (err: Error) => {
             log.error('Device connection error: ', err);
         });
+    }
+
+    /**
+     * Idempotent shutdown: stop polling, destroy the socket, clear consumers, close the TUN device.
+     *
+     * @returns the same promise if already stopping/stopped
+     */
+    async stop(): Promise<void> {
+        // Prevent multiple concurrent stops
+        if (this.cleanupPromise) {
+            return this.cleanupPromise;
+        }
+
+        this.cleanupPromise = this._performStop();
+        return this.cleanupPromise;
     }
 
     private processBuffer(): void {
@@ -340,16 +408,6 @@ export class TunnelManager extends EventEmitter {
         }, 5); // Poll every 5ms
     }
 
-    async stop(): Promise<void> {
-        // Prevent multiple concurrent stops
-        if (this.cleanupPromise) {
-            return this.cleanupPromise;
-        }
-
-        this.cleanupPromise = this._performStop();
-        return this.cleanupPromise;
-    }
-
     private async _performStop(): Promise<void> {
         const tunName = this.tun ? this.tun.name : 'unknown';
         log.debug(`Stopping tunnel manager for ${tunName}`);
@@ -403,6 +461,12 @@ function formatIPv6Address(buffer: Buffer): string {
     return parts.join(':');
 }
 
+/**
+ * Perform the CDTunnel JSON handshake (8-byte magic + length-prefixed JSON) over `socket`.
+ *
+ * @param socket — connected stream to the tunnel service
+ * @returns parsed tunnel parameters from the device response
+ */
 export async function exchangeCoreTunnelParameters(socket: Socket): Promise<TunnelInfo> {
     return new Promise((resolve, reject) => {
         const request = {
@@ -493,6 +557,12 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
     });
 }
 
+/**
+ * End-to-end setup: handshake, TUN configuration, route, and forwarding on `secureServiceSocket`.
+ *
+ * @param secureServiceSocket — tunnel socket (e.g. from lockdown secure service)
+ * @returns connection handle with {@link TunnelConnection.closer} and packet APIs
+ */
 export async function connectToTunnelLockdown(secureServiceSocket: Socket): Promise<TunnelConnection> {
     const tunnelManager = new TunnelManager();
 
