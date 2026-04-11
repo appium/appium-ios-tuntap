@@ -1,3 +1,3 @@
 
-export { TunTap } from './TunTap.js';
+export { TunTap, type PacketCallback } from './TunTap.js';
 export * from './tunnel.js';
