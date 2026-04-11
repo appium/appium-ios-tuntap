@@ -19,10 +19,12 @@
 #include <netinet/in.h>
 #include <netinet6/in6_var.h>
 #define UTUN_CONTROL_NAME "com.apple.net.utun_control"
+#define UTUN_HEADER_SIZE 4
 #else
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <sys/stat.h>
+#define UTUN_HEADER_SIZE 0
 #endif
 
 // RAII wrapper for file descriptors
@@ -102,7 +104,8 @@ private:
 
   uv_poll_t* poll_handle_ = nullptr;
   Napi::ThreadSafeFunction tsfn_;
-  size_t poll_buffer_size_ = 65536;
+  static constexpr size_t MAX_POLL_BUFFER = 65535;
+  size_t poll_buffer_size_ = MAX_POLL_BUFFER;
 
   void StopPolling();
   static void PollCallback(uv_poll_t* handle, int status, int events);
@@ -192,7 +195,7 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   int utun_unit = 0;
   if (!name_.empty() && name_.find("utun") == 0) {
     try {
-      utun_unit = std::stoi(name_.substr(4)) + 1;
+      utun_unit = std::stoi(name_.substr(4)) + 1; // +1 because kernel uses unit=1 for utun0
     } catch(...) {
       utun_unit = 0;
     }
@@ -415,13 +418,15 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
 
   StopPolling();
 
-  // Optional buffer size as second argument (default: 65536)
-  poll_buffer_size_ = 65536;
+  // Optional buffer size as second argument (default: MAX_POLL_BUFFER)
+  poll_buffer_size_ = MAX_POLL_BUFFER;
   if (info.Length() > 1 && info[1].IsNumber()) {
     auto size = info[1].As<Napi::Number>().Uint32Value();
-    if (size > 0) {
-      poll_buffer_size_ = size;
+    if (size == 0 || size > MAX_POLL_BUFFER) {
+      Napi::RangeError::New(env, "Buffer size must be between 1 and 65535").ThrowAsJavaScriptException();
+      return env.Null();
     }
+    poll_buffer_size_ = size;
   }
 
   tsfn_ = Napi::ThreadSafeFunction::New(
@@ -433,7 +438,13 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   );
 
   uv_loop_t* loop = nullptr;
-  napi_get_uv_event_loop(env, &loop);
+  napi_status napi_st = napi_get_uv_event_loop(env, &loop);
+  if (napi_st != napi_ok || loop == nullptr) {
+    tsfn_.Release();
+    tsfn_ = nullptr;
+    Napi::Error::New(env, "Failed to acquire event loop").ThrowAsJavaScriptException();
+    return env.Null();
+  }
 
   auto handle = std::make_unique<uv_poll_t>();
   if (uv_poll_init(loop, handle.get(), fd_.get()) != 0) {
@@ -489,11 +500,7 @@ void TunDevice::PollCallback(uv_poll_t* handle, int status, int events) {
     return;
   }
 
-#ifdef __APPLE__
-  std::vector<uint8_t> buffer(self->poll_buffer_size_ + 4);
-#else
-  std::vector<uint8_t> buffer(self->poll_buffer_size_);
-#endif
+  std::vector<uint8_t> buffer(self->poll_buffer_size_ + UTUN_HEADER_SIZE);
   ssize_t bytes_read = read(self->fd_.get(), buffer.data(), buffer.size());
 
   if (bytes_read == 0) {
@@ -508,23 +515,14 @@ void TunDevice::PollCallback(uv_poll_t* handle, int status, int events) {
     return;
   }
 
-#ifdef __APPLE__
-  if (bytes_read > 4) {
+  if (bytes_read > UTUN_HEADER_SIZE) {
     self->tsfn_.BlockingCall(
       [buf = std::move(buffer), bytes_read](Napi::Env env, Napi::Function jsCallback) {
         if (env == nullptr || jsCallback.IsEmpty()) return;
-        jsCallback.Call({ Napi::Buffer<uint8_t>::Copy(env, buf.data() + 4, bytes_read - 4) });
+        jsCallback.Call({ Napi::Buffer<uint8_t>::Copy(env, buf.data() + UTUN_HEADER_SIZE, bytes_read - UTUN_HEADER_SIZE) });
       }
     );
   }
-#else
-  self->tsfn_.BlockingCall(
-    [buf = std::move(buffer), bytes_read](Napi::Env env, Napi::Function jsCallback) {
-      if (env == nullptr || jsCallback.IsEmpty()) return;
-      jsCallback.Call({ Napi::Buffer<uint8_t>::Copy(env, buf.data(), bytes_read) });
-    }
-  );
-#endif
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {

@@ -8,6 +8,12 @@ import { log } from './logger.js';
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
 const PLATFORM = process.platform;
+const DEFAULT_READ_BUFFER_SIZE = 4096;
+const MAX_BUFFER_SIZE = 0xFFFF; // 65535
+const DEFAULT_MTU = 1500;
+const MIN_MTU = 1280;
+
+export type PacketCallback = (data: Buffer) => void;
 
 interface NativeTunDevice {
     open(): boolean;
@@ -16,7 +22,7 @@ interface NativeTunDevice {
     write(data: Buffer): number;
     getName(): string;
     getFd(): number;
-    startPolling(callback: (data: Buffer) => void, bufferSize?: number): void;
+    startPolling(callback: PacketCallback, bufferSize?: number): void;
 }
 
 interface NativeTuntapModule {
@@ -158,10 +164,10 @@ export class TunTap {
         return true;
     }
 
-    read(maxSize: number = 4096): Buffer {
+    read(maxSize: number = DEFAULT_READ_BUFFER_SIZE): Buffer {
         this.assertReady();
-        if (maxSize <= 0 || maxSize > 65_536) {
-            throw new RangeError('Read size must be between 1 and 65536 bytes');
+        if (maxSize <= 0 || maxSize > MAX_BUFFER_SIZE) {
+            throw new RangeError(`Read size must be between 1 and ${MAX_BUFFER_SIZE} bytes`);
         }
 
         try {
@@ -179,8 +185,8 @@ export class TunTap {
         if (data.length === 0) {
             return 0;
         }
-        if (data.length > 65_536) {
-            throw new RangeError('Write data too large (max 65536 bytes)');
+        if (data.length > MAX_BUFFER_SIZE) {
+            throw new RangeError(`Write data too large (max ${MAX_BUFFER_SIZE} bytes)`);
         }
 
         try {
@@ -198,13 +204,13 @@ export class TunTap {
      * Start event-driven reading from the TUN device.
      * The callback is invoked with each packet read from the device.
      */
-    startPolling(callback: (data: Buffer) => void, bufferSize: number = 65_536): void {
+    startPolling(callback: PacketCallback, bufferSize: number = MAX_BUFFER_SIZE): void {
         this.assertReady();
         if (typeof callback !== 'function') {
             throw new TypeError('Callback must be a function');
         }
-        if (bufferSize <= 0 || bufferSize > 65_536) {
-            throw new RangeError('Buffer size must be between 1 and 65536 bytes');
+        if (bufferSize <= 0 || bufferSize > MAX_BUFFER_SIZE) {
+            throw new RangeError(`Buffer size must be between 1 and ${MAX_BUFFER_SIZE} bytes`);
         }
         this.device.startPolling(callback, bufferSize);
     }
@@ -217,13 +223,13 @@ export class TunTap {
         return this.device.getFd();
     }
 
-    async configure(address: string, mtu: number = 1500): Promise<void> {
+    async configure(address: string, mtu: number = DEFAULT_MTU): Promise<void> {
         this.assertReady();
         if (!isIPv6(address)) {
             throw new TypeError('Invalid IPv6 address format');
         }
-        if (mtu < 1280 || mtu > 65_535) {
-            throw new RangeError('MTU must be between 1280 and 65535');
+        if (mtu < MIN_MTU || mtu > MAX_BUFFER_SIZE) {
+            throw new RangeError(`MTU must be between ${MIN_MTU} and ${MAX_BUFFER_SIZE}`);
         }
 
         try {
