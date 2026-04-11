@@ -395,8 +395,17 @@ export class TunTap {
             throw new TunTapError('Could not parse interface statistics');
         }
 
-        const rxStats = (lines[rxIndex + 1] || '').trim().split(/\s+/);
-        const txStats = (lines[txIndex + 1] || '').trim().split(/\s+/);
+        const rxLine = lines[rxIndex + 1]?.trim();
+        const txLine = lines[txIndex + 1]?.trim();
+        if (!rxLine || !txLine) {
+            throw new TunTapError('Could not parse interface statistics: missing data lines');
+        }
+
+        const rxStats = rxLine.split(/\s+/);
+        const txStats = txLine.split(/\s+/);
+        if (rxStats.length < 3 || txStats.length < 3) {
+            throw new TunTapError('Could not parse interface statistics: unexpected format');
+        }
 
         return {
             rxBytes: parseInt(rxStats[0], 10) || 0,

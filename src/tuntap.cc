@@ -315,6 +315,10 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   size_t buffer_size = 4096;
   if (info.Length() > 0 && info[0].IsNumber()) {
     buffer_size = info[0].As<Napi::Number>().Uint32Value();
+    if (buffer_size == 0 || buffer_size > MAX_POLL_BUFFER) {
+      Napi::RangeError::New(env, "Read buffer size must be between 1 and 65535").ThrowAsJavaScriptException();
+      return env.Null();
+    }
   }
 
 #ifdef __APPLE__
@@ -488,6 +492,10 @@ void TunDevice::StopPolling() {
 void TunDevice::PollCallback(uv_poll_t* handle, int status, int events) {
   if (status < 0) {
     fprintf(stderr, "tuntap poll error: %s\n", uv_strerror(status));
+    auto* self = static_cast<TunDevice*>(handle->data);
+    if (self) {
+      self->StopPolling();
+    }
     return;
   }
 
