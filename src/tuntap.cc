@@ -316,7 +316,7 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   if (info.Length() > 0 && info[0].IsNumber()) {
     buffer_size = info[0].As<Napi::Number>().Uint32Value();
     if (buffer_size == 0 || buffer_size > MAX_POLL_BUFFER) {
-      Napi::RangeError::New(env, "Read buffer size must be between 1 and 65535").ThrowAsJavaScriptException();
+      Napi::RangeError::New(env, "Read buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER)).ThrowAsJavaScriptException();
       return env.Null();
     }
   }
@@ -427,7 +427,7 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   if (info.Length() > 1 && info[1].IsNumber()) {
     auto size = info[1].As<Napi::Number>().Uint32Value();
     if (size == 0 || size > MAX_POLL_BUFFER) {
-      Napi::RangeError::New(env, "Buffer size must be between 1 and 65535").ThrowAsJavaScriptException();
+      Napi::RangeError::New(env, "Buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER)).ThrowAsJavaScriptException();
       return env.Null();
     }
     poll_buffer_size_ = size;
