@@ -1,9 +1,9 @@
 import assert from 'node:assert';
-import { TunTap } from '../lib/index.js';
-import { spawn } from 'node:child_process';
+import {TunTap} from '../lib/index.js';
+import {spawn} from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { isRoot } from './utils.mjs';
+import {fileURLToPath} from 'node:url';
+import {isRoot} from './utils.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -16,35 +16,37 @@ describe('TunTap Integration Tests', function () {
     }
   });
 
-describe('TunTap CLI Utility Signal Handling', function () {
-  it('should exit promptly and clean up on SIGINT', function (done) {
-    this.timeout(10000);
+  describe('TunTap CLI Utility Signal Handling', function () {
+    it('should exit promptly and clean up on SIGINT', function (done) {
+      this.timeout(10000);
 
-    const cliPath = path.resolve(__dirname, 'test-tuntap.mjs');
-    const child = spawn('node', [cliPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const cliPath = path.resolve(__dirname, 'test-tuntap.mjs');
+      const child = spawn('node', [cliPath], {stdio: ['ignore', 'pipe', 'pipe']});
 
-    setTimeout(() => {
-      child.kill('SIGINT');
-    }, 500); // Give it a moment to enter the read/write step
+      setTimeout(() => {
+        child.kill('SIGINT');
+      }, 500); // Give it a moment to enter the read/write step
 
-    child.on('exit', (code, signal) => {
-      // Should exit with code 0 or null (if killed by signal)
-      if (signal === 'SIGINT' || code === 0) {
-        done();
-      } else {
-        done(new Error(`Process exited with code ${code} and signal ${signal}`));
-      }
-    });
+      child.on('exit', (code, signal) => {
+        // Should exit with code 0 or null (if killed by signal)
+        if (signal === 'SIGINT' || code === 0) {
+          done();
+        } else {
+          done(new Error(`Process exited with code ${code} and signal ${signal}`));
+        }
+      });
 
-    child.on('error', (err) => {
-      done(err);
+      child.on('error', (err) => {
+        done(err);
+      });
     });
   });
-});
 
-  afterEach(function() {
+  afterEach(function () {
     if (tun && tun.isOpen && !tun.isClosed) {
-      try { tun.close(); } catch {}
+      try {
+        tun.close();
+      } catch {}
     }
     tun = null;
   });

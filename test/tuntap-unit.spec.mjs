@@ -1,6 +1,6 @@
 import assert from 'node:assert';
-import { TunTap } from '../lib/index.js';
-import { isRoot } from './utils.mjs';
+import {TunTap} from '../lib/index.js';
+import {isRoot} from './utils.mjs';
 
 /**
  * NOTE: Most TunTap tests require root privileges (sudo) to run.
@@ -16,9 +16,11 @@ describe('TunTap Unit Tests', function () {
     }
   });
 
-  afterEach(function() {
+  afterEach(function () {
     if (tun && tun.isOpen && !tun.isClosed) {
-      try { tun.close(); } catch {}
+      try {
+        tun.close();
+      } catch {}
     }
     tun = null;
   });
@@ -53,15 +55,19 @@ describe('TunTap Unit Tests', function () {
     tun.close();
   });
 
-
   it('should not leave open handles after close', function (done) {
     tun = new TunTap();
     tun.open();
     tun.close();
     setTimeout(() => {
-      const handles = process._getActiveHandles().filter((h) =>
-        // Filter out the process's own stdio handles
-         !(h.constructor && h.constructor.name && h.constructor.name.match(/(Socket|WriteStream|ReadStream)/))
+      const handles = process._getActiveHandles().filter(
+        (h) =>
+          // Filter out the process's own stdio handles
+          !(
+            h.constructor &&
+            h.constructor.name &&
+            h.constructor.name.match(/(Socket|WriteStream|ReadStream)/)
+          ),
       );
       assert.ok(handles.length <= 2, 'No extra handles should remain after close');
       done();
