@@ -10,12 +10,6 @@ import { log } from './logger.js';
 import { createTunTapPlatform } from './platform/create-platform.js';
 import type { TunTapInterfaceStats, TunTapPlatform } from './platform/types.js';
 
-export {
-    TunTapDeviceError,
-    TunTapError,
-    TunTapPermissionError,
-} from './errors.js';
-
 const require = createRequire(import.meta.url);
 const DEFAULT_READ_BUFFER_SIZE = 4096;
 const MAX_BUFFER_SIZE = 0xFFFF; // 65535
