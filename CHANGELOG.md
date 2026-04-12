@@ -1,3 +1,9 @@
+## [0.1.8](https://github.com/appium/appium-ios-tuntap/compare/v0.1.7...v0.1.8) (2026-04-12)
+
+### Code Refactoring
+
+* isolate OS networking in TunTapPlatform ([#27](https://github.com/appium/appium-ios-tuntap/issues/27)) ([7de387f](https://github.com/appium/appium-ios-tuntap/commit/7de387f0e4c2a07b81056f8da95f69cf34809cef))
+
 ## [0.1.7](https://github.com/appium/appium-ios-tuntap/compare/v0.1.6...v0.1.7) (2026-04-11)
 
 ### Miscellaneous Chores
