@@ -1,18 +1,26 @@
-import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { isIPv6 } from 'node:net';
-import { promisify } from 'node:util';
 
+import {
+    TunTapDeviceError,
+    TunTapError,
+    TunTapPermissionError,
+} from './errors.js';
 import { log } from './logger.js';
+import { createTunTapPlatform } from './platform/create-platform.js';
+import type { TunTapInterfaceStats, TunTapPlatform } from './platform/types.js';
 
 const require = createRequire(import.meta.url);
-const execFileAsync = promisify(execFile);
-const PLATFORM = process.platform;
 const DEFAULT_READ_BUFFER_SIZE = 4096;
 const MAX_BUFFER_SIZE = 0xFFFF; // 65535
 const DEFAULT_MTU = 1500;
 const MIN_MTU = 1280;
 
+/**
+ * Called by {@link TunTap.startPolling} for each packet read from the TUN device.
+ *
+ * @param data — raw L3 frame (IPv6) read from the device
+ */
 export type PacketCallback = (data: Buffer) => void;
 
 interface NativeTunDevice {
@@ -31,28 +39,6 @@ interface NativeTuntapModule {
 
 const nativeTuntap = require('../build/Release/tuntap.node') as NativeTuntapModule;
 
-// Custom error types
-export class TunTapError extends Error {
-    constructor(message: string, public code?: string) {
-        super(message);
-        this.name = 'TunTapError';
-    }
-}
-
-export class TunTapPermissionError extends TunTapError {
-    constructor(message: string) {
-        super(message, 'EPERM');
-        this.name = 'TunTapPermissionError';
-    }
-}
-
-export class TunTapDeviceError extends TunTapError {
-    constructor(message: string) {
-        super(message, 'ENODEV');
-        this.name = 'TunTapDeviceError';
-    }
-}
-
 /**
  * Validates an IPv6 route destination (address with optional CIDR prefix).
  */
@@ -67,16 +53,24 @@ function isValidIPv6Route(destination: string): boolean {
 }
 
 /**
- * TUN/TAP device for IP tunneling
+ * High-level wrapper around the native TUN device with IPv6-only configuration helpers.
+ *
+ * Routing and addressing use a built-in OS backend chosen from the `platform` argument (requires root, EUID 0 on Darwin/Linux).
  */
 export class TunTap {
     private device: NativeTunDevice;
+    private readonly platformBackend: TunTapPlatform;
     private _isOpen: boolean;
     private _isClosed: boolean;
     private removeExitListener: (() => void) | null = null;
 
-    constructor(name: string = '') {
+    /**
+     * @param name — optional interface name hint for the native layer
+     * @param platform — Node.js platform id (e.g. `darwin`, `linux`); defaults to `process.platform`
+     */
+    constructor(name: string = '', platform: NodeJS.Platform = process.platform) {
         this.device = new nativeTuntap.TunDevice(name);
+        this.platformBackend = createTunTapPlatform(platform);
         this._isOpen = false;
         this._isClosed = false;
 
@@ -99,26 +93,24 @@ export class TunTap {
         };
     }
 
+    /** Whether {@link TunTap.open} has succeeded and {@link TunTap.close} has not run. */
     get isOpen(): boolean {
         return this._isOpen;
     }
 
+    /** Whether {@link TunTap.close} has been called (device cannot be reopened). */
     get isClosed(): boolean {
         return this._isClosed;
     }
 
     /**
-     * Throws if the device is not in a usable state (not open or already closed).
+     * Open the TUN device via the native addon.
+     *
+     * @returns `true` when the device is open
+     * @throws {TunTapError} if already closed
+     * @throws {TunTapDeviceError} if the device cannot be opened
+     * @throws {TunTapPermissionError} if the OS denies access
      */
-    private assertReady(): void {
-        if (!this._isOpen) {
-            throw new TunTapError('Device not open');
-        }
-        if (this._isClosed) {
-            throw new TunTapError('Device has been closed');
-        }
-    }
-
     open(): boolean {
         if (this._isClosed) {
             throw new TunTapError('Device has been closed and cannot be reopened');
@@ -144,6 +136,12 @@ export class TunTap {
         return this._isOpen;
     }
 
+    /**
+     * Close the device and unregister process `exit` cleanup.
+     *
+     * @returns `true` when closed (idempotent)
+     * @throws {TunTapError} on native close failure
+     */
     close(): boolean {
         if (this.removeExitListener) {
             this.removeExitListener();
@@ -164,6 +162,14 @@ export class TunTap {
         return true;
     }
 
+    /**
+     * Read one datagram/packet from the TUN device (blocking in the native layer).
+     *
+     * @param maxSize — upper bound on bytes to read (default 4096)
+     * @returns packet buffer
+     * @throws {TunTapError} if not open, closed, or read fails
+     * @throws {RangeError} if `maxSize` is out of range
+     */
     read(maxSize: number = DEFAULT_READ_BUFFER_SIZE): Buffer {
         this.assertReady();
         if (maxSize <= 0 || maxSize > MAX_BUFFER_SIZE) {
@@ -177,6 +183,15 @@ export class TunTap {
         }
     }
 
+    /**
+     * Write a full IPv6 packet to the TUN device.
+     *
+     * @param data — L3 payload to write
+     * @returns number of bytes written
+     * @throws {TunTapError} if not open, closed, or write fails
+     * @throws {TypeError} if `data` is not a `Buffer`
+     * @throws {RangeError} if `data` exceeds the maximum buffer size
+     */
     write(data: Buffer): number {
         this.assertReady();
         if (!Buffer.isBuffer(data)) {
@@ -201,8 +216,13 @@ export class TunTap {
     }
 
     /**
-     * Start event-driven reading from the TUN device.
-     * The callback is invoked with each packet read from the device.
+     * Start libuv-driven polling on the TUN fd; `callback` runs on the Node thread pool per packet.
+     *
+     * @param callback — invoked with each packet read from the device
+     * @param bufferSize — max read size per poll (default 65535)
+     * @throws {TunTapError} if not open or closed
+     * @throws {TypeError} if `callback` is not a function
+     * @throws {RangeError} if `bufferSize` is out of range
      */
     startPolling(callback: PacketCallback, bufferSize: number = MAX_BUFFER_SIZE): void {
         this.assertReady();
@@ -215,14 +235,25 @@ export class TunTap {
         this.device.startPolling(callback, bufferSize);
     }
 
+    /** OS-assigned interface name (e.g. `utun4` on macOS). */
     get name(): string {
         return this.device.getName();
     }
 
+    /** File descriptor for the open TUN device (for advanced use). */
     get fd(): number {
         return this.device.getFd();
     }
 
+    /**
+     * Configure IPv6 address and MTU on this interface using the platform backend (must run as root on Darwin/Linux).
+     *
+     * @param address — IPv6 address
+     * @param mtu — link MTU (min 1280, max 65535)
+     * @throws {TypeError} if `address` is not a valid IPv6 literal
+     * @throws {RangeError} if `mtu` is out of range
+     * @throws {TunTapError} on backend failure
+     */
     async configure(address: string, mtu: number = DEFAULT_MTU): Promise<void> {
         this.assertReady();
         if (!isIPv6(address)) {
@@ -233,47 +264,20 @@ export class TunTap {
         }
 
         try {
-            if (PLATFORM === 'darwin') {
-                await execFileAsync('sudo', ['ifconfig', this.name, 'inet6', address, 'prefixlen', '64', 'up']);
-                await execFileAsync('sudo', ['ifconfig', this.name, 'mtu', String(mtu)]);
-            } else if (PLATFORM === 'linux') {
-                await this.configureLinux(address, mtu);
-            } else {
-                throw new TunTapError(`Unsupported platform: ${PLATFORM}`);
-            }
+            await this.platformBackend.configure(this.name, address, mtu);
         } catch (err: unknown) {
             if (err instanceof TunTapError) {throw err;}
             throw new TunTapError(`Failed to configure TUN interface: ${(err as Error).message}`);
         }
     }
 
-    private async configureLinux(address: string, mtu: number): Promise<void> {
-        try {
-            await execFileAsync('which', ['ip']);
-        } catch {
-            throw new TunTapError(
-                'The "ip" command is not available. Please install iproute2 (e.g., sudo apt install iproute2)',
-            );
-        }
-
-        try {
-            await execFileAsync('sudo', ['ip', '-6', 'addr', 'add', `${address}/64`, 'dev', this.name]);
-        } catch (err: unknown) {
-            const message = (err as Error).message;
-            if (message.includes('Permission denied')) {
-                throw new TunTapPermissionError(
-                    'Permission denied when configuring network interface. Run with sudo.',
-                );
-            }
-            if (!message.includes('File exists')) {
-                throw err;
-            }
-            log.warn(`Address ${address} may already be configured on ${this.name}`);
-        }
-
-        await execFileAsync('sudo', ['ip', 'link', 'set', 'dev', this.name, 'up', 'mtu', String(mtu)]);
-    }
-
+    /**
+     * Add an IPv6 route via this TUN interface.
+     *
+     * @param destination — IPv6 address or CIDR (e.g. `fd00::/64`)
+     * @throws {TypeError} if `destination` is invalid
+     * @throws {TunTapError} on backend failure
+     */
     async addRoute(destination: string): Promise<void> {
         this.assertReady();
         if (!destination || typeof destination !== 'string') {
@@ -284,35 +288,20 @@ export class TunTap {
         }
 
         try {
-            if (PLATFORM === 'darwin') {
-                await execFileAsync('sudo', ['route', '-n', 'add', '-inet6', destination, '-interface', this.name]);
-            } else if (PLATFORM === 'linux') {
-                await this.addRouteLinux(destination);
-            } else {
-                throw new TunTapError(`Unsupported platform: ${PLATFORM}`);
-            }
+            await this.platformBackend.addRoute(this.name, destination);
         } catch (err: unknown) {
             if (err instanceof TunTapError) {throw err;}
             throw new TunTapError(`Failed to add route: ${(err as Error).message}`);
         }
     }
 
-    private async addRouteLinux(destination: string): Promise<void> {
-        try {
-            await execFileAsync('sudo', ['ip', '-6', 'route', 'add', destination, 'dev', this.name]);
-        } catch (err: unknown) {
-            const message = (err as Error).message;
-            if (message.includes('Permission denied')) {
-                throw new TunTapPermissionError('Permission denied when adding route. Run with sudo.');
-            }
-            if (message.includes('File exists')) {
-                log.info(`Route to ${destination} already exists`);
-                return;
-            }
-            throw err;
-        }
-    }
-
+    /**
+     * Remove an IPv6 route previously added for this interface.
+     *
+     * @param destination — same form as {@link TunTap.addRoute}
+     * @throws {TypeError} if `destination` is invalid
+     * @throws {TunTapError} if the backend reports an error other than “route missing”
+     */
     async removeRoute(destination: string): Promise<void> {
         this.assertReady();
         if (!destination || typeof destination !== 'string') {
@@ -323,13 +312,7 @@ export class TunTap {
         }
 
         try {
-            if (PLATFORM === 'darwin') {
-                await execFileAsync('sudo', ['route', '-n', 'delete', '-inet6', destination]);
-            } else if (PLATFORM === 'linux') {
-                await execFileAsync('sudo', ['ip', '-6', 'route', 'del', destination, 'dev', this.name]);
-            } else {
-                throw new TunTapError(`Unsupported platform: ${PLATFORM}`);
-            }
+            await this.platformBackend.removeRoute(this.name, destination);
         } catch (err: unknown) {
             const message = (err as Error).message;
             if (message.includes('not in table') || message.includes('No such process')) {
@@ -340,80 +323,31 @@ export class TunTap {
     }
 
     /**
-     * Get interface statistics.
+     * Fetch RX/TX counters for this interface from the OS (e.g. `netstat` / `ip -s`).
+     *
+     * @returns byte and packet counts plus error counters
+     * @throws {TunTapError} if not ready or stats cannot be parsed
      */
-    async getStats(): Promise<{
-        rxBytes: number;
-        txBytes: number;
-        rxPackets: number;
-        txPackets: number;
-        rxErrors: number;
-        txErrors: number;
-    }> {
+    async getStats(): Promise<TunTapInterfaceStats> {
         this.assertReady();
 
         try {
-            if (PLATFORM === 'darwin') {
-                return await this.getStatsDarwin();
-            }
-            if (PLATFORM === 'linux') {
-                return await this.getStatsLinux();
-            }
-            throw new TunTapError(`Unsupported platform: ${PLATFORM}`);
+            return await this.platformBackend.getStats(this.name);
         } catch (err: unknown) {
             if (err instanceof TunTapError) {throw err;}
             throw new TunTapError(`Failed to get interface statistics: ${(err as Error).message}`);
         }
     }
 
-    private async getStatsDarwin() {
-        const { stdout } = await execFileAsync('netstat', ['-I', this.name, '-b']);
-        const lines = stdout.trim().split('\n');
-        if (lines.length < 2) {
-            throw new TunTapError('Unexpected netstat output');
+    /**
+     * Throws if the device is not in a usable state (not open or already closed).
+     */
+    private assertReady(): void {
+        if (!this._isOpen) {
+            throw new TunTapError('Device not open');
         }
-
-        const stats = lines[1].split(/\s+/);
-        return {
-            rxPackets: parseInt(stats[4], 10) || 0,
-            rxErrors: parseInt(stats[5], 10) || 0,
-            rxBytes: parseInt(stats[6], 10) || 0,
-            txPackets: parseInt(stats[7], 10) || 0,
-            txErrors: parseInt(stats[8], 10) || 0,
-            txBytes: parseInt(stats[9], 10) || 0,
-        };
-    }
-
-    private async getStatsLinux() {
-        const { stdout } = await execFileAsync('ip', ['-s', 'link', 'show', this.name]);
-        const lines = stdout.trim().split('\n');
-
-        const rxIndex = lines.findIndex((line) => line.includes('RX:'));
-        const txIndex = lines.findIndex((line) => line.includes('TX:'));
-
-        if (rxIndex === -1 || txIndex === -1) {
-            throw new TunTapError('Could not parse interface statistics');
+        if (this._isClosed) {
+            throw new TunTapError('Device has been closed');
         }
-
-        const rxLine = lines[rxIndex + 1]?.trim();
-        const txLine = lines[txIndex + 1]?.trim();
-        if (!rxLine || !txLine) {
-            throw new TunTapError('Could not parse interface statistics: missing data lines');
-        }
-
-        const rxStats = rxLine.split(/\s+/);
-        const txStats = txLine.split(/\s+/);
-        if (rxStats.length < 3 || txStats.length < 3) {
-            throw new TunTapError('Could not parse interface statistics: unexpected format');
-        }
-
-        return {
-            rxBytes: parseInt(rxStats[0], 10) || 0,
-            rxPackets: parseInt(rxStats[1], 10) || 0,
-            rxErrors: parseInt(rxStats[2], 10) || 0,
-            txBytes: parseInt(txStats[0], 10) || 0,
-            txPackets: parseInt(txStats[1], 10) || 0,
-            txErrors: parseInt(txStats[2], 10) || 0,
-        };
     }
 }
