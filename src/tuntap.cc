@@ -47,6 +47,7 @@ private:
 
 Napi::FunctionReference TunDevice::constructor;
 
+// Defines and exports the JS class constructor: new TunDevice(name?)
 Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
   Napi::HandleScope scope(env);
 
@@ -67,6 +68,7 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
   return exports;
 }
 
+// Creates a TunDevice wrapper; optional first arg is requested interface name.
 TunDevice::TunDevice(const Napi::CallbackInfo& info)
   : Napi::ObjectWrap<TunDevice>(info), backend_(CreatePlatformBackend()), is_open_(false) {
   Napi::Env env = info.Env();
@@ -77,11 +79,14 @@ TunDevice::TunDevice(const Napi::CallbackInfo& info)
   }
 }
 
+// Ensures fd/poll resources are closed when object is destroyed.
 TunDevice::~TunDevice() {
   std::lock_guard<std::mutex> lock(device_mutex_);
   CloseInternal();
 }
 
+// JS: open() -> boolean
+// Opens the backend device and configures the fd as non-blocking.
 Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
@@ -109,6 +114,8 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(env, true);
 }
 
+// JS: close() -> boolean
+// Safely closes device resources; calling multiple times is allowed.
 Napi::Value TunDevice::Close(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
@@ -116,6 +123,8 @@ Napi::Value TunDevice::Close(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(env, true);
 }
 
+// JS: read(bufferSize?) -> Buffer
+// Reads one payload packet, or returns an empty Buffer when no data is available.
 Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
@@ -148,6 +157,8 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   return Napi::Buffer<uint8_t>::Copy(env, packet.data(), static_cast<size_t>(bytes_read));
 }
 
+// JS: write(buffer) -> number
+// Writes one packet and returns payload bytes accepted by the backend.
 Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
@@ -175,16 +186,22 @@ Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
   return Napi::Number::New(env, bytes_written);
 }
 
+// JS: getName() -> string
+// Returns the assigned interface name after open().
 Napi::Value TunDevice::GetName(const Napi::CallbackInfo& info) {
   std::lock_guard<std::mutex> lock(device_mutex_);
   return Napi::String::New(info.Env(), name_);
 }
 
+// JS: getFd() -> number
+// Returns the native file descriptor, or -1 before open()/after close().
 Napi::Value TunDevice::GetFd(const Napi::CallbackInfo& info) {
   std::lock_guard<std::mutex> lock(device_mutex_);
   return Napi::Number::New(info.Env(), fd_.get());
 }
 
+// JS: startPolling(callback, bufferSize?) -> void
+// Starts libuv polling and invokes callback with packet payload Buffers.
 Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
@@ -253,6 +270,7 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   return env.Undefined();
 }
 
+// Node-API module entrypoint.
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   return TunDevice::Init(env, exports);
 }

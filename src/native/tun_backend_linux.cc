@@ -13,22 +13,23 @@
 #include <linux/if_tun.h>
 
 namespace {
+constexpr const char* kTunDevicePath = "/dev/net/tun";
 
 class LinuxTunBackend : public TunPlatformBackend {
 public:
   bool OpenDevice(const std::string& requested_name, OpenResult& out, std::string& error) override {
     struct stat statbuf;
-    if (stat("/dev/net/tun", &statbuf) != 0) {
+    if (stat(kTunDevicePath, &statbuf) != 0) {
       error =
         "TUN/TAP device not available: /dev/net/tun does not exist. "
         "Please ensure the TUN/TAP kernel module is loaded (modprobe tun).";
       return false;
     }
 
-    FileDescriptor temp_fd(open("/dev/net/tun", O_RDWR));
+    FileDescriptor temp_fd(open(kTunDevicePath, O_RDWR));
     if (!temp_fd.is_valid()) {
       error =
-        std::string("Failed to open /dev/net/tun: ") + strerror(errno) +
+        std::string("Failed to open ") + kTunDevicePath + ": " + strerror(errno) +
         ". This usually means you don't have sufficient permissions. "
         "Try running with sudo or add your user to the 'tun' group.";
       return false;
