@@ -1,5 +1,6 @@
 import type {ExecException} from 'node:child_process';
 
+import {fs} from '@appium/support';
 import {log} from '../logger.js';
 import {TunTapError} from '../errors.js';
 import {execFileAsync} from './exec.js';
@@ -12,7 +13,7 @@ export class LinuxTunTapPlatform implements TunTapPlatform {
   async configure(interfaceName: string, address: string, mtu: number): Promise<void> {
     assertEffectiveRoot();
     try {
-      await execFileAsync('which', ['ip']);
+      await fs.which('ip');
     } catch {
       throw new TunTapError(
         'The "ip" command is not available. Please install iproute2 (e.g., sudo apt install iproute2)',
