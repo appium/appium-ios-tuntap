@@ -1,3 +1,9 @@
+## [0.1.9](https://github.com/appium/appium-ios-tuntap/compare/v0.1.8...v0.1.9) (2026-04-13)
+
+### Miscellaneous Chores
+
+* Introduce automated formatting using prettier tool ([#28](https://github.com/appium/appium-ios-tuntap/issues/28)) ([4b74da1](https://github.com/appium/appium-ios-tuntap/commit/4b74da15932ffb630c3c6e368de73b1e933afbba))
+
 ## [0.1.8](https://github.com/appium/appium-ios-tuntap/compare/v0.1.7...v0.1.8) (2026-04-12)
 
 ### Code Refactoring
