@@ -8,11 +8,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install dependencies
 npm install
 
-# Build native addon + TypeScript (required before running tests)
+# TypeScript compile (runs on prepare after install; required before tests if lib/ is stale)
 npm run prepare
 
-# Build only the native C++ addon
+# Native addon: install runs node-gyp-build (uses prebuilds/ when present, else compiles)
+npm install
+
+# Build only the native C++ addon (from source)
 npm run build:addon
+
+# Produce N-API prebuilds under prebuilds/ (release CI uses this per OS/arch matrix)
+npm run build:prebuilds
 
 # Build only TypeScript
 npm run build
@@ -70,7 +76,7 @@ A C++17 Node-API (NAPI) addon built via `node-gyp`. It exposes a single `TunDevi
 ### TypeScript layer (`src/`)
 
 - **`errors.ts`** — shared error classes used by `TunTap` and `platform/*`.
-- **`TunTap.ts`** — loads the native addon via `createRequire`, validates IPv6/MTU/buffers, and calls a **`TunTapPlatform`** instance chosen by **`new TunTap(name?, platform?)`** where `platform` is a **`NodeJS.Platform`** string (default `process.platform`). No custom platform object is accepted at runtime; new OS support is wired in **`platform/create-platform.ts`**.
+- **`TunTap.ts`** — loads the native addon via **`node-gyp-build`** (prebuilds or `build/Release`), validates IPv6/MTU/buffers, and calls a **`TunTapPlatform`** instance chosen by **`new TunTap(name?, platform?)`** where `platform` is a **`NodeJS.Platform`** string (default `process.platform`). No custom platform object is accepted at runtime; new OS support is wired in **`platform/create-platform.ts`**.
 - **`platform/*`** — OS-specific **`execFile`** usage for address, MTU, routes, and stats. Built-in Darwin/Linux paths require **effective UID 0** (**`assertEffectiveRoot`**); commands are run **without** embedding `sudo` in argv. **`getStats`** uses read-only tooling where possible without an extra root check.
 - **`tunnel.ts`** — CDTunnel handshake (`exchangeCoreTunnelParameters`), **`TunnelManager`** (typed **`TunnelManagerEvents`** / `data` → **`PacketData`**), and **`connectToTunnelLockdown`**.
 - **`logger.ts`** — thin wrapper around `@appium/support` logger.
@@ -78,7 +84,8 @@ A C++17 Node-API (NAPI) addon built via `node-gyp`. It exposes a single `TunDevi
 
 ### Build output
 
-- `build/Release/tuntap.node` — compiled native addon (loaded at runtime via `createRequire`)
+- `prebuilds/<platform>-<arch>/*.node` — N-API binaries shipped in the npm package (built in release CI)
+- `build/Release/tuntap.node` — local compile fallback (from `npm run build:addon` or `node-gyp-build` at install)
 - `lib/` — compiled TypeScript output; `lib/index.js` is the package entry point
 
 ### Tests

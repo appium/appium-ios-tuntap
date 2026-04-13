@@ -9,11 +9,13 @@
     "clean": "rm -rf build node_modules lib",
     "build": "npx tsc",
     "build:addon": "node-gyp rebuild",
+    "build:prebuilds": "prebuildify --napi --strip",
     "lint": "eslint .",
     "lint:fix": "npm run lint -- --fix",
     "format": "prettier -w ./src ./test",
     "format:check": "prettier --check ./src ./test",
-    "prepare": "npm run build:addon && npm run build",
+    "install": "node-gyp-build",
+    "prepare": "npm run build",
     "test": "sudo npm run test:integration && npm run test:unit",
     "test:unit": "sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
     "test:integration": "sudo npx mocha 'test/tuntap-integration.spec.mjs' --exit --timeout 2m"
@@ -21,7 +23,7 @@
   "files": [
     "src/tuntap.cc",
     "lib",
-    "build",
+    "prebuilds",
     "binding.gyp",
     "package.json",
     "README.md",
@@ -45,6 +47,7 @@
   "dependencies": {
     "@appium/support": "^7.0.0-rc.1",
     "node-addon-api": "^8.5.0",
+    "node-gyp-build": "^4.8.4",
     "typescript": "^6.0.2"
   },
   "devDependencies": {
@@ -54,7 +57,8 @@
     "@types/node": "^25.0.1",
     "conventional-changelog-conventionalcommits": "^9.0.0",
     "semantic-release": "^25.0.2",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "prebuildify": "^6.0.1"
   },
   "prettier": {
     "bracketSpacing": false,

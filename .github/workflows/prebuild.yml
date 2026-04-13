@@ -1,0 +1,59 @@
+# Reusable workflow: N-API prebuild matrix (darwin x64/arm64, linux x64/arm64).
+# Call from CI (PR/push) to verify native builds; call from release with artifacts for npm pack.
+
+name: Prebuild native addon
+
+on:
+  workflow_call:
+    inputs:
+      upload-artifacts:
+        description: Upload each platform .node as a workflow artifact (off for PR smoke builds)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  prebuild:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs-on: macos-latest
+            arch: arm64
+            artifact: darwin-arm64
+          - runs-on: macos-latest
+            arch: x64
+            artifact: darwin-x64
+          - runs-on: ubuntu-latest
+            arch: x64
+            artifact: linux-x64
+          - runs-on: ubuntu-24.04-arm
+            arch: arm64
+            artifact: linux-arm64
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+    - uses: actions/checkout@v6
+    - name: Use Node.js LTS
+      uses: actions/setup-node@v6
+      with:
+        node-version: lts/*
+        check-latest: true
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        if ! sudo apt-get install -y linux-headers-$(uname -r); then
+          sudo apt-get install -y linux-headers-generic
+        fi
+    - run: npm install --no-package-lock
+      name: Install dependencies
+    - name: Create N-API prebuild
+      run: npm run build:prebuilds -- --arch ${{ matrix.arch }}
+    - name: Upload prebuild
+      if: inputs.upload-artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: prebuild-${{ matrix.artifact }}
+        path: prebuilds/
