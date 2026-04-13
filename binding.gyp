@@ -2,7 +2,11 @@
   "targets": [
     {
       "target_name": "tuntap",
-      "sources": [ "src/tuntap.cc" ],
+      "sources": [
+        "src/tuntap.cc",
+        "src/native/file_descriptor.cc",
+        "src/native/tun_backend_common.cc"
+      ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")"
       ],
@@ -60,6 +64,9 @@
       ],
       "conditions": [
         ["OS=='linux'", {
+          "sources": [
+            "src/native/tun_backend_linux.cc"
+          ],
           "cflags": [
             "-pthread"
           ],
@@ -71,6 +78,9 @@
           ]
         }],
         ["OS=='mac'", {
+          "sources": [
+            "src/native/tun_backend_darwin.cc"
+          ],
           "xcode_settings": {
             "OTHER_LDFLAGS": [
               "-framework", "SystemConfiguration",
