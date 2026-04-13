@@ -54,20 +54,24 @@ public:
     return true;
   }
 
-  ssize_t ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
+  ReadPacketStatus ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
     out.resize(max_payload_size);
     ssize_t bytes_read = read(fd, out.data(), out.size());
     if (bytes_read < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         out.clear();
-        return 0;
+        return ReadPacketStatus::NoData;
       }
       error = std::string("Read error: ") + strerror(errno);
-      return -1;
+      return ReadPacketStatus::Error;
+    }
+    if (bytes_read == 0) {
+      out.clear();
+      return ReadPacketStatus::Closed;
     }
 
     out.resize(static_cast<size_t>(bytes_read));
-    return bytes_read;
+    return ReadPacketStatus::Data;
   }
 
   ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) override {

@@ -70,26 +70,30 @@ public:
     return true;
   }
 
-  ssize_t ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
+  ReadPacketStatus ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
     std::vector<uint8_t> frame(max_payload_size + kUtunHeaderSize);
     ssize_t bytes_read = read(fd, frame.data(), frame.size());
     if (bytes_read < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         out.clear();
-        return 0;
+        return ReadPacketStatus::NoData;
       }
       error = std::string("Read error: ") + strerror(errno);
-      return -1;
+      return ReadPacketStatus::Error;
+    }
+    if (bytes_read == 0) {
+      out.clear();
+      return ReadPacketStatus::Closed;
     }
     if (bytes_read <= static_cast<ssize_t>(kUtunHeaderSize)) {
       out.clear();
-      return 0;
+      return ReadPacketStatus::NoData;
     }
 
     const auto payload_len = static_cast<size_t>(bytes_read - kUtunHeaderSize);
     out.resize(payload_len);
     memcpy(out.data(), frame.data() + kUtunHeaderSize, payload_len);
-    return static_cast<ssize_t>(payload_len);
+    return ReadPacketStatus::Data;
   }
 
   ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) override {

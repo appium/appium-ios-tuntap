@@ -145,16 +145,16 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
 
   std::vector<uint8_t> packet;
   std::string error;
-  ssize_t bytes_read = backend_->ReadPacket(fd_.get(), buffer_size, packet, error);
-  if (bytes_read < 0) {
+  ReadPacketStatus read_status = backend_->ReadPacket(fd_.get(), buffer_size, packet, error);
+  if (read_status == ReadPacketStatus::Error) {
     Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return env.Null();
   }
-  if (bytes_read == 0) {
+  if (read_status == ReadPacketStatus::NoData || read_status == ReadPacketStatus::Closed) {
     return Napi::Buffer<uint8_t>::New(env, 0);
   }
 
-  return Napi::Buffer<uint8_t>::Copy(env, packet.data(), static_cast<size_t>(bytes_read));
+  return Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size());
 }
 
 // JS: write(buffer) -> number
@@ -323,13 +323,20 @@ void TunDevice::PollCallback(uv_poll_t* handle, int status, int events) {
 
   std::vector<uint8_t> packet;
   std::string error;
-  ssize_t bytes_read = self->backend_->ReadPacket(self->fd_.get(), self->poll_buffer_size_, packet, error);
-  if (bytes_read < 0) {
+  ReadPacketStatus read_status = self->backend_->ReadPacket(self->fd_.get(), self->poll_buffer_size_, packet, error);
+  // Backend reported an unrecoverable read failure; stop polling this fd.
+  if (read_status == ReadPacketStatus::Error) {
     fprintf(stderr, "tuntap read error: %s\n", error.c_str());
     self->StopPolling();
     return;
   }
-  if (bytes_read == 0) {
+  // EOF/peer close: device is no longer readable, so tear down polling.
+  if (read_status == ReadPacketStatus::Closed) {
+    self->StopPolling();
+    return;
+  }
+  // Transient empty read (e.g. EAGAIN): keep poll active and wait for next event.
+  if (read_status == ReadPacketStatus::NoData) {
     return;
   }
 

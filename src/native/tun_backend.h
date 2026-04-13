@@ -14,11 +14,18 @@ struct OpenResult {
   std::string interface_name;
 };
 
+enum class ReadPacketStatus {
+  Data,
+  NoData,
+  Closed,
+  Error,
+};
+
 class TunPlatformBackend {
 public:
   virtual ~TunPlatformBackend() = default;
   virtual bool OpenDevice(const std::string& requested_name, OpenResult& out, std::string& error) = 0;
-  virtual ssize_t ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) = 0;
+  virtual ReadPacketStatus ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) = 0;
   virtual ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) = 0;
 };
 
