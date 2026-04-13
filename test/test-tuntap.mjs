@@ -1,5 +1,5 @@
-import { TunTap } from '../lib/index.js';
-import { log } from '../lib/logger.js';
+import {TunTap} from '../lib/index.js';
+import {log} from '../lib/logger.js';
 
 let tun;
 let shuttingDown = false;
@@ -9,7 +9,9 @@ let shuttingDown = false;
  * Uses a flag to ensure cleanup is only performed once.
  */
 function cleanup() {
-  if (shuttingDown) {return;}
+  if (shuttingDown) {
+    return;
+  }
   shuttingDown = true;
   try {
     // Only close if tun exists, is open, and not already closed
