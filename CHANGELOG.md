@@ -1,3 +1,9 @@
+## [0.1.10](https://github.com/appium/appium-ios-tuntap/compare/v0.1.9...v0.1.10) (2026-04-13)
+
+### Bug Fixes
+
+* Use native `which` helper ([#32](https://github.com/appium/appium-ios-tuntap/issues/32)) ([37cb5c3](https://github.com/appium/appium-ios-tuntap/commit/37cb5c3ed68d7c46fdacec00b94d2c3319bc440c))
+
 ## [0.1.9](https://github.com/appium/appium-ios-tuntap/compare/v0.1.8...v0.1.9) (2026-04-13)
 
 ### Miscellaneous Chores
