@@ -42,7 +42,14 @@ sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m
 
 ```
 src/
-  tuntap.cc              # C++ NAPI addon (built to build/Release/tuntap.node)
+  tuntap.cc              # C++ Node-API surface (TunDevice class + module exports)
+  native/
+    file_descriptor.h    # RAII file descriptor abstraction used by native backends
+    file_descriptor.cc   # FileDescriptor implementation
+    tun_backend.h        # TunPlatformBackend interface + OpenResult + shared declarations
+    tun_backend_common.cc# Backend factory + non-blocking fd helper
+    tun_backend_darwin.cc# macOS utun backend implementation
+    tun_backend_linux.cc # Linux /dev/net/tun backend implementation
   index.ts               # Package entry: TunTap, PacketCallback, errors, tunnel/*
   TunTap.ts              # Wraps native TunDevice; validation; delegates OS networking to platform layer
   tunnel.ts              # CDTunnel protocol, TunnelManager, connectToTunnelLockdown
@@ -69,9 +76,15 @@ test/
 
 This is a Node.js native addon package that provides TUN/TAP virtual network device support for Appium iOS tunneling. It has two layers:
 
-### Native layer (`src/tuntap.cc`)
+### Native layer (`src/tuntap.cc`, `src/native/*`)
 
-A C++17 Node-API (NAPI) addon built via `node-gyp`. It exposes a single `TunDevice` class with `open()`, `close()`, `read()`, `write()`, `startPolling()`, `getName()`, and `getFd()`. Platform-specific code is conditional: macOS uses `utun` (kernel control socket via `UTUN_CONTROL_NAME`), Linux uses `/dev/net/tun` with `IFF_TUN`. The `startPolling` method uses a libuv poll handle (`uv_poll_t`) to drive event-based reads from the native thread pool rather than blocking JS.
+A C++17 Node-API (NAPI) addon built via `node-gyp`. `src/tuntap.cc` is intentionally kept as the N-API interface/glue: it exposes `TunDevice` (`open()`, `close()`, `read()`, `write()`, `startPolling()`, `getName()`, `getFd()`), validates JS arguments, manages libuv polling (`uv_poll_t`), and bridges callbacks via `Napi::ThreadSafeFunction`.
+
+Native implementation details are split into `src/native/*`:
+- `TunPlatformBackend` interface in `tun_backend.h`
+- platform-specific backends in `tun_backend_darwin.cc` (utun) and `tun_backend_linux.cc` (`/dev/net/tun`)
+- shared utilities/factory in `tun_backend_common.cc`
+- `FileDescriptor` RAII abstraction in `file_descriptor.*`
 
 ### TypeScript layer (`src/`)
 
