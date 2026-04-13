@@ -1,3 +1,9 @@
+## [0.2.0](https://github.com/appium/appium-ios-tuntap/compare/v0.1.10...v0.2.0) (2026-04-13)
+
+### Features
+
+* Supply the package with prebuilt addon ([#31](https://github.com/appium/appium-ios-tuntap/issues/31)) ([c475d1c](https://github.com/appium/appium-ios-tuntap/commit/c475d1ce89a4b44d0ebed90f9b4b8fc519241079))
+
 ## [0.1.10](https://github.com/appium/appium-ios-tuntap/compare/v0.1.9...v0.1.10) (2026-04-13)
 
 ### Bug Fixes
