@@ -55,12 +55,6 @@ jobs:
     - name: Install npm dependencies
       run: sfw npm install
 
-    - name: Build native addon
-      run: |
-        # Set environment variable to treat warnings as non-fatal
-        export CXXFLAGS="-Wno-error"
-        npm run build:addon
-
     - name: Build TypeScript
       run: npm run build
 
