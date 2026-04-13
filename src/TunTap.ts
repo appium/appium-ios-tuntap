@@ -1,5 +1,7 @@
 import {createRequire} from 'node:module';
 import {isIPv6} from 'node:net';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 import {TunTapDeviceError, TunTapError, TunTapPermissionError} from './errors.js';
 import {log} from './logger.js';
@@ -7,6 +9,8 @@ import {createTunTapPlatform} from './platform/create-platform.js';
 import type {TunTapInterfaceStats, TunTapPlatform} from './platform/types.js';
 
 const require = createRequire(import.meta.url);
+/** Package root (contains binding.gyp, prebuilds/, or build/ after compile). */
+const pkgRoot = path.join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const DEFAULT_READ_BUFFER_SIZE = 4096;
 const MAX_BUFFER_SIZE = 0xffff; // 65535
 const DEFAULT_MTU = 1500;
@@ -33,7 +37,7 @@ interface NativeTuntapModule {
   TunDevice: new (name?: string) => NativeTunDevice;
 }
 
-const nativeTuntap = require('../build/Release/tuntap.node') as NativeTuntapModule;
+const nativeTuntap = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
 
 /**
  * Validates an IPv6 route destination (address with optional CIDR prefix).

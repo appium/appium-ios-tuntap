@@ -38,6 +38,9 @@ bower_components
 # Compiled binary addons (https://nodejs.org/api/addons.html)
 build/Release
 
+# Prebuilds are produced in CI before publish (or via npm run prebuild); do not commit.
+prebuilds/
+
 # Dependency directories
 node_modules/
 jspm_packages/

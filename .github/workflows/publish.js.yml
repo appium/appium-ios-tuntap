@@ -12,7 +12,11 @@ permissions:
   id-token: write # to enable use of OIDC for trusted publishing and npm provenance
 
 jobs:
+  prebuild:
+    uses: ./.github/workflows/prebuild.yml
+
   build:
+    needs: prebuild
     runs-on: macos-latest
     steps:
     - uses: actions/checkout@v6
@@ -21,6 +25,18 @@ jobs:
       with:
         node-version: lts/*
         check-latest: true
+    - name: Download prebuilds
+      uses: actions/download-artifact@v4
+      with:
+        pattern: prebuild-*
+        path: prebuild-staging
+    - name: Merge prebuilds
+      run: |
+        mkdir -p prebuilds
+        for dir in prebuild-staging/prebuild-*/; do
+          cp -R "${dir}"* prebuilds/
+        done
+        find prebuilds -type f -name '*.node' | sort
     - run: npm install --no-package-lock
       name: Install dependencies
     - run: npm run test
