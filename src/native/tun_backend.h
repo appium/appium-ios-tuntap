@@ -1,5 +1,9 @@
 #pragma once
 
+#if !defined(__linux__) && !defined(__APPLE__)
+#error "appium-ios-tuntap native addon supports only Linux and macOS"
+#endif
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>

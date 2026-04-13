@@ -94,6 +94,11 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   if (is_open_) {
     return Napi::Boolean::New(env, true);
   }
+  if (!backend_) {
+    Napi::Error::New(env, "Unsupported platform: no native TUN backend available")
+      .ThrowAsJavaScriptException();
+    return Napi::Boolean::New(env, false);
+  }
 
   OpenResult result;
   std::string error;

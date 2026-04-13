@@ -71,8 +71,8 @@ public:
   }
 
   ReadPacketStatus ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
-    std::vector<uint8_t> frame(max_payload_size + kUtunHeaderSize);
-    ssize_t bytes_read = read(fd, frame.data(), frame.size());
+    out.resize(max_payload_size + kUtunHeaderSize);
+    ssize_t bytes_read = read(fd, out.data(), out.size());
     if (bytes_read < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         out.clear();
@@ -91,8 +91,9 @@ public:
     }
 
     const auto payload_len = static_cast<size_t>(bytes_read - kUtunHeaderSize);
+    // Collapse the utun 4-byte address-family prefix in-place.
+    memmove(out.data(), out.data() + kUtunHeaderSize, payload_len);
     out.resize(payload_len);
-    memcpy(out.data(), frame.data() + kUtunHeaderSize, payload_len);
     return ReadPacketStatus::Data;
   }
 
