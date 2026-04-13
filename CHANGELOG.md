@@ -1,3 +1,9 @@
+## [0.2.1](https://github.com/appium/appium-ios-tuntap/compare/v0.2.0...v0.2.1) (2026-04-13)
+
+### Miscellaneous Chores
+
+* Refactor native tuntap implementation ([#33](https://github.com/appium/appium-ios-tuntap/issues/33)) ([c24636e](https://github.com/appium/appium-ios-tuntap/commit/c24636ed054dd37a36a08b6b5c09bfd7f40d55b1))
+
 ## [0.2.0](https://github.com/appium/appium-ios-tuntap/compare/v0.1.10...v0.2.0) (2026-04-13)
 
 ### Features
