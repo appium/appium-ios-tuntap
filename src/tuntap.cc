@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <atomic>
+#include <cstdio>
 #include <uv.h>
 
 #ifdef __APPLE__
@@ -19,12 +20,10 @@
 #include <netinet/in.h>
 #include <netinet6/in6_var.h>
 #define UTUN_CONTROL_NAME "com.apple.net.utun_control"
-#define UTUN_HEADER_SIZE 4
 #else
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <sys/stat.h>
-#define UTUN_HEADER_SIZE 0
 #endif
 
 // RAII wrapper for file descriptors
@@ -78,6 +77,22 @@ public:
   }
 };
 
+struct OpenResult {
+  FileDescriptor fd;
+  std::string interface_name;
+};
+
+class TunPlatformBackend {
+public:
+  virtual ~TunPlatformBackend() = default;
+  virtual bool OpenDevice(const std::string& requested_name, OpenResult& out, std::string& error) = 0;
+  virtual ssize_t ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) = 0;
+  virtual ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) = 0;
+};
+
+static bool SetNonBlocking(int fd, std::string& error);
+static std::unique_ptr<TunPlatformBackend> CreatePlatformBackend();
+
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
 public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports);
@@ -99,6 +114,7 @@ private:
 
   FileDescriptor fd_;
   std::string name_;
+  std::unique_ptr<TunPlatformBackend> backend_;
   std::atomic<bool> is_open_;
   std::mutex device_mutex_;
 
@@ -112,6 +128,8 @@ private:
 };
 
 Napi::FunctionReference TunDevice::constructor;
+
+// #region Public N-API interface
 
 Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
   Napi::HandleScope scope(env);
@@ -134,7 +152,7 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
 }
 
 TunDevice::TunDevice(const Napi::CallbackInfo& info)
-  : Napi::ObjectWrap<TunDevice>(info), is_open_(false) {
+  : Napi::ObjectWrap<TunDevice>(info), backend_(CreatePlatformBackend()), is_open_(false) {
   Napi::Env env = info.Env();
   Napi::HandleScope scope(env);
 
@@ -148,13 +166,6 @@ TunDevice::~TunDevice() {
   CloseInternal();
 }
 
-void TunDevice::CloseInternal() {
-  if (is_open_.exchange(false)) {
-    StopPolling();
-    fd_.reset();
-  }
-}
-
 Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
@@ -163,134 +174,20 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
     return Napi::Boolean::New(env, true);
   }
 
-#ifdef __APPLE__
-  // macOS: create utun interface via PF_SYSTEM control socket
-  struct ctl_info ctlInfo;
-  struct sockaddr_ctl sc;
-
-  FileDescriptor temp_fd(socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL));
-  if (!temp_fd.is_valid()) {
-    Napi::Error::New(env, std::string("Failed to create control socket: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
+  OpenResult result;
+  std::string error;
+  if (!backend_->OpenDevice(name_, result, error)) {
+    Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return Napi::Boolean::New(env, false);
   }
 
-  memset(&ctlInfo, 0, sizeof(ctlInfo));
-  strncpy(ctlInfo.ctl_name, UTUN_CONTROL_NAME, sizeof(ctlInfo.ctl_name) - 1);
-  ctlInfo.ctl_name[sizeof(ctlInfo.ctl_name) - 1] = '\0';
-
-  if (ioctl(temp_fd.get(), CTLIOCGINFO, &ctlInfo) < 0) {
-    Napi::Error::New(env, std::string("Failed to get utun control info: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
+  if (!SetNonBlocking(result.fd.get(), error)) {
+    Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return Napi::Boolean::New(env, false);
   }
 
-  memset(&sc, 0, sizeof(sc));
-  sc.sc_len = sizeof(sc);
-  sc.sc_family = AF_SYSTEM;
-  sc.ss_sysaddr = SYSPROTO_CONTROL;
-  sc.sc_id = ctlInfo.ctl_id;
-
-  // Parse utun number if provided, otherwise auto-select (utun0 = unit 1)
-  int utun_unit = 0;
-  if (!name_.empty() && name_.find("utun") == 0) {
-    try {
-      utun_unit = std::stoi(name_.substr(4)) + 1; // +1 because kernel uses unit=1 for utun0
-    } catch(...) {
-      utun_unit = 0;
-    }
-  }
-
-  if (utun_unit > 0) {
-    sc.sc_unit = utun_unit;
-    if (connect(temp_fd.get(), (struct sockaddr*)&sc, sizeof(sc)) < 0) {
-      Napi::Error::New(env, std::string("Failed to connect to utun with specified unit: ") + strerror(errno))
-        .ThrowAsJavaScriptException();
-      return Napi::Boolean::New(env, false);
-    }
-  } else {
-    bool connected = false;
-    for (sc.sc_unit = 1; sc.sc_unit < 255; sc.sc_unit++) {
-      if (connect(temp_fd.get(), (struct sockaddr*)&sc, sizeof(sc)) == 0) {
-        connected = true;
-        break;
-      } else if (errno != EBUSY) {
-        Napi::Error::New(env, std::string("Failed to connect to utun control socket: ") + strerror(errno))
-          .ThrowAsJavaScriptException();
-        return Napi::Boolean::New(env, false);
-      }
-    }
-
-    if (!connected) {
-      Napi::Error::New(env, "Could not find an available utun device").ThrowAsJavaScriptException();
-      return Napi::Boolean::New(env, false);
-    }
-  }
-
-  char utunname[20];
-  socklen_t utunname_len = sizeof(utunname);
-  if (getsockopt(temp_fd.get(), SYSPROTO_CONTROL, UTUN_OPT_IFNAME, utunname, &utunname_len) < 0) {
-    Napi::Error::New(env, std::string("Failed to get utun interface name: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
-  }
-
-  name_ = std::string(utunname);
-
-#else
-  // Linux: create TUN device via /dev/net/tun
-  struct stat statbuf;
-  if (stat("/dev/net/tun", &statbuf) != 0) {
-    Napi::Error::New(env,
-      "TUN/TAP device not available: /dev/net/tun does not exist. "
-      "Please ensure the TUN/TAP kernel module is loaded (modprobe tun).")
-      .ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
-  }
-
-  FileDescriptor temp_fd(open("/dev/net/tun", O_RDWR));
-  if (!temp_fd.is_valid()) {
-    Napi::Error::New(env,
-      std::string("Failed to open /dev/net/tun: ") + strerror(errno) +
-      ". This usually means you don't have sufficient permissions. "
-      "Try running with sudo or add your user to the 'tun' group.")
-      .ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
-  }
-
-  struct ifreq ifr;
-  memset(&ifr, 0, sizeof(ifr));
-  ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
-
-  if (!name_.empty()) {
-    strncpy(ifr.ifr_name, name_.c_str(), IFNAMSIZ - 1);
-    ifr.ifr_name[IFNAMSIZ - 1] = '\0';
-  }
-
-  if (ioctl(temp_fd.get(), TUNSETIFF, &ifr) < 0) {
-    Napi::Error::New(env, std::string("Failed to configure TUN device: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
-  }
-
-  name_ = std::string(ifr.ifr_name);
-#endif
-
-  // Set non-blocking mode
-  int flags = fcntl(temp_fd.get(), F_GETFL, 0);
-  if (flags < 0) {
-    Napi::Error::New(env, std::string("Failed to get file descriptor flags: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
-  }
-
-  if (fcntl(temp_fd.get(), F_SETFL, flags | O_NONBLOCK) < 0) {
-    Napi::Error::New(env, std::string("Failed to set non-blocking mode: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
-  }
-
-  fd_ = std::move(temp_fd);
+  fd_ = std::move(result.fd);
+  name_ = result.interface_name;
   is_open_ = true;
 
   return Napi::Boolean::New(env, true);
@@ -321,36 +218,18 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
     }
   }
 
-#ifdef __APPLE__
-  // macOS: reads include a 4-byte protocol family prefix that must be stripped
-  std::vector<uint8_t> raw(buffer_size + 4);
-  ssize_t n = read(fd_.get(), raw.data(), raw.size());
-  if (n <= 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return Napi::Buffer<uint8_t>::New(env, 0);
-    }
-    Napi::Error::New(env, std::string("Read error: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
+  std::vector<uint8_t> packet;
+  std::string error;
+  ssize_t bytes_read = backend_->ReadPacket(fd_.get(), buffer_size, packet, error);
+  if (bytes_read < 0) {
+    Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return env.Null();
   }
-  if (n <= 4) {
+  if (bytes_read == 0) {
     return Napi::Buffer<uint8_t>::New(env, 0);
   }
-  return Napi::Buffer<uint8_t>::Copy(env, raw.data() + 4, n - 4);
-#else
-  // Linux: raw IP packets directly
-  std::vector<uint8_t> raw(buffer_size);
-  ssize_t n = read(fd_.get(), raw.data(), raw.size());
-  if (n < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return Napi::Buffer<uint8_t>::New(env, 0);
-    }
-    Napi::Error::New(env, std::string("Read error: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
-    return env.Null();
-  }
-  return Napi::Buffer<uint8_t>::Copy(env, raw.data(), n);
-#endif
+
+  return Napi::Buffer<uint8_t>::Copy(env, packet.data(), static_cast<size_t>(bytes_read));
 }
 
 Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
@@ -371,29 +250,13 @@ Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
   uint8_t* data = buffer.Data();
   size_t length = buffer.Length();
 
-#ifdef __APPLE__
-  // macOS: prepend 4-byte AF_INET6 protocol family header
-  std::vector<uint8_t> frame(length + 4);
-  uint32_t family = htonl(AF_INET6);
-  memcpy(frame.data(), &family, 4);
-  memcpy(frame.data() + 4, data, length);
-
-  ssize_t bytes_written = write(fd_.get(), frame.data(), frame.size());
+  std::string error;
+  ssize_t bytes_written = backend_->WritePacket(fd_.get(), data, length, error);
   if (bytes_written < 0) {
-    Napi::Error::New(env, std::string("Write error: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
-    return Napi::Number::New(env, -1);
-  }
-  return Napi::Number::New(env, bytes_written > 4 ? bytes_written - 4 : 0);
-#else
-  ssize_t bytes_written = write(fd_.get(), data, length);
-  if (bytes_written < 0) {
-    Napi::Error::New(env, std::string("Write error: ") + strerror(errno))
-      .ThrowAsJavaScriptException();
+    Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return Napi::Number::New(env, -1);
   }
   return Napi::Number::New(env, bytes_written);
-#endif
 }
 
 Napi::Value TunDevice::GetName(const Napi::CallbackInfo& info) {
@@ -474,6 +337,22 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   return env.Undefined();
 }
 
+Napi::Object Init(Napi::Env env, Napi::Object exports) {
+  return TunDevice::Init(env, exports);
+}
+
+NODE_API_MODULE(tuntap, Init)
+// #endregion
+
+// #region Private implementation details
+
+void TunDevice::CloseInternal() {
+  if (is_open_.exchange(false)) {
+    StopPolling();
+    fd_.reset();
+  }
+}
+
 void TunDevice::StopPolling() {
   if (poll_handle_) {
     uv_poll_stop(poll_handle_);
@@ -508,33 +387,236 @@ void TunDevice::PollCallback(uv_poll_t* handle, int status, int events) {
     return;
   }
 
-  std::vector<uint8_t> buffer(self->poll_buffer_size_ + UTUN_HEADER_SIZE);
-  ssize_t bytes_read = read(self->fd_.get(), buffer.data(), buffer.size());
-
-  if (bytes_read == 0) {
+  std::vector<uint8_t> packet;
+  std::string error;
+  ssize_t bytes_read = self->backend_->ReadPacket(self->fd_.get(), self->poll_buffer_size_, packet, error);
+  if (bytes_read < 0) {
+    fprintf(stderr, "tuntap read error: %s\n", error.c_str());
     self->StopPolling();
     return;
   }
-  if (bytes_read < 0) {
-    if (errno != EAGAIN && errno != EWOULDBLOCK) {
-      fprintf(stderr, "tuntap read error: %s\n", strerror(errno));
-      self->StopPolling();
-    }
+  if (bytes_read == 0) {
     return;
   }
 
-  if (bytes_read > UTUN_HEADER_SIZE) {
-    self->tsfn_.BlockingCall(
-      [buf = std::move(buffer), bytes_read](Napi::Env env, Napi::Function jsCallback) {
-        if (env == nullptr || jsCallback.IsEmpty()) return;
-        jsCallback.Call({ Napi::Buffer<uint8_t>::Copy(env, buf.data() + UTUN_HEADER_SIZE, bytes_read - UTUN_HEADER_SIZE) });
-      }
-    );
+  self->tsfn_.BlockingCall(
+    [packet = std::move(packet)](Napi::Env env, Napi::Function jsCallback) {
+      if (env == nullptr || jsCallback.IsEmpty()) return;
+      jsCallback.Call({ Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size()) });
+    }
+  );
+}
+
+static bool IsWouldBlock() {
+  return errno == EAGAIN || errno == EWOULDBLOCK;
+}
+
+static bool SetNonBlocking(int fd, std::string& error) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0) {
+    error = std::string("Failed to get file descriptor flags: ") + strerror(errno);
+    return false;
   }
+
+  if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    error = std::string("Failed to set non-blocking mode: ") + strerror(errno);
+    return false;
+  }
+
+  return true;
 }
 
-Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  return TunDevice::Init(env, exports);
-}
+#ifdef __APPLE__
+class DarwinTunBackend : public TunPlatformBackend {
+public:
+  static constexpr size_t kUtunHeaderSize = 4;
 
-NODE_API_MODULE(tuntap, Init)
+  bool OpenDevice(const std::string& requested_name, OpenResult& out, std::string& error) override {
+    struct ctl_info ctl_info;
+    struct sockaddr_ctl socket_addr;
+
+    FileDescriptor temp_fd(socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL));
+    if (!temp_fd.is_valid()) {
+      error = std::string("Failed to create control socket: ") + strerror(errno);
+      return false;
+    }
+
+    memset(&ctl_info, 0, sizeof(ctl_info));
+    strncpy(ctl_info.ctl_name, UTUN_CONTROL_NAME, sizeof(ctl_info.ctl_name) - 1);
+    ctl_info.ctl_name[sizeof(ctl_info.ctl_name) - 1] = '\0';
+
+    if (ioctl(temp_fd.get(), CTLIOCGINFO, &ctl_info) < 0) {
+      error = std::string("Failed to get utun control info: ") + strerror(errno);
+      return false;
+    }
+
+    memset(&socket_addr, 0, sizeof(socket_addr));
+    socket_addr.sc_len = sizeof(socket_addr);
+    socket_addr.sc_family = AF_SYSTEM;
+    socket_addr.ss_sysaddr = SYSPROTO_CONTROL;
+    socket_addr.sc_id = ctl_info.ctl_id;
+
+    int utun_unit = ParseRequestedUtunUnit(requested_name);
+    if (utun_unit > 0) {
+      socket_addr.sc_unit = utun_unit;
+      if (connect(temp_fd.get(), reinterpret_cast<struct sockaddr*>(&socket_addr), sizeof(socket_addr)) < 0) {
+        error = std::string("Failed to connect to utun with specified unit: ") + strerror(errno);
+        return false;
+      }
+    } else if (!ConnectFirstAvailableUnit(temp_fd.get(), socket_addr, error)) {
+      return false;
+    }
+
+    char interface_name[20];
+    socklen_t interface_name_len = sizeof(interface_name);
+    if (getsockopt(temp_fd.get(), SYSPROTO_CONTROL, UTUN_OPT_IFNAME, interface_name, &interface_name_len) < 0) {
+      error = std::string("Failed to get utun interface name: ") + strerror(errno);
+      return false;
+    }
+
+    out.fd = std::move(temp_fd);
+    out.interface_name = std::string(interface_name);
+    return true;
+  }
+
+  ssize_t ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
+    std::vector<uint8_t> frame(max_payload_size + kUtunHeaderSize);
+    ssize_t bytes_read = read(fd, frame.data(), frame.size());
+    if (bytes_read < 0) {
+      if (IsWouldBlock()) {
+        out.clear();
+        return 0;
+      }
+      error = std::string("Read error: ") + strerror(errno);
+      return -1;
+    }
+    if (bytes_read <= static_cast<ssize_t>(kUtunHeaderSize)) {
+      out.clear();
+      return 0;
+    }
+
+    const auto payload_len = static_cast<size_t>(bytes_read - kUtunHeaderSize);
+    out.resize(payload_len);
+    memcpy(out.data(), frame.data() + kUtunHeaderSize, payload_len);
+    return static_cast<ssize_t>(payload_len);
+  }
+
+  ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) override {
+    std::vector<uint8_t> frame(length + kUtunHeaderSize);
+    uint32_t family = htonl(AF_INET6);
+    memcpy(frame.data(), &family, kUtunHeaderSize);
+    memcpy(frame.data() + kUtunHeaderSize, data, length);
+
+    ssize_t bytes_written = write(fd, frame.data(), frame.size());
+    if (bytes_written < 0) {
+      error = std::string("Write error: ") + strerror(errno);
+      return -1;
+    }
+
+    return bytes_written > static_cast<ssize_t>(kUtunHeaderSize)
+      ? bytes_written - static_cast<ssize_t>(kUtunHeaderSize)
+      : 0;
+  }
+
+private:
+  static int ParseRequestedUtunUnit(const std::string& requested_name) {
+    if (requested_name.empty() || requested_name.find("utun") != 0) {
+      return 0;
+    }
+    try {
+      return std::stoi(requested_name.substr(4)) + 1; // Kernel maps utun0 -> unit 1
+    } catch (...) {
+      return 0;
+    }
+  }
+
+  static bool ConnectFirstAvailableUnit(int fd, struct sockaddr_ctl& socket_addr, std::string& error) {
+    for (socket_addr.sc_unit = 1; socket_addr.sc_unit < 255; socket_addr.sc_unit++) {
+      if (connect(fd, reinterpret_cast<struct sockaddr*>(&socket_addr), sizeof(socket_addr)) == 0) {
+        return true;
+      }
+      if (errno != EBUSY) {
+        error = std::string("Failed to connect to utun control socket: ") + strerror(errno);
+        return false;
+      }
+    }
+
+    error = "Could not find an available utun device";
+    return false;
+  }
+};
+#else
+class LinuxTunBackend : public TunPlatformBackend {
+public:
+  bool OpenDevice(const std::string& requested_name, OpenResult& out, std::string& error) override {
+    struct stat statbuf;
+    if (stat("/dev/net/tun", &statbuf) != 0) {
+      error =
+        "TUN/TAP device not available: /dev/net/tun does not exist. "
+        "Please ensure the TUN/TAP kernel module is loaded (modprobe tun).";
+      return false;
+    }
+
+    FileDescriptor temp_fd(open("/dev/net/tun", O_RDWR));
+    if (!temp_fd.is_valid()) {
+      error =
+        std::string("Failed to open /dev/net/tun: ") + strerror(errno) +
+        ". This usually means you don't have sufficient permissions. "
+        "Try running with sudo or add your user to the 'tun' group.";
+      return false;
+    }
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
+
+    if (!requested_name.empty()) {
+      strncpy(ifr.ifr_name, requested_name.c_str(), IFNAMSIZ - 1);
+      ifr.ifr_name[IFNAMSIZ - 1] = '\0';
+    }
+
+    if (ioctl(temp_fd.get(), TUNSETIFF, &ifr) < 0) {
+      error = std::string("Failed to configure TUN device: ") + strerror(errno);
+      return false;
+    }
+
+    out.fd = std::move(temp_fd);
+    out.interface_name = std::string(ifr.ifr_name);
+    return true;
+  }
+
+  ssize_t ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
+    out.resize(max_payload_size);
+    ssize_t bytes_read = read(fd, out.data(), out.size());
+    if (bytes_read < 0) {
+      if (IsWouldBlock()) {
+        out.clear();
+        return 0;
+      }
+      error = std::string("Read error: ") + strerror(errno);
+      return -1;
+    }
+
+    out.resize(static_cast<size_t>(bytes_read));
+    return bytes_read;
+  }
+
+  ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) override {
+    ssize_t bytes_written = write(fd, data, length);
+    if (bytes_written < 0) {
+      error = std::string("Write error: ") + strerror(errno);
+      return -1;
+    }
+    return bytes_written;
+  }
+};
+#endif
+
+static std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
+#ifdef __APPLE__
+  return std::make_unique<DarwinTunBackend>();
+#else
+  return std::make_unique<LinuxTunBackend>();
+#endif
+}
+// #endregion
