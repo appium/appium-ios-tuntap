@@ -53,7 +53,7 @@ jobs:
       run: npm run build:prebuilds -- --arch ${{ matrix.arch }}
     - name: Upload prebuild
       if: inputs.upload-artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: prebuild-${{ matrix.artifact }}
         path: prebuilds/
