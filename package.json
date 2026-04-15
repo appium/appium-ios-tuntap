@@ -16,9 +16,9 @@
     "format:check": "prettier --check ./src ./test",
     "install": "node-gyp-build",
     "prepare": "npm run build",
-    "test": "sudo npm run test:integration && npm run test:unit",
-    "test:unit": "sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m",
-    "test:integration": "sudo npx mocha 'test/tuntap-integration.spec.mjs' --exit --timeout 2m"
+    "test": "npm run test:integration && npm run test:unit",
+    "test:unit": "npx mocha 'test/unit/**/*.spec.mjs' --exit --timeout 2m",
+    "test:integration": "npx mocha 'test/integration/**/*.spec.mjs' --exit --timeout 2m"
   },
   "files": [
     "src/tuntap.cc",

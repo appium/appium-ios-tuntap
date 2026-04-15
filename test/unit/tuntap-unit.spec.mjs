@@ -1,10 +1,10 @@
 import assert from 'node:assert';
-import {TunTap} from '../lib/index.js';
-import {isRoot} from './utils.mjs';
+import {TunTap} from '../../lib/index.js';
+import {isRoot} from '../utils.mjs';
 
 /**
  * NOTE: Most TunTap tests require root privileges (sudo) to run.
- * If not running as root, privileged tests will be skipped.
+ * If not running as root, tests should fail fast when not run as root.
  */
 
 describe('TunTap Unit Tests', function () {
@@ -12,7 +12,7 @@ describe('TunTap Unit Tests', function () {
 
   before(function () {
     if (!isRoot()) {
-      this.skip('Must be run as root');
+      throw new Error('Must be run as root');
     }
   });
 
