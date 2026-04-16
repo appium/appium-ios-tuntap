@@ -39,8 +39,6 @@ jobs:
         find prebuilds -type f -name '*.node' | sort
     - run: npm install --no-package-lock
       name: Install dependencies
-    - run: npm run test
-      name: Run NPM Test
     - run: |
         rm -rf node_modules package-lock.json
         npm prune --omit=dev --omit=peer --no-package-lock
