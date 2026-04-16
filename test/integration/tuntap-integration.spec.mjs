@@ -1,9 +1,9 @@
 import assert from 'node:assert';
-import {TunTap} from '../lib/index.js';
+import {TunTap} from '../../lib/index.js';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {isRoot} from './utils.mjs';
+import {isRoot} from '../utils.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -12,7 +12,7 @@ describe('TunTap Integration Tests', function () {
 
   before(function () {
     if (!isRoot()) {
-      this.skip('Must be run as root');
+      throw new Error('Must be run as root');
     }
   });
 
@@ -20,7 +20,7 @@ describe('TunTap Integration Tests', function () {
     it('should exit promptly and clean up on SIGINT', function (done) {
       this.timeout(10000);
 
-      const cliPath = path.resolve(__dirname, 'test-tuntap.mjs');
+      const cliPath = path.resolve(__dirname, '../test-tuntap.mjs');
       const child = spawn('node', [cliPath], {stdio: ['ignore', 'pipe', 'pipe']});
 
       setTimeout(() => {

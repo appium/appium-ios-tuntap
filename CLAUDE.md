@@ -35,7 +35,7 @@ npm run test:unit
 npm run test:integration
 
 # Ad-hoc: run mocha on a single file (add sudo if the test needs root)
-sudo npx mocha 'test/tuntap-unit.spec.mjs' --exit --timeout 2m
+sudo npx mocha 'test/unit/**/*.spec.mjs' --exit --timeout 2m
 ```
 
 ## Project structure
@@ -65,8 +65,8 @@ src/
     require-root.ts      # assertEffectiveRoot() — EUID 0 before privileged commands
 
 test/
-  tuntap-unit.spec.mjs
-  tuntap-integration.spec.mjs
+  unit/tuntap-unit.spec.mjs
+  integration/tuntap-integration.spec.mjs
   test-tuntap.mjs
   utils.mjs
   check-linux-prereqs.sh
@@ -103,7 +103,7 @@ Native implementation details are split into `src/native/*`:
 
 ### Tests
 
-Mocha **`.mjs`** ES modules under **`test/`**. **`tuntap-unit.spec.mjs`** and **`tuntap-integration.spec.mjs`** expect **root** (scripts use `sudo`). Running as non-root may skip or fail depending on the case.
+Mocha **`.mjs`** ES modules under **`test/`**. **`test/unit/tuntap-unit.spec.mjs`** and **`test/integration/tuntap-integration.spec.mjs`** expect **root**. Run test commands with `sudo` when privileged cases are required; non-root runs may skip or fail depending on the case.
 
 ### Key constraints
 

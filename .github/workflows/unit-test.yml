@@ -1,0 +1,35 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  node_matrix:
+    uses: appium/appium-workflows/.github/workflows/node-lts-matrix.yml@main
+
+  prebuild:
+    uses: ./.github/workflows/prebuild.yml
+    with:
+      upload-artifacts: false
+
+  test:
+    needs:
+    - node_matrix
+    - prebuild
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJSON(needs.node_matrix.outputs.versions) }}
+        image: [ubuntu-latest, macos-latest]
+    uses: ./.github/workflows/shared.yml
+    with:
+      image: ${{ matrix.image }}
+      node-version: ${{ matrix.node-version }}
+      test-command: npm run test:unit
+      test-name: Unit tests
+      run-lint: true
+      run-format-check: true
