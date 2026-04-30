@@ -1,3 +1,9 @@
+## [0.2.2](https://github.com/appium/appium-ios-tuntap/compare/v0.2.1...v0.2.2) (2026-04-30)
+
+### Bug Fixes
+
+* linter ([#38](https://github.com/appium/appium-ios-tuntap/issues/38)) ([8dfed52](https://github.com/appium/appium-ios-tuntap/commit/8dfed527cc557856025bba6070b2686414d582a2))
+
 ## [0.2.1](https://github.com/appium/appium-ios-tuntap/compare/v0.2.0...v0.2.1) (2026-04-13)
 
 ### Miscellaneous Chores
