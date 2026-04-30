@@ -4,17 +4,6 @@ import {EventEmitter} from 'node:events';
 import {Socket} from 'node:net';
 import {Buffer} from 'node:buffer';
 
-interface TunnelClientParameters {
-  address: string;
-  mtu: number;
-}
-
-interface TunnelInfo {
-  clientParameters: TunnelClientParameters;
-  serverAddress: string;
-  serverRSDPort?: number;
-}
-
 export interface PacketData {
   protocol: 'TCP' | 'UDP';
   src: string;
@@ -33,10 +22,6 @@ export interface PacketData {
  *   // `packet` is PacketData
  * });
  */
-export interface TunnelManagerEvents {
-  data: [packet: PacketData];
-}
-
 export interface PacketConsumer {
   /**
    * Invoked for each parsed TCP/UDP payload extracted from the tunnel stream.
@@ -44,6 +29,10 @@ export interface PacketConsumer {
    * @param packet — decoded addresses, ports, and payload
    */
   onPacket(packet: PacketData): void;
+}
+
+export interface TunnelManagerEvents {
+  data: [packet: PacketData];
 }
 
 export interface TunnelConnection {
@@ -58,6 +47,17 @@ export interface TunnelConnection {
   removePacketConsumer(consumer: PacketConsumer): void;
   /** @returns async iterator of packets until the tunnel is stopped */
   getPacketStream(): AsyncIterable<PacketData>;
+}
+
+interface TunnelClientParameters {
+  address: string;
+  mtu: number;
+}
+
+interface TunnelInfo {
+  clientParameters: TunnelClientParameters;
+  serverAddress: string;
+  serverRSDPort?: number;
 }
 
 /**
@@ -466,17 +466,6 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
   }
 }
 
-function formatIPv6Address(buffer: Buffer): string {
-  if (!buffer || buffer.length !== 16) {
-    return 'invalid-address';
-  }
-  const parts: string[] = [];
-  for (let i = 0; i < 16; i += 2) {
-    parts.push(buffer.readUInt16BE(i).toString(16));
-  }
-  return parts.join(':');
-}
-
 /**
  * Perform the CDTunnel JSON handshake (8-byte magic + length-prefixed JSON) over `socket`.
  *
@@ -628,4 +617,15 @@ export async function connectToTunnelLockdown(
     }
     throw err;
   }
+}
+
+function formatIPv6Address(buffer: Buffer): string {
+  if (!buffer || buffer.length !== 16) {
+    return 'invalid-address';
+  }
+  const parts: string[] = [];
+  for (let i = 0; i < 16; i += 2) {
+    parts.push(buffer.readUInt16BE(i).toString(16));
+  }
+  return parts.join(':');
 }
