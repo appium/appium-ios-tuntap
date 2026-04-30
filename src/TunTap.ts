@@ -40,23 +40,6 @@ interface NativeTuntapModule {
 const nativeTuntap = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
 
 /**
- * Validates an IPv6 route destination (address with optional CIDR prefix).
- */
-function isValidIPv6Route(destination: string): boolean {
-  const parts = destination.split('/');
-  if (parts.length > 2) {
-    return false;
-  }
-  if (parts.length === 2) {
-    const prefix = parseInt(parts[1], 10);
-    if (isNaN(prefix) || prefix < 0 || prefix > 128 || parts[1] !== String(prefix)) {
-      return false;
-    }
-  }
-  return isIPv6(parts[0]);
-}
-
-/**
  * High-level wrapper around the native TUN device with IPv6-only configuration helpers.
  *
  * Routing and addressing use a built-in OS backend chosen from the `platform` argument (requires root, EUID 0 on Darwin/Linux).
@@ -105,6 +88,16 @@ export class TunTap {
   /** Whether {@link TunTap.close} has been called (device cannot be reopened). */
   get isClosed(): boolean {
     return this._isClosed;
+  }
+
+  /** OS-assigned interface name (e.g. `utun4` on macOS). */
+  get name(): string {
+    return this.device.getName();
+  }
+
+  /** File descriptor for the open TUN device (for advanced use). */
+  get fd(): number {
+    return this.device.getFd();
   }
 
   /**
@@ -239,16 +232,6 @@ export class TunTap {
     this.device.startPolling(callback, bufferSize);
   }
 
-  /** OS-assigned interface name (e.g. `utun4` on macOS). */
-  get name(): string {
-    return this.device.getName();
-  }
-
-  /** File descriptor for the open TUN device (for advanced use). */
-  get fd(): number {
-    return this.device.getFd();
-  }
-
   /**
    * Configure IPv6 address and MTU on this interface using the platform backend (must run as root on Darwin/Linux).
    *
@@ -360,4 +343,21 @@ export class TunTap {
       throw new TunTapError('Device has been closed');
     }
   }
+}
+
+/**
+ * Validates an IPv6 route destination (address with optional CIDR prefix).
+ */
+function isValidIPv6Route(destination: string): boolean {
+  const parts = destination.split('/');
+  if (parts.length > 2) {
+    return false;
+  }
+  if (parts.length === 2) {
+    const prefix = parseInt(parts[1], 10);
+    if (isNaN(prefix) || prefix < 0 || prefix > 128 || parts[1] !== String(prefix)) {
+      return false;
+    }
+  }
+  return isIPv6(parts[0]);
 }
