@@ -3,6 +3,7 @@
 #ifdef _WIN32
 
 #include <windows.h>
+#include <ifdef.h>
 
 #include <string>
 
