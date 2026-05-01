@@ -1,6 +1,6 @@
 # TunTap Bridge
 
-A native TUN/TAP interface module for Node.js that works on both macOS and Linux, with enhanced error handling, signal management, and thread safety.
+A native TUN/TAP interface module for Node.js that works on macOS, Linux, and Windows, with enhanced error handling, signal management, and thread safety.
 
 ## Description
 
@@ -8,7 +8,7 @@ This module provides a Node.js interface to TUN/TAP virtual network devices, all
 
 ## Features
 
-- **Cross-platform**: Works on macOS (utun) and Linux (TUN/TAP)
+- **Cross-platform**: Works on macOS (utun), Linux (TUN/TAP), and Windows (WinTun)
 - **TypeScript support**: Full TypeScript definitions included
 - **Signal handling**: Graceful shutdown on SIGINT/SIGTERM
 - **Thread safety**: Safe to use from multiple Node.js worker threads
@@ -87,6 +87,14 @@ On Linux, the module requires:
    # Arch Linux
    sudo pacman -S linux-headers
    ```
+
+### Windows
+
+On Windows the module uses [WinTun](https://www.wintun.net/) (the same userspace TUN driver shipped with WireGuard). Requirements:
+
+1. **`wintun.dll`**: must be discoverable by the addon. Prebuilt npm releases ship the DLL next to `tuntap.node`. When building from source, download the official ZIP from `https://www.wintun.net/builds/wintun-0.14.1.zip` and copy the per-architecture DLL (e.g. `wintun/bin/amd64/wintun.dll`) into `build/Release/` next to the compiled `tuntap.node`, or into a directory on the standard Windows DLL search path (e.g. `System32`).
+2. **Administrator privileges**: required to create the kernel adapter and configure addresses/routes via `netsh`. Launch your shell with **Run as administrator**.
+3. **Build toolchain (only if compiling from source)**: Visual Studio Build Tools 2022 with the C++ workload, the Windows 10 SDK, and Python 3.x on `PATH`.
 
 ## Usage
 
@@ -207,7 +215,7 @@ socket.connect(port, host, async () => {
 
 #### Properties
 - `name: string` - The device name (e.g., 'utun0', 'tun0')
-- `fd: number` - The file descriptor of the device
+- `fd: number` - The native file descriptor on POSIX (macOS/Linux). Returns `-1` on Windows; Wintun does not expose a numeric file descriptor.
 
 ### Error Types
 
@@ -291,11 +299,6 @@ To manually verify the fix for signal handling (introduced in v0.0.4):
 
 This ensures the signal handler works as intended.
 
-Apache-2.0
->>>>>>> upstream/main
 ## License
 
 Apache-2.0
-=======
-Apache-2.0
->>>>>>> upstream/main
