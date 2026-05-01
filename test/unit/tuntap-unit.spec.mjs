@@ -1,18 +1,22 @@
 import assert from 'node:assert';
 import {TunTap} from '../../lib/index.js';
-import {isRoot} from '../utils.mjs';
+import {hasPrivileges} from '../utils.mjs';
 
 /**
- * NOTE: Most TunTap tests require root privileges (sudo) to run.
- * If not running as root, tests should fail fast when not run as root.
+ * NOTE: Most TunTap tests require elevated privileges (root on POSIX,
+ * Administrator on Windows). They fail fast otherwise.
  */
 
 describe('TunTap Unit Tests', function () {
   let tun;
 
   before(function () {
-    if (!isRoot()) {
-      throw new Error('Must be run as root');
+    if (!hasPrivileges()) {
+      throw new Error(
+        process.platform === 'win32'
+          ? 'Must be run from an elevated PowerShell (Run as administrator)'
+          : 'Must be run as root',
+      );
     }
   });
 
@@ -29,7 +33,10 @@ describe('TunTap Unit Tests', function () {
     tun = new TunTap();
     assert.strictEqual(tun.open(), true, 'TUN device should open');
     assert.strictEqual(typeof tun.name, 'string');
-    assert.ok(tun.fd > 0);
+    // Windows uses WinTun handles; there is no numeric fd, getFd() returns -1.
+    if (process.platform !== 'win32') {
+      assert.ok(tun.fd > 0);
+    }
     assert.strictEqual(tun.close(), true, 'TUN device should close');
   });
 
