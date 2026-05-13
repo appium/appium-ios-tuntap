@@ -1,3 +1,9 @@
+## [0.2.4](https://github.com/appium/appium-ios-tuntap/compare/v0.2.3...v0.2.4) (2026-05-13)
+
+### Code Refactoring
+
+* eliminate tun_backend_common.cc indirection ([#41](https://github.com/appium/appium-ios-tuntap/issues/41)) ([5fd387e](https://github.com/appium/appium-ios-tuntap/commit/5fd387e230fb772dbf280472dbadb43d131a4a2e))
+
 ## [0.2.3](https://github.com/appium/appium-ios-tuntap/compare/v0.2.2...v0.2.3) (2026-05-13)
 
 ## [0.2.2](https://github.com/appium/appium-ios-tuntap/compare/v0.2.1...v0.2.2) (2026-04-30)
