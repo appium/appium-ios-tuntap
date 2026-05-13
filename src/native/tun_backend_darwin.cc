@@ -14,9 +14,24 @@
 #include <netinet/in.h>
 #include <netinet6/in6_var.h>
 
+#include <fcntl.h>
+
 #define UTUN_CONTROL_NAME "com.apple.net.utun_control"
 
 namespace {
+
+bool SetNonBlocking(int fd, std::string& error) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0) {
+    error = std::string("Failed to get file descriptor flags: ") + strerror(errno);
+    return false;
+  }
+  if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    error = std::string("Failed to set non-blocking mode: ") + strerror(errno);
+    return false;
+  }
+  return true;
+}
 
 class DarwinTunBackend : public TunPlatformBackend {
 public:

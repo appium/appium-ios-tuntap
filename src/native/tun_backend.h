@@ -10,24 +10,8 @@
 #include <string>
 #include <sys/types.h>
 #include <vector>
-#include <fcntl.h>
-#include <errno.h>
-#include <string.h>
 
 #include "file_descriptor.h"
-
-inline bool SetNonBlocking(int fd, std::string& error) {
-  int flags = fcntl(fd, F_GETFL, 0);
-  if (flags < 0) {
-    error = std::string("Failed to get file descriptor flags: ") + strerror(errno);
-    return false;
-  }
-  if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-    error = std::string("Failed to set non-blocking mode: ") + strerror(errno);
-    return false;
-  }
-  return true;
-}
 
 struct OpenResult {
   FileDescriptor fd;
