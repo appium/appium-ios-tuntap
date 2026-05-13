@@ -13,6 +13,20 @@
 #include <linux/if_tun.h>
 
 namespace {
+
+bool SetNonBlocking(int fd, std::string& error) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0) {
+    error = std::string("Failed to get file descriptor flags: ") + strerror(errno);
+    return false;
+  }
+  if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    error = std::string("Failed to set non-blocking mode: ") + strerror(errno);
+    return false;
+  }
+  return true;
+}
+
 constexpr const char* kTunDevicePath = "/dev/net/tun";
 
 class LinuxTunBackend : public TunPlatformBackend {
@@ -46,6 +60,10 @@ public:
 
     if (ioctl(temp_fd.get(), TUNSETIFF, &ifr) < 0) {
       error = std::string("Failed to configure TUN device: ") + strerror(errno);
+      return false;
+    }
+
+    if (!SetNonBlocking(temp_fd.get(), error)) {
       return false;
     }
 
@@ -86,7 +104,7 @@ public:
 
 } // namespace
 
-std::unique_ptr<TunPlatformBackend> CreatePlatformTunBackend() {
+std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
   return std::make_unique<LinuxTunBackend>();
 }
 

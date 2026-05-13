@@ -33,6 +33,5 @@ public:
   virtual ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) = 0;
 };
 
-bool SetNonBlocking(int fd, std::string& error);
 std::unique_ptr<TunPlatformBackend> CreatePlatformBackend();
 
