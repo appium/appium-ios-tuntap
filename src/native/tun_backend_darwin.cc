@@ -14,6 +14,11 @@
 #include <netinet/in.h>
 #include <netinet6/in6_var.h>
 
+#include <utility>
+
+#include "file_descriptor.h"
+#include "posix_uv_poll_loop.h"
+
 #define UTUN_CONTROL_NAME "com.apple.net.utun_control"
 
 namespace {
@@ -22,7 +27,9 @@ class DarwinTunBackend : public TunPlatformBackend {
 public:
   static constexpr size_t kUtunHeaderSize = 4;
 
-  bool OpenDevice(const std::string& requested_name, OpenResult& out, std::string& error) override {
+  bool OpenDevice(const std::string& requested_name,
+                  std::string& out_interface_name,
+                  std::string& error) override {
     struct ctl_info ctl_info;
     struct sockaddr_ctl socket_addr;
 
@@ -65,14 +72,34 @@ public:
       return false;
     }
 
-    out.fd = std::move(temp_fd);
-    out.interface_name = std::string(interface_name);
+    if (!SetNonBlocking(temp_fd.get(), error)) {
+      return false;
+    }
+
+    fd_ = std::move(temp_fd);
+    interface_name_ = std::string(interface_name);
+    out_interface_name = interface_name_;
     return true;
   }
 
-  ReadPacketStatus ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
+  void CloseDevice() override {
+    poll_loop_.Stop();
+    fd_.reset();
+    interface_name_.clear();
+  }
+
+  bool IsOpen() const override { return fd_.is_valid(); }
+
+  ReadPacketStatus ReadPacket(size_t max_payload_size,
+                              std::vector<uint8_t>& out,
+                              std::string& error) override {
+    if (!fd_.is_valid()) {
+      error = "Device not open";
+      return ReadPacketStatus::Error;
+    }
+
     out.resize(max_payload_size + kUtunHeaderSize);
-    ssize_t bytes_read = read(fd, out.data(), out.size());
+    ssize_t bytes_read = read(fd_.get(), out.data(), out.size());
     if (bytes_read < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         out.clear();
@@ -97,22 +124,54 @@ public:
     return ReadPacketStatus::Data;
   }
 
-  ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) override {
+  ssize_t WritePacket(const uint8_t* data,
+                      size_t length,
+                      std::string& error) override {
+    if (!fd_.is_valid()) {
+      error = "Device not open";
+      return -1;
+    }
+
     std::vector<uint8_t> frame(length + kUtunHeaderSize);
     uint32_t family = htonl(AF_INET6);
     memcpy(frame.data(), &family, kUtunHeaderSize);
     memcpy(frame.data() + kUtunHeaderSize, data, length);
 
-    ssize_t bytes_written = write(fd, frame.data(), frame.size());
+    ssize_t bytes_written = write(fd_.get(), frame.data(), frame.size());
     if (bytes_written < 0) {
       error = std::string("Write error: ") + strerror(errno);
       return -1;
     }
 
     return bytes_written > static_cast<ssize_t>(kUtunHeaderSize)
-      ? bytes_written - static_cast<ssize_t>(kUtunHeaderSize)
-      : 0;
+               ? bytes_written - static_cast<ssize_t>(kUtunHeaderSize)
+               : 0;
   }
+
+  bool StartReceiveLoop(uv_loop_t* loop,
+                        size_t buffer_size,
+                        PacketCallback on_packet,
+                        ErrorCallback on_error,
+                        std::string& error) override {
+    if (!fd_.is_valid()) {
+      error = "Device not open";
+      return false;
+    }
+    return poll_loop_.Start(
+        loop,
+        fd_.get(),
+        buffer_size,
+        [this](size_t size, std::vector<uint8_t>& out, std::string& err) {
+          return ReadPacket(size, out, err);
+        },
+        std::move(on_packet),
+        std::move(on_error),
+        error);
+  }
+
+  void StopReceiveLoop() override { poll_loop_.Stop(); }
+
+  int GetNativeFd() const override { return fd_.get(); }
 
 private:
   static int ParseRequestedUtunUnit(const std::string& requested_name) {
@@ -140,13 +199,16 @@ private:
     error = "Could not find an available utun device";
     return false;
   }
+
+  FileDescriptor fd_;
+  std::string interface_name_;
+  PosixUvPollLoop poll_loop_;
 };
 
 } // namespace
 
-std::unique_ptr<TunPlatformBackend> CreatePlatformTunBackend() {
+std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
   return std::make_unique<DarwinTunBackend>();
 }
 
 #endif
-

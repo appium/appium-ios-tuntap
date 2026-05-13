@@ -1,14 +1,13 @@
 #include <napi.h>
-#include <uv.h>
 
-#include <string>
-#include <vector>
-#include <memory>
-#include <mutex>
 #include <atomic>
 #include <cstdio>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
 
-#include "native/file_descriptor.h"
 #include "native/tun_backend.h"
 
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
@@ -30,19 +29,18 @@ private:
   Napi::Value GetFd(const Napi::CallbackInfo& info);
   Napi::Value StartPolling(const Napi::CallbackInfo& info);
 
-  FileDescriptor fd_;
-  std::string name_;
   std::unique_ptr<TunPlatformBackend> backend_;
+  std::string requested_name_;
+  std::string interface_name_;
   std::atomic<bool> is_open_;
   std::mutex device_mutex_;
 
-  uv_poll_t* poll_handle_ = nullptr;
   Napi::ThreadSafeFunction tsfn_;
+  std::atomic<bool> polling_;
   static constexpr size_t MAX_POLL_BUFFER = 65535;
-  size_t poll_buffer_size_ = MAX_POLL_BUFFER;
 
-  void StopPolling();
-  static void PollCallback(uv_poll_t* handle, int status, int events);
+  void StopPollingLocked();
+  void ReleaseTsfnLocked();
 };
 
 Napi::FunctionReference TunDevice::constructor;
@@ -70,23 +68,26 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
 
 // Creates a TunDevice wrapper; optional first arg is requested interface name.
 TunDevice::TunDevice(const Napi::CallbackInfo& info)
-  : Napi::ObjectWrap<TunDevice>(info), backend_(CreatePlatformBackend()), is_open_(false) {
+    : Napi::ObjectWrap<TunDevice>(info),
+      backend_(CreatePlatformBackend()),
+      is_open_(false),
+      polling_(false) {
   Napi::Env env = info.Env();
   Napi::HandleScope scope(env);
 
   if (info.Length() > 0 && info[0].IsString()) {
-    name_ = info[0].As<Napi::String>().Utf8Value();
+    requested_name_ = info[0].As<Napi::String>().Utf8Value();
   }
 }
 
-// Ensures fd/poll resources are closed when object is destroyed.
+// Ensures backend resources and polling are released when object is destroyed.
 TunDevice::~TunDevice() {
   std::lock_guard<std::mutex> lock(device_mutex_);
   CloseInternal();
 }
 
 // JS: open() -> boolean
-// Opens the backend device and configures the fd as non-blocking.
+// Opens the backend device.
 Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
@@ -100,22 +101,15 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
     return Napi::Boolean::New(env, false);
   }
 
-  OpenResult result;
   std::string error;
-  if (!backend_->OpenDevice(name_, result, error)) {
+  std::string assigned_name;
+  if (!backend_->OpenDevice(requested_name_, assigned_name, error)) {
     Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return Napi::Boolean::New(env, false);
   }
 
-  if (!SetNonBlocking(result.fd.get(), error)) {
-    Napi::Error::New(env, error).ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
-  }
-
-  fd_ = std::move(result.fd);
-  name_ = result.interface_name;
+  interface_name_ = std::move(assigned_name);
   is_open_ = true;
-
   return Napi::Boolean::New(env, true);
 }
 
@@ -134,7 +128,7 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
 
-  if (!is_open_ || !fd_.is_valid()) {
+  if (!is_open_ || !backend_ || !backend_->IsOpen()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
     return env.Null();
   }
@@ -150,15 +144,14 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
 
   std::vector<uint8_t> packet;
   std::string error;
-  ReadPacketStatus read_status = backend_->ReadPacket(fd_.get(), buffer_size, packet, error);
-  if (read_status == ReadPacketStatus::Error) {
+  ReadPacketStatus rs = backend_->ReadPacket(buffer_size, packet, error);
+  if (rs == ReadPacketStatus::Error) {
     Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return env.Null();
   }
-  if (read_status == ReadPacketStatus::NoData || read_status == ReadPacketStatus::Closed) {
+  if (rs == ReadPacketStatus::NoData || rs == ReadPacketStatus::Closed) {
     return Napi::Buffer<uint8_t>::New(env, 0);
   }
-
   return Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size());
 }
 
@@ -168,7 +161,7 @@ Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
 
-  if (!is_open_ || !fd_.is_valid()) {
+  if (!is_open_ || !backend_ || !backend_->IsOpen()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
     return Napi::Number::New(env, -1);
   }
@@ -183,35 +176,36 @@ Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
   size_t length = buffer.Length();
 
   std::string error;
-  ssize_t bytes_written = backend_->WritePacket(fd_.get(), data, length, error);
+  ssize_t bytes_written = backend_->WritePacket(data, length, error);
   if (bytes_written < 0) {
     Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return Napi::Number::New(env, -1);
   }
-  return Napi::Number::New(env, bytes_written);
+  return Napi::Number::New(env, static_cast<double>(bytes_written));
 }
 
 // JS: getName() -> string
 // Returns the assigned interface name after open().
 Napi::Value TunDevice::GetName(const Napi::CallbackInfo& info) {
   std::lock_guard<std::mutex> lock(device_mutex_);
-  return Napi::String::New(info.Env(), name_);
+  return Napi::String::New(info.Env(), interface_name_);
 }
 
 // JS: getFd() -> number
-// Returns the native file descriptor, or -1 before open()/after close().
+// Returns the native file descriptor when one exists, or -1 otherwise
+// (e.g. before open(), after close(), or on backends without a numeric fd).
 Napi::Value TunDevice::GetFd(const Napi::CallbackInfo& info) {
   std::lock_guard<std::mutex> lock(device_mutex_);
-  return Napi::Number::New(info.Env(), fd_.get());
+  return Napi::Number::New(info.Env(), backend_ ? backend_->GetNativeFd() : -1);
 }
 
 // JS: startPolling(callback, bufferSize?) -> void
-// Starts libuv polling and invokes callback with packet payload Buffers.
+// Starts asynchronous packet delivery; the backend invokes `callback` per packet.
 Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
 
-  if (!is_open_ || !fd_.is_valid()) {
+  if (!is_open_ || !backend_ || !backend_->IsOpen()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
     return env.Null();
   }
@@ -221,57 +215,58 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
     return env.Null();
   }
 
-  StopPolling();
+  StopPollingLocked();
 
-  // Optional buffer size as second argument (default: MAX_POLL_BUFFER)
-  poll_buffer_size_ = MAX_POLL_BUFFER;
+  size_t buffer_size = MAX_POLL_BUFFER;
   if (info.Length() > 1 && info[1].IsNumber()) {
     auto size = info[1].As<Napi::Number>().Uint32Value();
     if (size == 0 || size > MAX_POLL_BUFFER) {
       Napi::RangeError::New(env, "Buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER)).ThrowAsJavaScriptException();
       return env.Null();
     }
-    poll_buffer_size_ = size;
+    buffer_size = size;
   }
 
   tsfn_ = Napi::ThreadSafeFunction::New(
-    env,
-    info[0].As<Napi::Function>(),
-    "TunDeviceDataCallback",
-    0,
-    1
-  );
+      env,
+      info[0].As<Napi::Function>(),
+      "TunDeviceDataCallback",
+      0,
+      1);
 
   uv_loop_t* loop = nullptr;
   napi_status napi_st = napi_get_uv_event_loop(env, &loop);
   if (napi_st != napi_ok || loop == nullptr) {
-    tsfn_.Release();
-    tsfn_ = nullptr;
+    ReleaseTsfnLocked();
     Napi::Error::New(env, "Failed to acquire event loop").ThrowAsJavaScriptException();
     return env.Null();
   }
 
-  auto handle = std::make_unique<uv_poll_t>();
-  if (uv_poll_init(loop, handle.get(), fd_.get()) != 0) {
-    tsfn_.Release();
-    tsfn_ = nullptr;
-    Napi::Error::New(env, "Failed to initialize poll handle").ThrowAsJavaScriptException();
+  // The TSFN handle is captured by value into both callbacks; backend lifetime
+  // outlives both because we own it and `StopReceiveLoop` runs synchronously
+  // on close.
+  Napi::ThreadSafeFunction tsfn = tsfn_;
+  auto packet_cb = [tsfn](std::vector<uint8_t> packet) mutable {
+    tsfn.BlockingCall(
+        [packet = std::move(packet)](Napi::Env env, Napi::Function jsCallback) {
+          if (env == nullptr || jsCallback.IsEmpty()) {
+            return;
+          }
+          jsCallback.Call({Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size())});
+        });
+  };
+  auto error_cb = [](const std::string& message) {
+    fprintf(stderr, "tuntap receive loop error: %s\n", message.c_str());
+  };
+
+  std::string start_error;
+  if (!backend_->StartReceiveLoop(loop, buffer_size, std::move(packet_cb), std::move(error_cb), start_error)) {
+    ReleaseTsfnLocked();
+    Napi::Error::New(env, start_error).ThrowAsJavaScriptException();
     return env.Null();
   }
 
-  handle->data = this;
-  if (uv_poll_start(handle.get(), UV_READABLE, PollCallback) != 0) {
-    // Properly close the initialized-but-not-started handle
-    uv_close(reinterpret_cast<uv_handle_t*>(handle.release()), [](uv_handle_t* h) {
-      delete reinterpret_cast<uv_poll_t*>(h);
-    });
-    tsfn_.Release();
-    tsfn_ = nullptr;
-    Napi::Error::New(env, "Failed to start polling").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  poll_handle_ = handle.release();
+  polling_ = true;
   return env.Undefined();
 }
 
@@ -281,74 +276,27 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 }
 
 NODE_API_MODULE(tuntap, Init)
-// #endregion
-
-// #region Private implementation details
 
 void TunDevice::CloseInternal() {
   if (is_open_.exchange(false)) {
-    StopPolling();
-    fd_.reset();
+    StopPollingLocked();
+    if (backend_) {
+      backend_->CloseDevice();
+    }
+    interface_name_.clear();
   }
 }
 
-void TunDevice::StopPolling() {
-  if (poll_handle_) {
-    uv_poll_stop(poll_handle_);
-    // Must use uv_close before freeing a libuv handle
-    uv_close(reinterpret_cast<uv_handle_t*>(poll_handle_), [](uv_handle_t* handle) {
-      delete reinterpret_cast<uv_poll_t*>(handle);
-    });
-    poll_handle_ = nullptr;
+void TunDevice::StopPollingLocked() {
+  if (polling_.exchange(false) && backend_) {
+    backend_->StopReceiveLoop();
   }
+  ReleaseTsfnLocked();
+}
+
+void TunDevice::ReleaseTsfnLocked() {
   if (tsfn_) {
     tsfn_.Release();
     tsfn_ = nullptr;
   }
-}
-
-void TunDevice::PollCallback(uv_poll_t* handle, int status, int events) {
-  if (status < 0) {
-    fprintf(stderr, "tuntap poll error: %s\n", uv_strerror(status));
-    auto* self = static_cast<TunDevice*>(handle->data);
-    if (self) {
-      self->StopPolling();
-    }
-    return;
-  }
-
-  if (!(events & UV_READABLE)) {
-    return;
-  }
-
-  auto* self = static_cast<TunDevice*>(handle->data);
-  if (!self || !self->is_open_.load() || !self->fd_.is_valid()) {
-    return;
-  }
-
-  std::vector<uint8_t> packet;
-  std::string error;
-  ReadPacketStatus read_status = self->backend_->ReadPacket(self->fd_.get(), self->poll_buffer_size_, packet, error);
-  // Backend reported an unrecoverable read failure; stop polling this fd.
-  if (read_status == ReadPacketStatus::Error) {
-    fprintf(stderr, "tuntap read error: %s\n", error.c_str());
-    self->StopPolling();
-    return;
-  }
-  // EOF/peer close: device is no longer readable, so tear down polling.
-  if (read_status == ReadPacketStatus::Closed) {
-    self->StopPolling();
-    return;
-  }
-  // Transient empty read (e.g. EAGAIN): keep poll active and wait for next event.
-  if (read_status == ReadPacketStatus::NoData) {
-    return;
-  }
-
-  self->tsfn_.BlockingCall(
-    [packet = std::move(packet)](Napi::Env env, Napi::Function jsCallback) {
-      if (env == nullptr || jsCallback.IsEmpty()) return;
-      jsCallback.Call({ Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size()) });
-    }
-  );
 }
