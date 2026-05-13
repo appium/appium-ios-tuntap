@@ -1,3 +1,5 @@
+## [0.2.3](https://github.com/appium/appium-ios-tuntap/compare/v0.2.2...v0.2.3) (2026-05-13)
+
 ## [0.2.2](https://github.com/appium/appium-ios-tuntap/compare/v0.2.1...v0.2.2) (2026-04-30)
 
 ### Bug Fixes
