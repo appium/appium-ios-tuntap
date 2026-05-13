@@ -2,9 +2,6 @@
 
 #include "tun_backend.h"
 
-#include <errno.h>
-#include <fcntl.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -13,6 +10,7 @@
 #include <linux/if_tun.h>
 
 namespace {
+
 constexpr const char* kTunDevicePath = "/dev/net/tun";
 
 class LinuxTunBackend : public TunPlatformBackend {
@@ -46,6 +44,10 @@ public:
 
     if (ioctl(temp_fd.get(), TUNSETIFF, &ifr) < 0) {
       error = std::string("Failed to configure TUN device: ") + strerror(errno);
+      return false;
+    }
+
+    if (!SetNonBlocking(temp_fd.get(), error)) {
       return false;
     }
 
@@ -86,7 +88,7 @@ public:
 
 } // namespace
 
-std::unique_ptr<TunPlatformBackend> CreatePlatformTunBackend() {
+std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
   return std::make_unique<LinuxTunBackend>();
 }
 

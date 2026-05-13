@@ -65,6 +65,10 @@ public:
       return false;
     }
 
+    if (!SetNonBlocking(temp_fd.get(), error)) {
+      return false;
+    }
+
     out.fd = std::move(temp_fd);
     out.interface_name = std::string(interface_name);
     return true;
@@ -144,7 +148,7 @@ private:
 
 } // namespace
 
-std::unique_ptr<TunPlatformBackend> CreatePlatformTunBackend() {
+std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
   return std::make_unique<DarwinTunBackend>();
 }
 

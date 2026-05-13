@@ -107,11 +107,6 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
     return Napi::Boolean::New(env, false);
   }
 
-  if (!SetNonBlocking(result.fd.get(), error)) {
-    Napi::Error::New(env, error).ThrowAsJavaScriptException();
-    return Napi::Boolean::New(env, false);
-  }
-
   fd_ = std::move(result.fd);
   name_ = result.interface_name;
   is_open_ = true;

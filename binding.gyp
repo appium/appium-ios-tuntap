@@ -4,8 +4,7 @@
       "target_name": "tuntap",
       "sources": [
         "src/tuntap.cc",
-        "src/native/file_descriptor.cc",
-        "src/native/tun_backend_common.cc"
+        "src/native/file_descriptor.cc"
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")"
