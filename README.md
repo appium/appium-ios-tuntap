@@ -291,11 +291,6 @@ To manually verify the fix for signal handling (introduced in v0.0.4):
 
 This ensures the signal handler works as intended.
 
-Apache-2.0
->>>>>>> upstream/main
 ## License
 
 Apache-2.0
-=======
-Apache-2.0
->>>>>>> upstream/main
