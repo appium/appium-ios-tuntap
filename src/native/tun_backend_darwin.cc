@@ -111,6 +111,7 @@ public:
     }
 
     const auto payload_len = static_cast<size_t>(bytes_read - kUtunHeaderSize);
+    // Collapse the utun 4-byte address-family prefix in-place.
     memmove(out.data(), out.data() + kUtunHeaderSize, payload_len);
     out.resize(payload_len);
     return ReadPacketStatus::Data;
