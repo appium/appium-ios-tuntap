@@ -3,8 +3,7 @@
     {
       "target_name": "tuntap",
       "sources": [
-        "src/tuntap.cc",
-        "src/native/file_descriptor.cc"
+        "src/tuntap.cc"
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")"
@@ -64,6 +63,8 @@
       "conditions": [
         ["OS=='linux'", {
           "sources": [
+            "src/native/file_descriptor.cc",
+            "src/native/posix_uv_poll_loop.cc",
             "src/native/tun_backend_linux.cc"
           ],
           "cflags": [
@@ -78,6 +79,8 @@
         }],
         ["OS=='mac'", {
           "sources": [
+            "src/native/file_descriptor.cc",
+            "src/native/posix_uv_poll_loop.cc",
             "src/native/tun_backend_darwin.cc"
           ],
           "xcode_settings": {
