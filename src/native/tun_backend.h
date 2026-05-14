@@ -6,17 +6,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
-#include <sys/types.h>
 #include <vector>
 
-#include "file_descriptor.h"
+#ifdef _WIN32
+#include <BaseTsd.h>
+using ssize_t = SSIZE_T;
+#else
+#include <sys/types.h>
+#endif
 
-struct OpenResult {
-  FileDescriptor fd;
-  std::string interface_name;
-};
+#include <uv.h>
 
 enum class ReadPacketStatus {
   Data,
@@ -27,11 +29,32 @@ enum class ReadPacketStatus {
 
 class TunPlatformBackend {
 public:
+  using PacketCallback = std::function<void(std::vector<uint8_t>)>;
+  using ErrorCallback = std::function<void(const std::string&)>;
+
   virtual ~TunPlatformBackend() = default;
-  virtual bool OpenDevice(const std::string& requested_name, OpenResult& out, std::string& error) = 0;
-  virtual ReadPacketStatus ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) = 0;
-  virtual ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) = 0;
+
+  virtual bool OpenDevice(const std::string& requested_name,
+                          std::string& out_interface_name,
+                          std::string& error) = 0;
+  virtual void CloseDevice() = 0;
+  virtual bool IsOpen() const = 0;
+
+  virtual ReadPacketStatus ReadPacket(size_t max_payload_size,
+                                      std::vector<uint8_t>& out,
+                                      std::string& error) = 0;
+  virtual ssize_t WritePacket(const uint8_t* data,
+                              size_t length,
+                              std::string& error) = 0;
+
+  virtual bool StartReceiveLoop(uv_loop_t* loop,
+                                size_t buffer_size,
+                                PacketCallback on_packet,
+                                ErrorCallback on_error,
+                                std::string& error) = 0;
+  virtual void StopReceiveLoop() = 0;
+
+  virtual int GetNativeFd() const { return -1; }
 };
 
 std::unique_ptr<TunPlatformBackend> CreatePlatformBackend();
-

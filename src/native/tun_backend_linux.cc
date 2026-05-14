@@ -12,40 +12,35 @@
 #include <linux/if.h>
 #include <linux/if_tun.h>
 
-namespace {
+#include <utility>
 
-bool SetNonBlocking(int fd, std::string& error) {
-  int flags = fcntl(fd, F_GETFL, 0);
-  if (flags < 0) {
-    error = std::string("Failed to get file descriptor flags: ") + strerror(errno);
-    return false;
-  }
-  if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-    error = std::string("Failed to set non-blocking mode: ") + strerror(errno);
-    return false;
-  }
-  return true;
-}
+#include "file_descriptor.h"
+#include "posix_tun_backend.h"
+#include "posix_uv_poll_loop.h"
+
+namespace {
 
 constexpr const char* kTunDevicePath = "/dev/net/tun";
 
-class LinuxTunBackend : public TunPlatformBackend {
+class LinuxTunBackend : public PosixTunBackend {
 public:
-  bool OpenDevice(const std::string& requested_name, OpenResult& out, std::string& error) override {
+  bool OpenDevice(const std::string& requested_name,
+                  std::string& out_interface_name,
+                  std::string& error) override {
     struct stat statbuf;
     if (stat(kTunDevicePath, &statbuf) != 0) {
       error =
-        "TUN/TAP device not available: /dev/net/tun does not exist. "
-        "Please ensure the TUN/TAP kernel module is loaded (modprobe tun).";
+          "TUN/TAP device not available: /dev/net/tun does not exist. "
+          "Please ensure the TUN/TAP kernel module is loaded (modprobe tun).";
       return false;
     }
 
     FileDescriptor temp_fd(open(kTunDevicePath, O_RDWR));
     if (!temp_fd.is_valid()) {
       error =
-        std::string("Failed to open ") + kTunDevicePath + ": " + strerror(errno) +
-        ". This usually means you don't have sufficient permissions. "
-        "Try running with sudo or add your user to the 'tun' group.";
+          std::string("Failed to open ") + kTunDevicePath + ": " + strerror(errno) +
+          ". This usually means you don't have sufficient permissions. "
+          "Try running with sudo or add your user to the 'tun' group.";
       return false;
     }
 
@@ -67,14 +62,22 @@ public:
       return false;
     }
 
-    out.fd = std::move(temp_fd);
-    out.interface_name = std::string(ifr.ifr_name);
+    fd_ = std::move(temp_fd);
+    interface_name_ = std::string(ifr.ifr_name);
+    out_interface_name = interface_name_;
     return true;
   }
 
-  ReadPacketStatus ReadPacket(int fd, size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
+  ReadPacketStatus ReadPacket(size_t max_payload_size,
+                              std::vector<uint8_t>& out,
+                              std::string& error) override {
+    if (!fd_.is_valid()) {
+      error = "Device not open";
+      return ReadPacketStatus::Error;
+    }
+
     out.resize(max_payload_size);
-    ssize_t bytes_read = read(fd, out.data(), out.size());
+    ssize_t bytes_read = read(fd_.get(), out.data(), out.size());
     if (bytes_read < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         out.clear();
@@ -92,8 +95,14 @@ public:
     return ReadPacketStatus::Data;
   }
 
-  ssize_t WritePacket(int fd, const uint8_t* data, size_t length, std::string& error) override {
-    ssize_t bytes_written = write(fd, data, length);
+  ssize_t WritePacket(const uint8_t* data,
+                      size_t length,
+                      std::string& error) override {
+    if (!fd_.is_valid()) {
+      error = "Device not open";
+      return -1;
+    }
+    ssize_t bytes_written = write(fd_.get(), data, length);
     if (bytes_written < 0) {
       error = std::string("Write error: ") + strerror(errno);
       return -1;
@@ -109,4 +118,3 @@ std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
 }
 
 #endif
-
