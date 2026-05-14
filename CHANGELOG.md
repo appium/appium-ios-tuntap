@@ -1,3 +1,9 @@
+## [0.2.5](https://github.com/appium/appium-ios-tuntap/compare/v0.2.4...v0.2.5) (2026-05-14)
+
+### Code Refactoring
+
+* backends own fd, polling, and lifecycle ([#42](https://github.com/appium/appium-ios-tuntap/issues/42)) ([f089944](https://github.com/appium/appium-ios-tuntap/commit/f08994477cb9909b597386d0893abbf9b6a3c137))
+
 ## [0.2.4](https://github.com/appium/appium-ios-tuntap/compare/v0.2.3...v0.2.4) (2026-05-13)
 
 ### Code Refactoring
