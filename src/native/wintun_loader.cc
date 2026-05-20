@@ -89,10 +89,15 @@ bool WintunApi::Load(std::string& error) {
 }
 
 bool WintunApi::TryLoadFrom(LPCWSTR path) {
+  // `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` lets a DLL loaded from an explicit
+  // path resolve its own dependencies from its own directory. WinTun has
+  // no third-party dependencies today, but this is the documented-safe
+  // flag set for loading by absolute path and is free to include.
   module_ = ::LoadLibraryExW(path, nullptr,
                              LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
                                  LOAD_LIBRARY_SEARCH_SYSTEM32 |
-                                 LOAD_LIBRARY_SEARCH_USER_DIRS);
+                                 LOAD_LIBRARY_SEARCH_USER_DIRS |
+                                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
   return module_ != nullptr;
 }
 

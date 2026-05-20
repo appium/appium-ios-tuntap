@@ -67,7 +67,10 @@ public:
       DWORD created_err = ::GetLastError();
       adapter_ = api.OpenAdapter(adapter_name.c_str());
       if (!adapter_) {
-        error = "Failed to create or open WinTun adapter: " + FormatLastError(created_err);
+        DWORD opened_err = ::GetLastError();
+        error = "Failed to create or open WinTun adapter: create failed with " +
+                FormatLastError(created_err) + "; open failed with " +
+                FormatLastError(opened_err);
         return false;
       }
     }
@@ -176,6 +179,15 @@ public:
     return static_cast<ssize_t>(length);
   }
 
+  // The worker thread can begin invoking `on_packet`/`on_error` immediately
+  // after this returns; callers must therefore not assume callbacks fire
+  // only after the function returns. In practice the callbacks defined in
+  // `tuntap.cc` either marshal to libuv via TSFN (`on_packet`) or take
+  // `device_mutex_` (`on_error`). Brief contention on `device_mutex_` is
+  // expected and resolves on the order of microseconds because
+  // `std::thread`'s constructor does not block on the worker reaching its
+  // first instruction. There is no deadlock risk because the calling JS
+  // thread releases the lock as soon as `StartPolling` returns.
   bool StartReceiveLoop(uv_loop_t* /*loop*/,
                         size_t buffer_size,
                         PacketCallback on_packet,
@@ -183,6 +195,10 @@ public:
                         std::string& error) override {
     if (!session_) {
       error = "Device not open";
+      return false;
+    }
+    if (buffer_size == 0) {
+      error = "Invalid receive-loop parameters";
       return false;
     }
     if (worker_running_.load()) {
