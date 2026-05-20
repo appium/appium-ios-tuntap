@@ -20,7 +20,7 @@
         "-Wno-unused-parameter",
         "-fPIC"
       ],
-      "cflags_cc": [ 
+      "cflags_cc": [
         "-std=c++17",
         "-Wno-vla-extension",
         "-O3",
@@ -48,7 +48,7 @@
         ]
       },
       "msvs_settings": {
-        "VCCLCompilerTool": { 
+        "VCCLCompilerTool": {
           "ExceptionHandling": 1,
           "AdditionalOptions": [
             "/std:c++17",
@@ -56,7 +56,7 @@
           ]
         }
       },
-      "defines": [ 
+      "defines": [
         "NAPI_CPP_EXCEPTIONS",
         "NAPI_VERSION=8"
       ],
@@ -89,6 +89,22 @@
               "-framework", "CoreFoundation"
             ]
           }
+        }],
+        ["OS=='win'", {
+          "sources": [
+            "src/native/handle.cc",
+            "src/native/wintun_loader.cc",
+            "src/native/tun_backend_windows.cc"
+          ],
+          "libraries": [
+            "iphlpapi.lib",
+            "ws2_32.lib"
+          ],
+          "defines": [
+            "_WIN32_WINNT=0x0A00",
+            "WIN32_LEAN_AND_MEAN",
+            "NOMINMAX"
+          ]
         }]
       ]
     }
