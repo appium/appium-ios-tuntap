@@ -27,10 +27,15 @@ enum class ReadPacketStatus {
   Error,
 };
 
-// Backend abstraction that hides OS-specific TUN device handling from the N-API
-// surface. Each backend owns its native handle (POSIX file descriptor or Win32
-// HANDLE) and the receive-loop primitive it needs (libuv `uv_poll_t` for POSIX,
-// dedicated worker thread + Win32 event for Windows).
+/**
+ * Backend abstraction that hides OS-specific TUN device handling from the
+ * N-API surface.
+ *
+ * Each backend owns:
+ * - its native handle (POSIX file descriptor or Win32 `HANDLE`)
+ * - the receive-loop primitive it needs (libuv `uv_poll_t` on POSIX, a
+ *   dedicated worker thread plus a Win32 event on Windows)
+ */
 class TunPlatformBackend {
 public:
   // Invoked once per packet read by the receive loop. Always called on a

@@ -57,6 +57,12 @@ public:
       return false;
     }
 
+    // Creating or opening a WinTun adapter requires the process to run with
+    // administrator privileges (elevated). Without elevation `CreateAdapter`
+    // fails with ERROR_ACCESS_DENIED, which `FormatLastError` surfaces in the
+    // error string below. This mirrors the root (EUID 0) requirement of the
+    // POSIX backends.
+    //
     // Prefer creating a fresh adapter so `WintunCloseAdapter` on shutdown
     // also tears down the kernel object. Falling back to `OpenAdapter`
     // handles the "leftover from a crashed process" case where the adapter
@@ -132,6 +138,7 @@ public:
           out.clear();
           return ReadPacketStatus::Closed;
         default:
+          out.clear();
           error = "WintunReceivePacket failed: " + FormatLastError(err);
           return ReadPacketStatus::Error;
       }
@@ -241,6 +248,9 @@ public:
     quit_event_.reset();
   }
 
+  // WinTun exposes no POSIX file descriptor: its readable object is a Win32
+  // event `HANDLE`, not a numeric fd. Always -1 — the N-API layer treats -1
+  // as "no pollable fd" and drives delivery through `StartReceiveLoop`.
   int GetNativeFd() const override { return -1; }
 
 private:
