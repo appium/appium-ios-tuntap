@@ -1,3 +1,9 @@
+## [0.3.0](https://github.com/appium/appium-ios-tuntap/compare/v0.2.5...v0.3.0) (2026-05-22)
+
+### Features
+
+* add Windows (WinTun) native backend ([#43](https://github.com/appium/appium-ios-tuntap/issues/43)) ([565b4c1](https://github.com/appium/appium-ios-tuntap/commit/565b4c1cfd2ddf4956ed32ade4f8208cd0d4f0f6)), closes [#ifdef](https://github.com/appium/appium-ios-tuntap/issues/ifdef)
+
 ## [0.2.5](https://github.com/appium/appium-ios-tuntap/compare/v0.2.4...v0.2.5) (2026-05-14)
 
 ### Code Refactoring
