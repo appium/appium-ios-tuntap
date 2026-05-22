@@ -1,4 +1,7 @@
-# Reusable workflow: N-API prebuild matrix (darwin x64/arm64, linux x64/arm64).
+# Reusable workflow: N-API prebuild matrix (darwin x64/arm64, linux x64/arm64,
+# win32 x64/arm64). Windows is a compile-only smoke build: it verifies the
+# native addon builds, but is not uploaded as a release artifact yet because
+# the JS layer does not route `win32` until the Windows wiring lands.
 # Call from CI (PR/push) to verify native builds; call from release with artifacts for npm pack.
 
 name: Prebuild native addon
@@ -23,15 +26,29 @@ jobs:
           - runs-on: macos-latest
             arch: arm64
             artifact: darwin-arm64
+            upload: true
           - runs-on: macos-latest
             arch: x64
             artifact: darwin-x64
+            upload: true
           - runs-on: ubuntu-latest
             arch: x64
             artifact: linux-x64
+            upload: true
           - runs-on: ubuntu-24.04-arm
             arch: arm64
             artifact: linux-arm64
+            upload: true
+          # Windows: compile-only smoke build. `upload: false` keeps it out of
+          # the npm release until the JS layer routes `win32`.
+          - runs-on: windows-latest
+            arch: x64
+            artifact: win32-x64
+            upload: false
+          - runs-on: windows-11-arm
+            arch: arm64
+            artifact: win32-arm64
+            upload: false
     runs-on: ${{ matrix.runs-on }}
     steps:
     - uses: actions/checkout@v6
@@ -52,7 +69,7 @@ jobs:
     - name: Create N-API prebuild
       run: npm run build:prebuilds -- --arch ${{ matrix.arch }}
     - name: Upload prebuild
-      if: inputs.upload-artifacts
+      if: ${{ inputs.upload-artifacts && matrix.upload }}
       uses: actions/upload-artifact@v7
       with:
         name: prebuild-${{ matrix.artifact }}
