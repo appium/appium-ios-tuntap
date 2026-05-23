@@ -1,7 +1,7 @@
 import {log} from './logger.js';
 import {TunTap} from './TunTap.js';
 import {EventEmitter} from 'node:events';
-import {Socket} from 'node:net';
+import type {Socket} from 'node:net';
 import {Buffer} from 'node:buffer';
 
 export interface PacketData {

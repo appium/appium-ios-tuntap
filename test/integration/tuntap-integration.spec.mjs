@@ -3,7 +3,7 @@ import {TunTap} from '../../lib/index.js';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {isRoot} from '../utils.mjs';
+import {hasPrivileges} from '../utils.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -11,12 +11,25 @@ describe('TunTap Integration Tests', function () {
   let tun;
 
   before(function () {
-    if (!isRoot()) {
-      throw new Error('Must be run as root');
+    if (!hasPrivileges()) {
+      throw new Error(
+        process.platform === 'win32'
+          ? 'Must be run from an elevated PowerShell (Run as administrator)'
+          : 'Must be run as root',
+      );
     }
   });
 
   describe('TunTap CLI Utility Signal Handling', function () {
+    // Windows does not deliver POSIX signals to child processes the way Unix
+    // does. `child.kill('SIGINT')` is a forced termination, so the cooperative
+    // cleanup path this test exercises does not apply.
+    before(function () {
+      if (process.platform === 'win32') {
+        this.skip();
+      }
+    });
+
     it('should exit promptly and clean up on SIGINT', function (done) {
       this.timeout(10000);
 
@@ -55,7 +68,10 @@ describe('TunTap Integration Tests', function () {
     tun = new TunTap();
     assert.strictEqual(tun.open(), true, 'TUN device should open');
     assert.strictEqual(typeof tun.name, 'string');
-    assert.ok(tun.fd > 0);
+    // Windows uses WinTun handles; there is no numeric fd, getFd() returns -1.
+    if (process.platform !== 'win32') {
+      assert.ok(tun.fd > 0);
+    }
 
     await tun.configure('fd00::1', 1500);
     await tun.addRoute('fd00::/64');
