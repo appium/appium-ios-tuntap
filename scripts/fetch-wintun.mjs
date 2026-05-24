@@ -8,11 +8,11 @@ import { fileURLToPath } from 'node:url';
 const WINTUN_VERSION = '0.14.1';
 const WINTUN_URL = `https://www.wintun.net/builds/wintun-${WINTUN_VERSION}.zip`;
 
-if (!system.isWindows()) {
-  process.exit(0);
-}
+async function main() {
+  if (!system.isWindows()) {
+    process.exit(0);
+  }
 
-try {
   const archMap = { x64: 'amd64', ia32: 'x86', arm64: 'arm64', arm: 'arm' };
   const wintunArch = archMap[process.arch] ?? 'amd64';
 
@@ -65,7 +65,9 @@ try {
   } finally {
     await fs.rimraf(tmpDir);
   }
-} catch (err) {
+}
+
+main().catch((err) => {
   console.error(err);
   process.exit(1);
-}
+});
