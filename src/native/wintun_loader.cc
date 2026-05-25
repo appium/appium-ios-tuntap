@@ -8,6 +8,22 @@ namespace {
 
 constexpr LPCWSTR kWintunDllName = L"wintun.dll";
 
+// Compile-time arch slug used to find the bundled DLL under
+// vendor/wintun/bin/<arch>/wintun.dll. The .node addon is built per-arch, so
+// the arch of the host process is the same as the arch of this translation
+// unit.
+#if defined(_M_X64) || defined(__x86_64__)
+constexpr LPCWSTR kVendoredArch = L"amd64";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+constexpr LPCWSTR kVendoredArch = L"arm64";
+#elif defined(_M_IX86) || defined(__i386__)
+constexpr LPCWSTR kVendoredArch = L"x86";
+#elif defined(_M_ARM) || defined(__arm__)
+constexpr LPCWSTR kVendoredArch = L"arm";
+#else
+constexpr LPCWSTR kVendoredArch = L"amd64";
+#endif
+
 // Returns the directory that contains the addon module that this code is
 // linked into. Used to locate `wintun.dll` shipped next to `tuntap.node`.
 std::wstring GetAddonDirectory() {
@@ -73,6 +89,16 @@ bool WintunApi::Load(std::string& error) {
   if (!addon_dir.empty()) {
     std::wstring local = addon_dir + L"\\" + kWintunDllName;
     if (TryLoadFrom(local.c_str())) {
+      return ResolveEntryPoints(error);
+    }
+
+    // Bundled fallback: the package ships the official signed DLL under
+    // vendor/wintun/bin/<arch>/wintun.dll. Both build/Release and
+    // prebuilds/<plat>-<arch> are two directories below the package root,
+    // so the same relative path works in either install layout.
+    std::wstring vendored = addon_dir + L"\\..\\..\\vendor\\wintun\\bin\\" +
+                            kVendoredArch + L"\\" + kWintunDllName;
+    if (TryLoadFrom(vendored.c_str())) {
       return ResolveEntryPoints(error);
     }
   }

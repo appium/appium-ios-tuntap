@@ -1,4 +1,7 @@
-import {execFileSync} from 'node:child_process';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Returns true if the current process is running as root on POSIX systems.
@@ -12,12 +15,12 @@ export function isRoot() {
  * Returns true if the current process has Administrator privileges on Windows.
  * Implementation runs `net session`, which exits 0 only when elevated.
  */
-export function isAdministrator() {
+export async function isAdministrator() {
   if (process.platform !== 'win32') {
     return false;
   }
   try {
-    execFileSync('net', ['session'], {stdio: 'ignore', windowsHide: true});
+    await execFileAsync('net', ['session'], {windowsHide: true});
     return true;
   } catch {
     return false;
@@ -29,6 +32,6 @@ export function isAdministrator() {
  * and configure a TUN device on the host platform (root on POSIX,
  * Administrator on Windows).
  */
-export function hasPrivileges() {
-  return process.platform === 'win32' ? isAdministrator() : isRoot();
+export async function hasPrivileges() {
+  return process.platform === 'win32' ? await isAdministrator() : isRoot();
 }

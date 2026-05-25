@@ -10,8 +10,8 @@ const __dirname = path.dirname(__filename);
 describe('TunTap Integration Tests', function () {
   let tun;
 
-  before(function () {
-    if (!hasPrivileges()) {
+  before(async function () {
+    if (!(await hasPrivileges())) {
       throw new Error(
         process.platform === 'win32'
           ? 'Must be run from an elevated PowerShell (Run as administrator)'

@@ -1,7 +1,7 @@
+import {util} from '@appium/support';
+
 import {TunTapPermissionError} from '../errors.js';
 import {execFileAsync} from './exec.js';
-
-let cached: boolean | null = null;
 
 /**
  * Throws {@link TunTapPermissionError} unless the current process is an
@@ -23,19 +23,14 @@ export async function assertAdminOnWindows(): Promise<void> {
  * privileges on Windows. Implementation runs `net session` (which always
  * exists, regardless of locale) and inspects the exit code.
  *
- * The result is cached for the lifetime of the process; admin status cannot
+ * The result is memoized for the lifetime of the process; admin status cannot
  * change between calls without restarting the shell.
  */
-async function isAdministrator(): Promise<boolean> {
-  if (cached !== null) {
-    return cached;
-  }
-
+const isAdministrator = util.memoize(async function isAdministratorUncached(): Promise<boolean> {
   try {
     await execFileAsync('net', ['session'], {windowsHide: true});
-    cached = true;
+    return true;
   } catch {
-    cached = false;
+    return false;
   }
-  return cached;
-}
+});

@@ -92,7 +92,7 @@ On Linux, the module requires:
 
 On Windows the module uses [WinTun](https://www.wintun.net/) (the same userspace TUN driver shipped with WireGuard). Requirements:
 
-1. **`wintun.dll`**: must be discoverable by the addon. Prebuilt npm releases ship the DLL next to `tuntap.node`. When building from source, download the official ZIP from `https://www.wintun.net/builds/wintun-0.14.1.zip` and copy the per-architecture DLL (e.g. `wintun/bin/amd64/wintun.dll`) into `build/Release/` next to the compiled `tuntap.node`, or into a directory on the standard Windows DLL search path (e.g. `System32`).
+1. **`wintun.dll`**: ships with the package. The official signed binaries for `amd64`, `arm64`, `x86`, and `arm` are bundled under `vendor/wintun/bin/<arch>/wintun.dll`; the addon discovers the right one automatically based on its own compile-time architecture. No download or copy step is required.
 2. **Administrator privileges**: required to create the kernel adapter and configure addresses/routes via `netsh`. Launch your shell with **Run as administrator**.
 3. **Build toolchain (only if compiling from source)**: Visual Studio Build Tools 2022 with the C++ workload, the Windows 10 SDK, and Python 3.x on `PATH`.
 
@@ -302,3 +302,12 @@ This ensures the signal handler works as intended.
 ## License
 
 Apache-2.0
+
+### Third-party software
+
+This package redistributes the official signed **WinTun** DLLs (version 0.14.1) from [wintun.net](https://www.wintun.net/) under the bundled-binary license shipped by the WinTun project. The unmodified binaries and the upstream license live under [vendor/wintun/](vendor/wintun/):
+
+- `vendor/wintun/bin/{amd64,arm64,x86,arm}/wintun.dll`
+- `vendor/wintun/LICENSE.txt` &mdash; the upstream WinTun license; required when redistributing the DLL
+
+Maintainers can refresh the bundled binaries with `npm run refresh:wintun` after bumping `WINTUN_VERSION` in [scripts/fetch-wintun.mjs](scripts/fetch-wintun.mjs).
