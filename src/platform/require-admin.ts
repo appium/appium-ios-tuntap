@@ -26,11 +26,13 @@ export async function assertAdminOnWindows(): Promise<void> {
  * The result is memoized for the lifetime of the process; admin status cannot
  * change between calls without restarting the shell.
  */
-const isAdministrator = util.memoize(async function isAdministratorUncached(): Promise<boolean> {
-  try {
-    await execFileAsync('net', ['session'], {windowsHide: true});
-    return true;
-  } catch {
-    return false;
-  }
-});
+export const isAdministrator = util.memoize(
+  async function isAdministratorUncached(): Promise<boolean> {
+    try {
+      await execFileAsync('net', ['session'], {windowsHide: true});
+      return true;
+    } catch {
+      return false;
+    }
+  },
+);

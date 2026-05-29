@@ -1,7 +1,4 @@
-import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import {isAdministrator} from '../lib/platform/require-admin.js';
 
 /**
  * Returns true if the current process is running as root on POSIX systems.
@@ -9,22 +6,6 @@ const execFileAsync = promisify(execFile);
  */
 export function isRoot() {
   return typeof process.getuid === 'function' ? process.getuid() === 0 : false;
-}
-
-/**
- * Returns true if the current process has Administrator privileges on Windows.
- * Implementation runs `net session`, which exits 0 only when elevated.
- */
-export async function isAdministrator() {
-  if (process.platform !== 'win32') {
-    return false;
-  }
-  try {
-    await execFileAsync('net', ['session'], {windowsHide: true});
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**
