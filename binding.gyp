@@ -51,7 +51,7 @@
         "VCCLCompilerTool": {
           "ExceptionHandling": 1,
           "AdditionalOptions": [
-            "/std:c++17",
+            "/std:c++20",
             "/O2"
           ]
         }
