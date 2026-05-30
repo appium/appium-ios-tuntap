@@ -227,11 +227,18 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   Napi::ThreadSafeFunction tsfn = tsfn_;
   auto packet_cb = [tsfn](std::vector<uint8_t> packet) mutable {
     tsfn.BlockingCall(
-        [packet = std::move(packet)](Napi::Env env, Napi::Function jsCallback) {
+        [packet = std::move(packet)](Napi::Env env, Napi::Function jsCallback) mutable {
           if (env == nullptr || jsCallback.IsEmpty()) {
             return;
           }
-          jsCallback.Call({Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size())});
+          auto* backing = new std::vector<uint8_t>(std::move(packet));
+          Napi::Buffer<uint8_t> buf = Napi::Buffer<uint8_t>::New(
+              env,
+              backing->data(),
+              backing->size(),
+              [](Napi::Env, uint8_t*, std::vector<uint8_t>* vec) { delete vec; },
+              backing);
+          jsCallback.Call({buf});
         });
   };
   // Terminal errors from the receive loop (poll error, device closed, read

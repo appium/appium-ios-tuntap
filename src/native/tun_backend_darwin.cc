@@ -125,12 +125,12 @@ public:
       return -1;
     }
 
-    std::vector<uint8_t> frame(length + kUtunHeaderSize);
+    write_frame_.resize(length + kUtunHeaderSize);
     uint32_t family = htonl(AF_INET6);
-    memcpy(frame.data(), &family, kUtunHeaderSize);
-    memcpy(frame.data() + kUtunHeaderSize, data, length);
+    memcpy(write_frame_.data(), &family, kUtunHeaderSize);
+    memcpy(write_frame_.data() + kUtunHeaderSize, data, length);
 
-    ssize_t bytes_written = write(fd_.get(), frame.data(), frame.size());
+    ssize_t bytes_written = write(fd_.get(), write_frame_.data(), write_frame_.size());
     if (bytes_written < 0) {
       error = std::string("Write error: ") + strerror(errno);
       return -1;
@@ -167,6 +167,8 @@ private:
     error = "Could not find an available utun device";
     return false;
   }
+
+  std::vector<uint8_t> write_frame_;
 };
 
 } // namespace
