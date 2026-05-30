@@ -1,3 +1,9 @@
+## [0.4.0](https://github.com/appium/appium-ios-tuntap/compare/v0.3.0...v0.4.0) (2026-05-30)
+
+### Features
+
+* implement Windows (WinTun) JavaScript platform layer ([#44](https://github.com/appium/appium-ios-tuntap/issues/44)) ([da2a9bb](https://github.com/appium/appium-ios-tuntap/commit/da2a9bba1d7226f67ce0f00c533df72164aac858))
+
 ## [0.3.0](https://github.com/appium/appium-ios-tuntap/compare/v0.2.5...v0.3.0) (2026-05-22)
 
 ### Features
