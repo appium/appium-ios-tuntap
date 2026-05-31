@@ -1,3 +1,9 @@
+## [0.4.1](https://github.com/appium/appium-ios-tuntap/compare/v0.4.0...v0.4.1) (2026-05-31)
+
+### Bug Fixes
+
+* Improve tunnel performance ([#45](https://github.com/appium/appium-ios-tuntap/issues/45)) ([576d353](https://github.com/appium/appium-ios-tuntap/commit/576d3535137bb0cf79634ab820b3675db6cbbb86))
+
 ## [0.4.0](https://github.com/appium/appium-ios-tuntap/compare/v0.3.0...v0.4.0) (2026-05-30)
 
 ### Features
