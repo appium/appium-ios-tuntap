@@ -96,24 +96,27 @@ void PosixUvPollLoop::OnPoll(uv_poll_t* handle, int status, int events) {
     return;
   }
 
-  std::vector<uint8_t> packet;
-  std::string error;
-  ReadPacketStatus rs = state->read_fn(state->buffer_size, packet, error);
+  // Drain all readable packets before returning to libuv (match WinTun worker).
+  while (true) {
+    std::vector<uint8_t> packet;
+    std::string error;
+    ReadPacketStatus rs = state->read_fn(state->buffer_size, packet, error);
 
-  switch (rs) {
-    case ReadPacketStatus::Data:
-      if (state->on_packet) {
-        state->on_packet(std::move(packet));
-      }
-      return;
-    case ReadPacketStatus::NoData:
-      return;
-    case ReadPacketStatus::Closed:
-      handle_terminal("Device closed");
-      return;
-    case ReadPacketStatus::Error:
-      handle_terminal(error);
-      return;
+    switch (rs) {
+      case ReadPacketStatus::Data:
+        if (state->on_packet) {
+          state->on_packet(std::move(packet));
+        }
+        break;
+      case ReadPacketStatus::NoData:
+        return;
+      case ReadPacketStatus::Closed:
+        handle_terminal("Device closed");
+        return;
+      case ReadPacketStatus::Error:
+        handle_terminal(error);
+        return;
+    }
   }
 }
 

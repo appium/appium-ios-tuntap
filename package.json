@@ -49,7 +49,7 @@
   "license": "Apache-2.0",
   "gypfile": true,
   "dependencies": {
-    "@appium/support": "^7.0.0-rc.1",
+    "@appium/support": "^7.2.0",
     "node-addon-api": "^8.5.0",
     "node-gyp-build": "^4.8.4",
     "typescript": "^6.0.2"
