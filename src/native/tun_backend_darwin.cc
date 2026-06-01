@@ -91,8 +91,11 @@ public:
       return ReadPacketStatus::Error;
     }
 
-    out.resize(max_payload_size + kUtunHeaderSize);
-    ssize_t bytes_read = read(fd_.get(), out.data(), out.size());
+    const size_t read_cap = max_payload_size + kUtunHeaderSize;
+    if (read_frame_.size() < read_cap) {
+      read_frame_.resize(read_cap);
+    }
+    ssize_t bytes_read = read(fd_.get(), read_frame_.data(), read_cap);
     if (bytes_read < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         out.clear();
@@ -111,9 +114,8 @@ public:
     }
 
     const auto payload_len = static_cast<size_t>(bytes_read - kUtunHeaderSize);
-    // Collapse the utun 4-byte address-family prefix in-place.
-    memmove(out.data(), out.data() + kUtunHeaderSize, payload_len);
     out.resize(payload_len);
+    memcpy(out.data(), read_frame_.data() + kUtunHeaderSize, payload_len);
     return ReadPacketStatus::Data;
   }
 
@@ -168,6 +170,7 @@ private:
     return false;
   }
 
+  std::vector<uint8_t> read_frame_;
   std::vector<uint8_t> write_frame_;
 };
 

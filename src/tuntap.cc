@@ -209,12 +209,14 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
     buffer_size = size;
   }
 
+  // Queue depth > 1 lets the poll thread post the next packet while JS is still
+  // handling the previous callback (still serialized on the main thread).
   tsfn_ = Napi::ThreadSafeFunction::New(
       env,
       info[0].As<Napi::Function>(),
       "TunDeviceDataCallback",
       0,
-      1);
+      8);
 
   uv_loop_t* loop = nullptr;
   napi_status napi_st = napi_get_uv_event_loop(env, &loop);

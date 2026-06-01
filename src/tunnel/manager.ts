@@ -15,6 +15,7 @@ import {
   IPPROTO_TCP,
   IPPROTO_UDP,
 } from './constants.js';
+import {appendBuffer} from './buffer-utils.js';
 import type {
   CdTunnelParseResult,
   Ipv6Frame,
@@ -167,6 +168,9 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     this.deviceConn = deviceConn;
     log.debug(`Starting bidirectional data forwarding for ${this.tun.name}`);
 
+    deviceConn.setNoDelay(true);
+    deviceConn.setKeepAlive(true, 1000);
+
     // Handle data from the device connection
     deviceConn.on('data', (data: Buffer) => {
       if (this.cancelled) {
@@ -174,8 +178,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       }
 
       try {
-        // Add data to buffer
-        this.buffer = Buffer.concat([this.buffer, data]);
+        this.buffer = appendBuffer(this.buffer, data);
 
         // Process IPv6 packets
         this.processBuffer();
@@ -316,11 +319,11 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
         return;
       }
 
-      if (data.length >= IPV6_HEADER_SIZE) {
+      if (this.hasPacketTap() && data.length >= IPV6_HEADER_SIZE) {
         log.debug(
           `TUN → Device: ${data.length} bytes, IPv6 src=${formatIPv6Address(data.subarray(8, 24))}, dst=${formatIPv6Address(data.subarray(24, 40))}`,
         );
-      } else {
+      } else if (this.hasPacketTap()) {
         log.debug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
       }
 
@@ -476,7 +479,7 @@ function tryParseCdTunnelResponse(buffer: Buffer): CdTunnelParseResult {
 
 function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<TunnelInfo> {
   return new Promise((resolve, reject) => {
-    let buffer = Buffer.alloc(0);
+    let buffer: Buffer = Buffer.alloc(0);
 
     const cleanup = () => {
       socket.removeListener('data', onData);
@@ -492,7 +495,7 @@ function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<Tunnel
 
     const onData = (chunk: Buffer) => {
       log.debug('Received data chunk:', chunk.length, 'bytes');
-      buffer = Buffer.concat([buffer, chunk]);
+      buffer = appendBuffer(buffer, chunk);
 
       if (buffer.length >= CD_TUNNEL_HEADER_SIZE) {
         const payloadLength = buffer.readUInt16BE(CD_TUNNEL_MAGIC_SIZE);
