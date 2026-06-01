@@ -1,3 +1,9 @@
+## [0.4.2](https://github.com/appium/appium-ios-tuntap/compare/v0.4.1...v0.4.2) (2026-06-01)
+
+### Miscellaneous Chores
+
+* Tune further tunnel perf ([#46](https://github.com/appium/appium-ios-tuntap/issues/46)) ([d422937](https://github.com/appium/appium-ios-tuntap/commit/d422937a47b16bf1c984030772d1de6e555609e6))
+
 ## [0.4.1](https://github.com/appium/appium-ios-tuntap/compare/v0.4.0...v0.4.1) (2026-05-31)
 
 ### Bug Fixes
