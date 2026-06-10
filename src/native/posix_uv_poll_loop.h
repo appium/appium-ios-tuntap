@@ -33,8 +33,11 @@ public:
              std::string& error);
 
   void Stop();
+  void Pause();
+  void Resume();
 
 private:
+  bool paused_ = false;
   struct State {
     size_t buffer_size = 0;
     ReadFn read_fn;

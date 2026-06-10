@@ -72,6 +72,10 @@ public:
                                 std::string& error) = 0;
   virtual void StopReceiveLoop() = 0;
 
+  // Temporarily stop delivering packets without tearing down the receive loop.
+  virtual void PauseReceiveLoop() {}
+  virtual void ResumeReceiveLoop() {}
+
   // Returns the underlying POSIX file descriptor when one exists. Backends
   // without a numeric fd (e.g. Wintun on Windows) return `-1`.
   virtual int GetNativeFd() const { return -1; }
