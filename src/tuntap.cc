@@ -28,6 +28,8 @@ private:
   Napi::Value GetName(const Napi::CallbackInfo& info);
   Napi::Value GetFd(const Napi::CallbackInfo& info);
   Napi::Value StartPolling(const Napi::CallbackInfo& info);
+  Napi::Value PausePolling(const Napi::CallbackInfo& info);
+  Napi::Value ResumePolling(const Napi::CallbackInfo& info);
 
   std::unique_ptr<TunPlatformBackend> backend_;
   std::string requested_name_;
@@ -56,6 +58,8 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("getName", &TunDevice::GetName),
     InstanceMethod("getFd", &TunDevice::GetFd),
     InstanceMethod("startPolling", &TunDevice::StartPolling),
+    InstanceMethod("pausePolling", &TunDevice::PausePolling),
+    InstanceMethod("resumePolling", &TunDevice::ResumePolling),
   });
 
   constructor = Napi::Persistent(func);
@@ -209,6 +213,15 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
     buffer_size = size;
   }
 
+  size_t queue_depth = 8;
+  if (info.Length() > 2 && info[2].IsNumber()) {
+    queue_depth = info[2].As<Napi::Number>().Uint32Value();
+    if (queue_depth == 0 || queue_depth > 64) {
+      Napi::RangeError::New(env, "Queue depth must be between 1 and 64").ThrowAsJavaScriptException();
+      return env.Null();
+    }
+  }
+
   // Queue depth > 1 lets the poll thread post the next packet while JS is still
   // handling the previous callback (still serialized on the main thread).
   tsfn_ = Napi::ThreadSafeFunction::New(
@@ -216,7 +229,7 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
       info[0].As<Napi::Function>(),
       "TunDeviceDataCallback",
       0,
-      8);
+      queue_depth);
 
   uv_loop_t* loop = nullptr;
   napi_status napi_st = napi_get_uv_event_loop(env, &loop);
@@ -262,6 +275,30 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   }
 
   polling_ = true;
+  return env.Undefined();
+}
+
+Napi::Value TunDevice::PausePolling(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::lock_guard<std::mutex> lock(device_mutex_);
+
+  if (!polling_ || !backend_ || !backend_->IsOpen()) {
+    return env.Undefined();
+  }
+
+  backend_->PauseReceiveLoop();
+  return env.Undefined();
+}
+
+Napi::Value TunDevice::ResumePolling(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::lock_guard<std::mutex> lock(device_mutex_);
+
+  if (!polling_ || !backend_ || !backend_->IsOpen()) {
+    return env.Undefined();
+  }
+
+  backend_->ResumeReceiveLoop();
   return env.Undefined();
 }
 

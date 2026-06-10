@@ -47,6 +47,10 @@ public:
 
   void StopReceiveLoop() override { poll_loop_.Stop(); }
 
+  void PauseReceiveLoop() override { poll_loop_.Pause(); }
+
+  void ResumeReceiveLoop() override { poll_loop_.Resume(); }
+
   int GetNativeFd() const override { return fd_.get(); }
 
 protected:

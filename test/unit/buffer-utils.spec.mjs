@@ -23,4 +23,9 @@ describe('appendBuffer', function () {
     assert.strictEqual(a.toString(), 'hello');
     assert.strictEqual(b.toString(), 'world');
   });
+
+  it('reuses existing buffer when appending an empty chunk', function () {
+    const existing = Buffer.alloc(4096);
+    assert.strictEqual(appendBuffer(existing, Buffer.alloc(0)), existing);
+  });
 });

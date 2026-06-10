@@ -59,12 +59,29 @@ void PosixUvPollLoop::Stop() {
     return;
   }
 
+  paused_ = false;
   uv_poll_stop(handle_);
   handle_->data = nullptr;
   uv_close(reinterpret_cast<uv_handle_t*>(handle_),
            &PosixUvPollLoop::OnHandleClosed);
   handle_ = nullptr;
   state_.reset();
+}
+
+void PosixUvPollLoop::Pause() {
+  if (!handle_ || paused_) {
+    return;
+  }
+  paused_ = true;
+  uv_poll_stop(handle_);
+}
+
+void PosixUvPollLoop::Resume() {
+  if (!handle_ || !paused_) {
+    return;
+  }
+  paused_ = false;
+  uv_poll_start(handle_, UV_READABLE, &PosixUvPollLoop::OnPoll);
 }
 
 void PosixUvPollLoop::OnPoll(uv_poll_t* handle, int status, int events) {

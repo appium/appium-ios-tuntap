@@ -238,15 +238,21 @@ public:
       // Either never started or already cleaned up. Reset the event in case
       // it was created without ever spawning a thread.
       quit_event_.reset();
+      receive_paused_.store(false);
       return;
     }
     worker_running_.store(false);
+    receive_paused_.store(false);
     if (quit_event_.is_valid()) {
       ::SetEvent(quit_event_.get());
     }
     worker_.join();
     quit_event_.reset();
   }
+
+  void PauseReceiveLoop() override { receive_paused_.store(true); }
+
+  void ResumeReceiveLoop() override { receive_paused_.store(false); }
 
   // WinTun exposes no POSIX file descriptor: its readable object is a Win32
   // event `HANDLE`, not a numeric fd. Always -1 — the N-API layer treats -1
@@ -293,11 +299,18 @@ private:
     HANDLE wait_handles[2] = {read_event_, quit_event_.get()};
 
     while (worker_running_.load()) {
+      while (receive_paused_.load() && worker_running_.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+      if (!worker_running_.load()) {
+        return;
+      }
+
       // Drain everything available before going back to wait. WinTun's
       // read-wait event is auto-reset on signal, so we must consume all
       // queued packets before re-arming.
       bool drained = false;
-      while (worker_running_.load()) {
+      while (worker_running_.load() && !receive_paused_.load()) {
         DWORD packet_size = 0;
         BYTE* packet = api.ReceivePacket(session_, &packet_size);
         if (packet) {
@@ -358,6 +371,7 @@ private:
   Handle quit_event_;
   std::thread worker_;
   std::atomic<bool> worker_running_{false};
+  std::atomic<bool> receive_paused_{false};
   std::string interface_name_;
 };
 
