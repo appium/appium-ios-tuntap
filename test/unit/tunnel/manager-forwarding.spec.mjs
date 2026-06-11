@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import {EventEmitter} from 'node:events';
+import {describe, it} from 'node:test';
 
 import {
   DEFAULT_TUN_POLL_QUEUE_DEPTH,
@@ -70,8 +71,8 @@ class MockSocket extends EventEmitter {
   }
 }
 
-describe('TunnelManager forwarding', function () {
-  it('uses a larger poll buffer and deeper queue when packet tap is off', function () {
+describe('TunnelManager forwarding', () => {
+  it('uses a larger poll buffer and deeper queue when packet tap is off', () => {
     const manager = new TunnelManager();
     const tun = new MockTunTap();
     const socket = new MockSocket();
@@ -87,7 +88,7 @@ describe('TunnelManager forwarding', function () {
     assert.strictEqual(tun.queueDepth, FAST_TUN_POLL_QUEUE_DEPTH);
   });
 
-  it('uses MTU-sized poll buffer and default queue when packet tap is on', function () {
+  it('uses MTU-sized poll buffer and default queue when packet tap is on', () => {
     const manager = new TunnelManager();
     const tun = new MockTunTap();
     const socket = new MockSocket();
@@ -101,7 +102,7 @@ describe('TunnelManager forwarding', function () {
     assert.strictEqual(tun.queueDepth, DEFAULT_TUN_POLL_QUEUE_DEPTH);
   });
 
-  it('pauses TUN polling when the device socket write buffer fills', function () {
+  it('pauses TUN polling when the device socket write buffer fills', () => {
     const manager = new TunnelManager();
     const tun = new MockTunTap();
     const socket = new MockSocket();

@@ -1,16 +1,19 @@
 import assert from 'node:assert';
-import {TunTap} from '../../lib/index.js';
 import {spawn} from 'node:child_process';
 import path from 'node:path';
+import {afterEach, before, describe, it} from 'node:test';
 import {fileURLToPath} from 'node:url';
+
+import {TunTap} from '../../lib/index.js';
 import {hasPrivileges} from '../utils.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-describe('TunTap Integration Tests', function () {
+describe('TunTap Integration Tests', () => {
   let tun;
 
-  before(async function () {
+  before(async () => {
     if (!(await hasPrivileges())) {
       throw new Error(
         process.platform === 'win32'
@@ -20,42 +23,33 @@ describe('TunTap Integration Tests', function () {
     }
   });
 
-  describe('TunTap CLI Utility Signal Handling', function () {
+  describe('TunTap CLI Utility Signal Handling', {skip: process.platform === 'win32'}, () => {
     // Windows does not deliver POSIX signals to child processes the way Unix
     // does. `child.kill('SIGINT')` is a forced termination, so the cooperative
     // cleanup path this test exercises does not apply.
-    before(function () {
-      if (process.platform === 'win32') {
-        this.skip();
-      }
-    });
-
-    it('should exit promptly and clean up on SIGINT', function (done) {
-      this.timeout(10000);
-
+    it('should exit promptly and clean up on SIGINT', {timeout: 10_000}, async () => {
       const cliPath = path.resolve(__dirname, '../test-tuntap.mjs');
       const child = spawn('node', [cliPath], {stdio: ['ignore', 'pipe', 'pipe']});
 
       setTimeout(() => {
         child.kill('SIGINT');
-      }, 500); // Give it a moment to enter the read/write step
+      }, 500);
 
-      child.on('exit', (code, signal) => {
-        // Should exit with code 0 or null (if killed by signal)
-        if (signal === 'SIGINT' || code === 0) {
-          done();
-        } else {
-          done(new Error(`Process exited with code ${code} and signal ${signal}`));
-        }
-      });
+      await new Promise((resolve, reject) => {
+        child.on('exit', (code, signal) => {
+          if (signal === 'SIGINT' || code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Process exited with code ${code} and signal ${signal}`));
+          }
+        });
 
-      child.on('error', (err) => {
-        done(err);
+        child.on('error', reject);
       });
     });
   });
 
-  afterEach(function () {
+  afterEach(() => {
     if (tun && tun.isOpen && !tun.isClosed) {
       try {
         tun.close();
@@ -64,7 +58,7 @@ describe('TunTap Integration Tests', function () {
     tun = null;
   });
 
-  it('should open, configure, add route, and close', async function () {
+  it('should open, configure, add route, and close', async () => {
     tun = new TunTap();
     assert.strictEqual(tun.open(), true, 'TUN device should open');
     assert.strictEqual(typeof tun.name, 'string');
@@ -76,12 +70,11 @@ describe('TunTap Integration Tests', function () {
     await tun.configure('fd00::1', 1500);
     await tun.addRoute('fd00::/64');
 
-    // Remove route and close
     await tun.removeRoute('fd00::/64');
     assert.strictEqual(tun.close(), true, 'TUN device should close');
   });
 
-  it('should read and write data (simulate traffic)', async function () {
+  it('should read and write data (simulate traffic)', async () => {
     tun = new TunTap();
     assert.strictEqual(tun.open(), true, 'TUN device should open');
     await tun.configure('fd00::1', 1500);
@@ -89,9 +82,8 @@ describe('TunTap Integration Tests', function () {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       let readCount = 0;
       const timeout = setTimeout(() => {
-        // No data received, this is normal if no traffic is sent
         tun.close();
-        return resolve();
+        resolve();
       }, 3000);
 
       const interval = setInterval(() => {
@@ -104,26 +96,26 @@ describe('TunTap Integration Tests', function () {
             clearTimeout(timeout);
             clearInterval(interval);
             tun.close();
-            return resolve();
+            resolve();
           }
         } catch (err) {
           clearTimeout(timeout);
           clearInterval(interval);
           tun.close();
-          return reject(err);
+          reject(err);
         }
       }, 100);
     });
   });
 
-  it('should fail to open an already closed device', function () {
+  it('should fail to open an already closed device', () => {
     tun = new TunTap();
     tun.open();
     tun.close();
     assert.throws(() => tun.open(), /Device has been closed/);
   });
 
-  it('should throw on invalid configuration', async function () {
+  it('should throw on invalid configuration', async () => {
     tun = new TunTap();
     tun.open();
     await assert.rejects(() => tun.configure('not-an-ip', 1500), /Invalid IPv6 address/);
@@ -131,7 +123,7 @@ describe('TunTap Integration Tests', function () {
     tun.close();
   });
 
-  it('should get interface statistics', async function () {
+  it('should get interface statistics', async () => {
     tun = new TunTap();
     tun.open();
     await tun.configure('fd00::1', 1500);

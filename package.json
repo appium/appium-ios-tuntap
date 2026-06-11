@@ -18,8 +18,8 @@
     "refresh:wintun": "node scripts/fetch-wintun.mjs",
     "prepare": "npm run build",
     "test": "npm run test:integration && npm run test:unit",
-    "test:unit": "mocha \"test/unit/**/*.spec.mjs\" --exit --timeout 2m",
-    "test:integration": "mocha \"test/integration/**/*.spec.mjs\" --exit --timeout 2m"
+    "test:unit": "node --test --test-force-exit --test-timeout=120000 \"test/unit/**/*.spec.mjs\"",
+    "test:integration": "node --test --test-force-exit --test-timeout=120000 \"test/integration/**/*.spec.mjs\""
   },
   "files": [
     "src/tuntap.cc",
@@ -61,7 +61,6 @@
     "@types/node": "^25.0.1",
     "commander": "^14.0.3",
     "conventional-changelog-conventionalcommits": "^9.0.0",
-    "mocha": "^11.7.5",
     "prebuildify": "^6.0.1",
     "prettier": "^3.0.0",
     "semantic-release": "^25.0.2"
