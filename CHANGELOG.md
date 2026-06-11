@@ -1,3 +1,9 @@
+## [0.4.3](https://github.com/appium/appium-ios-tuntap/compare/v0.4.2...v0.4.3) (2026-06-10)
+
+### Bug Fixes
+
+* Improve raw transfer performance ([#48](https://github.com/appium/appium-ios-tuntap/issues/48)) ([f5cf38f](https://github.com/appium/appium-ios-tuntap/commit/f5cf38f1156fec4dfbd8a71840d616a17f728106))
+
 ## [0.4.2](https://github.com/appium/appium-ios-tuntap/compare/v0.4.1...v0.4.2) (2026-06-01)
 
 ### Miscellaneous Chores

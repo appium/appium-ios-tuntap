@@ -10,7 +10,11 @@ import {
   CD_TUNNEL_MAGIC,
   CD_TUNNEL_MAGIC_SIZE,
   CD_TUNNEL_MTU,
+  DEFAULT_TUN_POLL_QUEUE_DEPTH,
+  FAST_TUN_POLL_QUEUE_DEPTH,
   IPV6_HEADER_SIZE,
+  LARGE_TUN_POLL_BUFFER,
+  MAX_TUN_POLL_BUFFER,
   IPV6_VERSION,
   IPPROTO_TCP,
   IPPROTO_UDP,
@@ -38,6 +42,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
   private readonly packetConsumers: Set<PacketConsumer> = new Set();
   private deviceConn: Socket | null = null;
   private cleanupPromise: Promise<void> | null = null;
+  private tunReadPausedForBackpressure = false;
 
   /**
    * Register a listener for parsed tunnel packets (in addition to the `data` event).
@@ -254,17 +259,22 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     }
 
     if (offset > 0) {
-      this.buffer = this.buffer.subarray(offset);
+      if (offset >= this.buffer.length) {
+        this.buffer = Buffer.alloc(0);
+      } else {
+        this.buffer = this.buffer.subarray(offset);
+      }
     }
   }
 
   private writeDeviceFrameToTun(tun: TunTap, packet: Buffer, nextHeader: number): void {
-    const bytesWritten = tun.write(packet);
+    tun.write(packet);
 
     if (!this.hasPacketTap()) {
-      log.debug(`Device → TUN: ${bytesWritten} bytes`);
       return;
     }
+
+    const bytesWritten = packet.length;
 
     const {src, dst} = ipv6Endpoints(packet);
     log.debug(`Device → TUN: ${bytesWritten} bytes, IPv6 src=${src}, dst=${dst}`);
@@ -314,21 +324,55 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       return;
     }
 
-    this.tun.startPolling((data: Buffer) => {
-      if (this.cancelled || !data.length || deviceConn.destroyed) {
+    const tapOn = this.hasPacketTap();
+    const pollBuffer = tapOn
+      ? this.mtu
+      : Math.min(MAX_TUN_POLL_BUFFER, Math.max(this.mtu, LARGE_TUN_POLL_BUFFER));
+    const queueDepth = tapOn ? DEFAULT_TUN_POLL_QUEUE_DEPTH : FAST_TUN_POLL_QUEUE_DEPTH;
+
+    this.tun.startPolling(
+      (data: Buffer) => {
+        if (this.cancelled || !data.length || deviceConn.destroyed) {
+          return;
+        }
+
+        if (tapOn && data.length >= IPV6_HEADER_SIZE) {
+          log.debug(
+            `TUN → Device: ${data.length} bytes, IPv6 src=${formatIPv6Address(data.subarray(8, 24))}, dst=${formatIPv6Address(data.subarray(24, 40))}`,
+          );
+        } else if (tapOn) {
+          log.debug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
+        }
+
+        this.writeTunPacketToDevice(deviceConn, data);
+      },
+      pollBuffer,
+      queueDepth,
+    );
+  }
+
+  private writeTunPacketToDevice(deviceConn: Socket, data: Buffer): void {
+    if (deviceConn.destroyed) {
+      return;
+    }
+
+    const canWriteMore = deviceConn.write(data);
+    if (canWriteMore || this.tunReadPausedForBackpressure || !this.tun) {
+      return;
+    }
+
+    this.tunReadPausedForBackpressure = true;
+    this.tun.pausePolling();
+
+    const onDrain = (): void => {
+      if (this.cancelled || deviceConn.destroyed) {
         return;
       }
+      this.tunReadPausedForBackpressure = false;
+      this.tun?.resumePolling();
+    };
 
-      if (this.hasPacketTap() && data.length >= IPV6_HEADER_SIZE) {
-        log.debug(
-          `TUN → Device: ${data.length} bytes, IPv6 src=${formatIPv6Address(data.subarray(8, 24))}, dst=${formatIPv6Address(data.subarray(24, 40))}`,
-        );
-      } else if (this.hasPacketTap()) {
-        log.debug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
-      }
-
-      deviceConn.write(data);
-    }, this.mtu);
+    deviceConn.once('drain', onDrain);
   }
 
   private async _performStop(): Promise<void> {

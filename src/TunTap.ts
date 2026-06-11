@@ -30,7 +30,9 @@ interface NativeTunDevice {
   write(data: Buffer): number;
   getName(): string;
   getFd(): number;
-  startPolling(callback: PacketCallback, bufferSize?: number): void;
+  startPolling(callback: PacketCallback, bufferSize?: number, queueDepth?: number): void;
+  pausePolling(): void;
+  resumePolling(): void;
 }
 
 interface NativeTuntapModule {
@@ -221,7 +223,11 @@ export class TunTap {
    * @throws {TypeError} if `callback` is not a function
    * @throws {RangeError} if `bufferSize` is out of range
    */
-  startPolling(callback: PacketCallback, bufferSize: number = MAX_BUFFER_SIZE): void {
+  startPolling(
+    callback: PacketCallback,
+    bufferSize: number = MAX_BUFFER_SIZE,
+    queueDepth: number = 8,
+  ): void {
     this.assertReady();
     if (typeof callback !== 'function') {
       throw new TypeError('Callback must be a function');
@@ -229,7 +235,26 @@ export class TunTap {
     if (bufferSize <= 0 || bufferSize > MAX_BUFFER_SIZE) {
       throw new RangeError(`Buffer size must be between 1 and ${MAX_BUFFER_SIZE} bytes`);
     }
-    this.device.startPolling(callback, bufferSize);
+    if (queueDepth <= 0 || queueDepth > 64) {
+      throw new RangeError('Queue depth must be between 1 and 64');
+    }
+    this.device.startPolling(callback, bufferSize, queueDepth);
+  }
+
+  /**
+   * Pause libuv-driven polling without tearing down the receive callback.
+   */
+  pausePolling(): void {
+    this.assertReady();
+    this.device.pausePolling();
+  }
+
+  /**
+   * Resume polling after {@link TunTap.pausePolling}.
+   */
+  resumePolling(): void {
+    this.assertReady();
+    this.device.resumePolling();
   }
 
   /**
