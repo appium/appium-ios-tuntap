@@ -9,7 +9,7 @@ import {hasPrivileges} from '../utils.mjs';
  * Administrator on Windows). They fail fast otherwise.
  */
 
-describe('TunTap Unit Tests', () => {
+describe('TunTap Unit Tests', {timeout: 10000}, () => {
   let tun;
 
   before(async () => {

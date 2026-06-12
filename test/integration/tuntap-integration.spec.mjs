@@ -10,7 +10,7 @@ import {hasPrivileges} from '../utils.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-describe('TunTap Integration Tests', () => {
+describe('TunTap Integration Tests', {timeout: 15000}, () => {
   let tun;
 
   before(async () => {
@@ -74,7 +74,7 @@ describe('TunTap Integration Tests', () => {
     assert.strictEqual(tun.close(), true, 'TUN device should close');
   });
 
-  it('should read and write data (simulate traffic)', async () => {
+  it('should read and write data (simulate traffic)', {timeout: 10000}, async () => {
     tun = new TunTap();
     assert.strictEqual(tun.open(), true, 'TUN device should open');
     await tun.configure('fd00::1', 1500);

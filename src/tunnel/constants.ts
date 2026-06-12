@@ -6,17 +6,26 @@ export const MAX_TUN_POLL_BUFFER = 65_535;
 export const LARGE_TUN_POLL_BUFFER = 64 * 1024;
 /** Default ThreadSafeFunction queue depth for TUN polling. */
 export const DEFAULT_TUN_POLL_QUEUE_DEPTH = 8;
-/** Deeper TSFN queue when packet tap is off (bulk transfer). */
-export const FAST_TUN_POLL_QUEUE_DEPTH = 16;
+/** One in-flight TUN read for sequential pump forwarding. */
+export const SEQUENTIAL_TUN_POLL_QUEUE_DEPTH = 1;
+/** Max utun packets buffered on the JS side before TLS write. */
+export const MAX_TUN_INGRESS_QUEUE = 256;
+/** Max ThreadSafeFunction queue depth (native addon limit). */
+export const MAX_TUN_POLL_TSFN_QUEUE_DEPTH = 64;
+/** ThreadSafeFunction queue depth passed to {@link TunTap.startPolling}. */
+export const TUN_POLL_TSFN_QUEUE_DEPTH = MAX_TUN_POLL_TSFN_QUEUE_DEPTH;
+/** Yield device→TUN loop periodically so utun poll callbacks can run. */
+export const DEVICE_PUMP_YIELD_EVERY_FRAMES = 64;
+
 export const CD_TUNNEL_MAGIC = 'CDTunnel';
 export const CD_TUNNEL_MAGIC_SIZE = 8;
 export const CD_TUNNEL_HEADER_SIZE = CD_TUNNEL_MAGIC_SIZE + 2;
 export const CD_TUNNEL_HANDSHAKE_TIMEOUT_MS = 30_000;
 
+/** Pause device ingress when the reassembly buffer exceeds this size. */
+export const MAX_DEVICE_INGRESS_BUFFER = 8 * 1024 * 1024;
+
 export const IPV6_HEADER_SIZE = 40;
 export const IPV6_VERSION = 6;
 export const IPPROTO_TCP = 6;
 export const IPPROTO_UDP = 17;
-
-/** Pause device ingress when the reassembly buffer exceeds this size. */
-export const MAX_DEVICE_INGRESS_BUFFER = 8 * 1024 * 1024;
