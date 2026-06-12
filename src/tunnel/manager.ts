@@ -14,6 +14,7 @@ import {
   FAST_TUN_POLL_QUEUE_DEPTH,
   IPV6_HEADER_SIZE,
   LARGE_TUN_POLL_BUFFER,
+  MAX_DEVICE_INGRESS_BUFFER,
   MAX_TUN_POLL_BUFFER,
   IPV6_VERSION,
   IPPROTO_TCP,
@@ -43,6 +44,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
   private deviceConn: Socket | null = null;
   private cleanupPromise: Promise<void> | null = null;
   private tunReadPausedForBackpressure = false;
+  private deviceIngressPausedForTun = false;
 
   /**
    * Register a listener for parsed tunnel packets (in addition to the `data` event).
@@ -185,7 +187,10 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       try {
         this.buffer = appendBuffer(this.buffer, data);
 
-        // Process IPv6 packets
+        if (this.buffer.length > MAX_DEVICE_INGRESS_BUFFER) {
+          this.pauseDeviceIngress();
+        }
+
         this.processBuffer();
       } catch (err: any) {
         if (!this.cancelled) {
@@ -265,6 +270,10 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
         this.buffer = this.buffer.subarray(offset);
       }
     }
+
+    if (this.deviceIngressPausedForTun && this.shouldResumeDeviceIngress()) {
+      this.resumeDeviceIngress();
+    }
   }
 
   private writeDeviceFrameToTun(tun: TunTap, packet: Buffer, nextHeader: number): void {
@@ -274,11 +283,33 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       return;
     }
 
-    const bytesWritten = packet.length;
-
     const {src, dst} = ipv6Endpoints(packet);
-    log.debug(`Device → TUN: ${bytesWritten} bytes, IPv6 src=${src}, dst=${dst}`);
+    log.debug(`Device → TUN: ${packet.length} bytes, IPv6 src=${src}, dst=${dst}`);
     this.tapL4Packet(packet, nextHeader, src, dst);
+  }
+
+  private shouldResumeDeviceIngress(): boolean {
+    if (this.buffer.length === 0) {
+      return true;
+    }
+    // All complete frames were written; waiting on more socket bytes to finish the tail frame.
+    return nextIpv6Frame(this.buffer, 0).kind === 'incomplete';
+  }
+
+  private pauseDeviceIngress(): void {
+    if (this.deviceIngressPausedForTun || !this.deviceConn || this.deviceConn.destroyed) {
+      return;
+    }
+    this.deviceIngressPausedForTun = true;
+    this.deviceConn.pause();
+  }
+
+  private resumeDeviceIngress(): void {
+    if (!this.deviceIngressPausedForTun || !this.deviceConn || this.deviceConn.destroyed) {
+      return;
+    }
+    this.deviceIngressPausedForTun = false;
+    this.deviceConn.resume();
   }
 
   private tapL4Packet(packet: Buffer, nextHeader: number, src: string, dst: string): void {

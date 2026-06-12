@@ -25,8 +25,8 @@ class MockTunTap {
 
   close() {}
 
-  write() {
-    return 0;
+  write(data) {
+    return data?.length ?? 0;
   }
 
   async configure() {}
@@ -54,6 +54,7 @@ class MockSocket extends EventEmitter {
     this.destroyed = false;
     this.writableNeedDrain = false;
     this._writable = true;
+    this.paused = false;
   }
 
   setNoDelay() {}
@@ -63,6 +64,14 @@ class MockSocket extends EventEmitter {
   write(data) {
     this.emit('written', data);
     return this._writable;
+  }
+
+  pause() {
+    this.paused = true;
+  }
+
+  resume() {
+    this.paused = false;
   }
 
   destroy() {
@@ -123,5 +132,51 @@ describe('TunnelManager forwarding', () => {
 
     assert.strictEqual(tun.paused, false);
     assert.strictEqual(manager.tunReadPausedForBackpressure, false);
+  });
+
+  it('logs TUN write errors and advances past the frame', () => {
+    const manager = new TunnelManager();
+    const tun = new MockTunTap();
+    tun.write = () => {
+      throw new Error('write failed');
+    };
+
+    manager.tun = tun;
+    manager.mtu = 1280;
+
+    const packet = Buffer.alloc(1280);
+    packet[0] = 0x60;
+    packet.writeUInt16BE(1240, 4);
+    manager.buffer = packet;
+    manager.processBuffer();
+
+    assert.strictEqual(manager.buffer.length, 0);
+  });
+
+  it('resumes device ingress when only an incomplete frame remains after draining', () => {
+    const manager = new TunnelManager();
+    const tun = new MockTunTap();
+    const socket = new MockSocket();
+
+    manager.tun = tun;
+    manager.deviceConn = socket;
+    manager.mtu = 1280;
+
+    const complete = Buffer.alloc(1280);
+    complete[0] = 0x60;
+    complete.writeUInt16BE(1240, 4);
+
+    const incompleteTail = Buffer.alloc(20);
+    incompleteTail[0] = 0x60;
+
+    manager.buffer = Buffer.concat([complete, incompleteTail]);
+    manager.deviceIngressPausedForTun = true;
+    socket.paused = true;
+
+    manager.processBuffer();
+
+    assert.strictEqual(socket.paused, false);
+    assert.strictEqual(manager.deviceIngressPausedForTun, false);
+    assert.strictEqual(manager.buffer.length, 20);
   });
 });
