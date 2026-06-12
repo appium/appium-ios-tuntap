@@ -6,9 +6,71 @@
 #include <mutex>
 #include <string>
 #include <utility>
-#include <vector>
+#include <deque>
 
 #include "native/tun_backend.h"
+
+struct TunPollDispatch {
+  Napi::ThreadSafeFunction tsfn;
+  std::mutex mutex;
+  std::deque<std::vector<uint8_t>> pending;
+
+  struct PacketJob {
+    TunPollDispatch* dispatch;
+    std::vector<uint8_t>* packet;
+  };
+
+  static void CallJs(Napi::Env env,
+                     Napi::Function jsCallback,
+                     TunPollDispatch* self,
+                     std::vector<uint8_t>* packet) {
+    if (env == nullptr || jsCallback.IsEmpty() || packet == nullptr) {
+      delete packet;
+      return;
+    }
+    auto* backing = packet;
+    Napi::Buffer<uint8_t> buf = Napi::Buffer<uint8_t>::New(
+        env,
+        backing->data(),
+        backing->size(),
+        [](Napi::Env, uint8_t*, std::vector<uint8_t>* vec) { delete vec; },
+        backing);
+    jsCallback.Call({buf});
+    if (self != nullptr) {
+      self->FlushPending();
+    }
+  }
+
+  void FlushPending() {
+    std::lock_guard<std::mutex> lock(mutex);
+    while (!pending.empty()) {
+      auto* packet = new std::vector<uint8_t>(std::move(pending.front()));
+      auto* job = new PacketJob{this, packet};
+      napi_status status = tsfn.NonBlockingCall(
+          job,
+          [](Napi::Env env, Napi::Function jsCallback, PacketJob* job) {
+            CallJs(env, jsCallback, job->dispatch, job->packet);
+            delete job;
+          });
+      if (status != napi_ok) {
+        delete packet;
+        delete job;
+        break;
+      }
+      pending.pop_front();
+    }
+  }
+
+  bool PostPacket(std::vector<uint8_t> packet) {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      pending.push_back(std::move(packet));
+    }
+    FlushPending();
+    std::lock_guard<std::mutex> lock(mutex);
+    return pending.empty();
+  }
+};
 
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
 public:
@@ -38,6 +100,7 @@ private:
   std::mutex device_mutex_;
 
   Napi::ThreadSafeFunction tsfn_;
+  TunPollDispatch* poll_dispatch_ = nullptr;
   std::atomic<bool> polling_;
   static constexpr size_t MAX_POLL_BUFFER = 65535;
 
@@ -240,21 +303,11 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   }
 
   Napi::ThreadSafeFunction tsfn = tsfn_;
-  auto packet_cb = [tsfn](std::vector<uint8_t> packet) mutable {
-    tsfn.BlockingCall(
-        [packet = std::move(packet)](Napi::Env env, Napi::Function jsCallback) mutable {
-          if (env == nullptr || jsCallback.IsEmpty()) {
-            return;
-          }
-          auto* backing = new std::vector<uint8_t>(std::move(packet));
-          Napi::Buffer<uint8_t> buf = Napi::Buffer<uint8_t>::New(
-              env,
-              backing->data(),
-              backing->size(),
-              [](Napi::Env, uint8_t*, std::vector<uint8_t>* vec) { delete vec; },
-              backing);
-          jsCallback.Call({buf});
-        });
+  auto* dispatch = new TunPollDispatch();
+  dispatch->tsfn = tsfn;
+  poll_dispatch_ = dispatch;
+  auto packet_cb = [dispatch](std::vector<uint8_t> packet) mutable -> bool {
+    return dispatch->PostPacket(std::move(packet));
   };
   // Terminal errors from the receive loop (poll error, device closed, read
   // error) call back here so the JS-side polling_ flag and TSFN are released
@@ -326,6 +379,10 @@ void TunDevice::StopPollingLocked() {
 }
 
 void TunDevice::ReleaseTsfnLocked() {
+  if (poll_dispatch_ != nullptr) {
+    delete poll_dispatch_;
+    poll_dispatch_ = nullptr;
+  }
   if (tsfn_) {
     tsfn_.Release();
     tsfn_ = nullptr;

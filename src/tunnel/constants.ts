@@ -8,14 +8,10 @@ export const LARGE_TUN_POLL_BUFFER = 64 * 1024;
 export const DEFAULT_TUN_POLL_QUEUE_DEPTH = 8;
 /** One in-flight TUN read for sequential pump forwarding. */
 export const SEQUENTIAL_TUN_POLL_QUEUE_DEPTH = 1;
-/** Max utun packets buffered on the JS side before TLS write. */
-export const MAX_TUN_INGRESS_QUEUE = 256;
-/** Max ThreadSafeFunction queue depth (native addon limit). */
-export const MAX_TUN_POLL_TSFN_QUEUE_DEPTH = 64;
-/** ThreadSafeFunction queue depth passed to {@link TunTap.startPolling}. */
-export const TUN_POLL_TSFN_QUEUE_DEPTH = MAX_TUN_POLL_TSFN_QUEUE_DEPTH;
-/** Yield device→TUN loop periodically so utun poll callbacks can run. */
-export const DEVICE_PUMP_YIELD_EVERY_FRAMES = 64;
+/** Max utun packets buffered between poll and TLS write (native poll may burst-read). */
+export const MAX_TUN_INGRESS_QUEUE = 64;
+/** ThreadSafeFunction queue depth for utun poll (must match ingress buffer). */
+export const TUN_POLL_TSFN_QUEUE_DEPTH = MAX_TUN_INGRESS_QUEUE;
 
 export const CD_TUNNEL_MAGIC = 'CDTunnel';
 export const CD_TUNNEL_MAGIC_SIZE = 8;

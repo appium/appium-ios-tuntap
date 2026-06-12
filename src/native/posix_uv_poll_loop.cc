@@ -121,8 +121,8 @@ void PosixUvPollLoop::OnPoll(uv_poll_t* handle, int status, int events) {
 
     switch (rs) {
       case ReadPacketStatus::Data:
-        if (state->on_packet) {
-          state->on_packet(std::move(packet));
+        if (state->on_packet && !state->on_packet(std::move(packet))) {
+          return;
         }
         break;
       case ReadPacketStatus::NoData:

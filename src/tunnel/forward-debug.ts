@@ -2,15 +2,11 @@ import {log} from '../logger.js';
 
 /** Wedge diagnostics — set TUNTAP_DEBUG_FORWARD=1 on the tunnel process. */
 export const TUNTAP_FORWARD_DEBUG =
-  process.env.TUNTAP_DEBUG_FORWARD === '1' ||
-  process.env.TUNTAP_DEBUG_FORWARD === 'true';
+  process.env.TUNTAP_DEBUG_FORWARD === '1' || process.env.TUNTAP_DEBUG_FORWARD === 'true';
 
 let seq = 0;
 
-export function fwdDebug(
-  event: string,
-  detail?: Record<string, string | number | boolean>,
-): void {
+export function fwdDebug(event: string, detail?: Record<string, string | number | boolean>): void {
   if (!TUNTAP_FORWARD_DEBUG) {
     return;
   }

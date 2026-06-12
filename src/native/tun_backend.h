@@ -42,7 +42,7 @@ public:
   // background thread (libuv loop thread on POSIX, worker thread on Windows);
   // the caller in `tuntap.cc` is responsible for marshalling onto the JS
   // thread via `Napi::ThreadSafeFunction`.
-  using PacketCallback = std::function<void(std::vector<uint8_t>)>;
+  using PacketCallback = std::function<bool(std::vector<uint8_t>)>;
 
   // Invoked at most once when the receive loop encounters a fatal error and
   // stops. The receive loop must not deliver any further packets afterwards.
