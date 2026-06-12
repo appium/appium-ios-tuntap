@@ -14,6 +14,7 @@ struct TunPollDispatch {
   Napi::ThreadSafeFunction tsfn;
   std::mutex mutex;
   std::deque<std::vector<uint8_t>> pending;
+  static constexpr size_t MAX_PENDING = 512;
 
   struct PacketJob {
     TunPollDispatch* dispatch;
@@ -68,7 +69,8 @@ struct TunPollDispatch {
     }
     FlushPending();
     std::lock_guard<std::mutex> lock(mutex);
-    return pending.empty();
+    // Stop reading more from utun until JS drains the backlog.
+    return pending.size() < MAX_PENDING;
   }
 };
 

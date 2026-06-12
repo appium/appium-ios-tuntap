@@ -4,14 +4,18 @@ import {Buffer} from 'node:buffer';
 import type {TunTap} from '../TunTap.js';
 import {appendBuffer} from './buffer-utils.js';
 import {fwdDebug} from './forward-debug.js';
-import {IPV6_HEADER_SIZE, IPV6_VERSION, MAX_DEVICE_INGRESS_BUFFER} from './constants.js';
+import {
+  IPV6_HEADER_SIZE,
+  IPV6_VERSION,
+  MAX_DEVICE_INGRESS_BUFFER,
+  DEVICE_PUMP_YIELD_EVERY_FRAMES,
+} from './constants.js';
 
 export type DeviceToTunProgressHook = () => void;
 
 /**
- * pymobiledevice3 sock_read_task-style device→TUN forwarding: read one exact
- * IPv6 frame from the socket, write to TUN, repeat. Yields only when TUN write
- * blocks (via notifyTunWritable from the TUN→device pump).
+ * Device→TUN forwarding: read one exact IPv6 frame from the socket, write to TUN,
+ * repeat. Yields only when TUN write blocks (via notifyTunWritable from the TUN→device pump).
  */
 export class DeviceToTunPump {
   private cancelled = false;
@@ -190,9 +194,8 @@ export class DeviceToTunPump {
         this.maybeResumeDeviceIngress();
         return;
       }
-      // pymobiledevice3 blocks in sock_read_task on tun.write() without pausing
-      // the TLS stream — keep reading into the reassembly buffer while waiting
-      // for TUN→device progress to free utun capacity.
+      // Block on tun.write() without pausing the TLS stream — keep reading into the
+      // reassembly buffer while waiting for TUN→device progress to free utun capacity.
       fwdDebug('tun-write-blocked', {frameLen: packet.length, buf: this.buffer.length});
       await this.waitTunWritable();
     }
@@ -211,7 +214,9 @@ export class DeviceToTunPump {
           fwdDebug('device-pump-write', {len: packet.length, frames: this.fwdFrames});
         }
         this.onFrameWritten?.();
-        await new Promise((resolve) => setImmediate(resolve));
+        if (this.fwdFrames % DEVICE_PUMP_YIELD_EVERY_FRAMES === 0) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
       }
     } catch {
       // stop() rejected a pending readOneFrame()

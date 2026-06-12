@@ -8,15 +8,15 @@ import {fwdDebug} from './forward-debug.js';
 export type TunToDeviceProgressHook = () => void;
 
 /**
- * pymobiledevice3-style TUN→device forwarding: read one packet, write, await
- * drain when the socket needs it, then read the next.
+ * TUN→device forwarding: utun poll fills an ingress queue; a writer loop drains
+ * the queue to TLS with backpressure (await drain).
  */
 export class TunToDevicePump {
   private cancelled = false;
   private running = false;
   private tunIngressQueue: Buffer[] = [];
-  private tunPacketWaiter: ((packet: Buffer) => void) | null = null;
-  private readReject: ((err: Error) => void) | null = null;
+  private ingressWaiter: (() => void) | null = null;
+  private ingressReject: ((err: Error) => void) | null = null;
   private drainAbort: AbortController | null = null;
   private loopPromise: Promise<void> | null = null;
   private fwdPumpPackets = 0;
@@ -40,7 +40,7 @@ export class TunToDevicePump {
       this.mtu,
       TUN_POLL_TSFN_QUEUE_DEPTH,
     );
-    this.tun.pausePolling();
+    this.tun.resumePolling();
 
     fwdDebug('pump-start', {mtu: this.mtu, queueDepth: TUN_POLL_TSFN_QUEUE_DEPTH});
     this.loopPromise = this.runLoop(deviceConn);
@@ -51,11 +51,11 @@ export class TunToDevicePump {
     this.drainAbort?.abort();
     this.drainAbort = null;
     this.tun.pausePolling();
-    if (this.readReject) {
-      this.readReject(new Error('pump cancelled'));
-      this.readReject = null;
+    if (this.ingressReject) {
+      this.ingressReject(new Error('pump cancelled'));
+      this.ingressReject = null;
     }
-    this.tunPacketWaiter = null;
+    this.ingressWaiter = null;
     this.tunIngressQueue = [];
     if (this.loopPromise) {
       await this.loopPromise.catch(() => undefined);
@@ -75,23 +75,17 @@ export class TunToDevicePump {
       this.tun.pausePolling();
       fwdDebug('tun-ingress-pause', {queued: this.tunIngressQueue.length});
     }
-    this.deliverTunPacket();
+    this.signalIngress();
   }
 
-  private deliverTunPacket(): void {
-    const waiter = this.tunPacketWaiter;
-    if (!waiter || this.tunIngressQueue.length === 0) {
+  private signalIngress(): void {
+    const waiter = this.ingressWaiter;
+    if (!waiter) {
       return;
     }
-
-    this.tunPacketWaiter = null;
-    this.readReject = null;
-    const packet = this.tunIngressQueue.shift();
-    if (!packet) {
-      return;
-    }
-    waiter(packet);
-    this.maybeResumeTunPolling();
+    this.ingressWaiter = null;
+    this.ingressReject = null;
+    waiter();
   }
 
   private maybeResumeTunPolling(): void {
@@ -100,23 +94,16 @@ export class TunToDevicePump {
     }
   }
 
-  private readOnePacket(): Promise<Buffer> {
+  private waitForIngress(): Promise<void> {
     if (this.cancelled) {
       return Promise.reject(new Error('pump cancelled'));
     }
-
     if (this.tunIngressQueue.length > 0) {
-      const packet = this.tunIngressQueue.shift();
-      if (packet) {
-        this.maybeResumeTunPolling();
-        return Promise.resolve(packet);
-      }
+      return Promise.resolve();
     }
-
     return new Promise((resolve, reject) => {
-      this.tunPacketWaiter = resolve;
-      this.readReject = reject;
-      this.tun.resumePolling();
+      this.ingressWaiter = resolve;
+      this.ingressReject = reject;
     });
   }
 
@@ -135,7 +122,6 @@ export class TunToDevicePump {
       });
     }
     if (!canWriteMore || deviceConn.writableNeedDrain) {
-      // Unblock device→TUN while TLS send buffer drains (utun may accept writes again).
       this.onForwardProgress?.();
       fwdDebug('pump-drain-wait', {
         writableLength: deviceConn.writableLength,
@@ -164,20 +150,23 @@ export class TunToDevicePump {
   private async runLoop(deviceConn: Socket): Promise<void> {
     try {
       while (!this.cancelled && !deviceConn.destroyed) {
-        const packet = await this.readOnePacket();
-        if (this.cancelled) {
-          break;
+        await this.waitForIngress();
+        while (this.tunIngressQueue.length > 0 && !this.cancelled && !deviceConn.destroyed) {
+          const packet = this.tunIngressQueue.shift();
+          if (!packet) {
+            break;
+          }
+          this.maybeResumeTunPolling();
+          this.fwdPumpPackets += 1;
+          if (this.fwdPumpPackets === 1 || this.fwdPumpPackets % 200 === 0) {
+            fwdDebug('pump-read', {len: packet.length, packets: this.fwdPumpPackets});
+          }
+          this.onForwardProgress?.();
+          await this.writeAndDrain(deviceConn, packet);
         }
-        this.fwdPumpPackets += 1;
-        if (this.fwdPumpPackets === 1 || this.fwdPumpPackets % 200 === 0) {
-          fwdDebug('pump-read', {len: packet.length, packets: this.fwdPumpPackets});
-        }
-        // Reading from utun may free kernel buffer for inbound utun writes.
-        this.onForwardProgress?.();
-        await this.writeAndDrain(deviceConn, packet);
       }
     } catch {
-      // stop() rejected a pending readOnePacket()
+      // stop() rejected waitForIngress()
     }
     fwdDebug('pump-stop', {packets: this.fwdPumpPackets});
   }
