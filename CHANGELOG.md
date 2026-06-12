@@ -1,3 +1,9 @@
+## [0.4.4](https://github.com/appium/appium-ios-tuntap/compare/v0.4.3...v0.4.4) (2026-06-12)
+
+### Bug Fixes
+
+* Update tunnel backpressure handling ([#50](https://github.com/appium/appium-ios-tuntap/issues/50)) ([28b8bce](https://github.com/appium/appium-ios-tuntap/commit/28b8bce8edcf2a0446a653bbec759e6b4a199827))
+
 ## [0.4.3](https://github.com/appium/appium-ios-tuntap/compare/v0.4.2...v0.4.3) (2026-06-10)
 
 ### Bug Fixes
