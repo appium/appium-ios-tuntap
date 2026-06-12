@@ -26,9 +26,6 @@ class MockTunTap {
   close() {}
 
   write(data) {
-    if (this.blockWrites) {
-      return 0;
-    }
     return data?.length ?? 0;
   }
 
@@ -137,7 +134,26 @@ describe('TunnelManager forwarding', () => {
     assert.strictEqual(manager.tunReadPausedForBackpressure, false);
   });
 
-  it('pauses device ingress when TUN write blocks and resumes after drain', async () => {
+  it('logs TUN write errors and advances past the frame', () => {
+    const manager = new TunnelManager();
+    const tun = new MockTunTap();
+    tun.write = () => {
+      throw new Error('write failed');
+    };
+
+    manager.tun = tun;
+    manager.mtu = 1280;
+
+    const packet = Buffer.alloc(1280);
+    packet[0] = 0x60;
+    packet.writeUInt16BE(1240, 4);
+    manager.buffer = packet;
+    manager.processBuffer();
+
+    assert.strictEqual(manager.buffer.length, 0);
+  });
+
+  it('resumes device ingress when only an incomplete frame remains after draining', () => {
     const manager = new TunnelManager();
     const tun = new MockTunTap();
     const socket = new MockSocket();
@@ -146,23 +162,21 @@ describe('TunnelManager forwarding', () => {
     manager.deviceConn = socket;
     manager.mtu = 1280;
 
-    const packet = Buffer.alloc(1280);
-    packet[0] = 0x60;
-    packet.writeUInt16BE(1240, 4);
+    const complete = Buffer.alloc(1280);
+    complete[0] = 0x60;
+    complete.writeUInt16BE(1240, 4);
 
-    tun.blockWrites = true;
-    manager.buffer = packet;
-    manager.processBuffer();
+    const incompleteTail = Buffer.alloc(20);
+    incompleteTail[0] = 0x60;
 
-    assert.strictEqual(socket.paused, true);
-    assert.strictEqual(manager.deviceIngressPausedForTun, true);
-    assert.strictEqual(manager.buffer.length, 1280);
+    manager.buffer = Buffer.concat([complete, incompleteTail]);
+    manager.deviceIngressPausedForTun = true;
+    socket.paused = true;
 
-    tun.blockWrites = false;
     manager.processBuffer();
 
     assert.strictEqual(socket.paused, false);
     assert.strictEqual(manager.deviceIngressPausedForTun, false);
-    assert.strictEqual(manager.buffer.length, 0);
+    assert.strictEqual(manager.buffer.length, 20);
   });
 });

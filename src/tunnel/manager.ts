@@ -45,7 +45,6 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
   private cleanupPromise: Promise<void> | null = null;
   private tunReadPausedForBackpressure = false;
   private deviceIngressPausedForTun = false;
-  private drainingDeviceToTun = false;
 
   /**
    * Register a listener for parsed tunnel packets (in addition to the `data` event).
@@ -255,11 +254,10 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
         break;
       }
 
-      const writeResult = this.writeDeviceFrameToTun(this.tun, frame.packet, frame.nextHeader);
-      if (writeResult === 'blocked') {
-        this.pauseDeviceIngress();
-        this.scheduleDrainDeviceToTun();
-        break;
+      try {
+        this.writeDeviceFrameToTun(this.tun, frame.packet, frame.nextHeader);
+      } catch (err: any) {
+        log.error(`Error writing to TUN: ${err.message}`);
       }
 
       offset += frame.length;
@@ -273,28 +271,29 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       }
     }
 
-    if (this.buffer.length === 0 && this.deviceIngressPausedForTun) {
+    if (this.deviceIngressPausedForTun && this.shouldResumeDeviceIngress()) {
       this.resumeDeviceIngress();
     }
   }
 
-  private writeDeviceFrameToTun(tun: TunTap, packet: Buffer, nextHeader: number): 'ok' | 'blocked' {
-    let offset = 0;
-    while (offset < packet.length) {
-      const written = tun.write(packet.subarray(offset));
-      if (written <= 0) {
-        return 'blocked';
-      }
-      offset += written;
+  private writeDeviceFrameToTun(tun: TunTap, packet: Buffer, nextHeader: number): void {
+    tun.write(packet);
+
+    if (!this.hasPacketTap()) {
+      return;
     }
 
-    if (this.hasPacketTap()) {
-      const {src, dst} = ipv6Endpoints(packet);
-      log.debug(`Device → TUN: ${packet.length} bytes, IPv6 src=${src}, dst=${dst}`);
-      this.tapL4Packet(packet, nextHeader, src, dst);
-    }
+    const {src, dst} = ipv6Endpoints(packet);
+    log.debug(`Device → TUN: ${packet.length} bytes, IPv6 src=${src}, dst=${dst}`);
+    this.tapL4Packet(packet, nextHeader, src, dst);
+  }
 
-    return 'ok';
+  private shouldResumeDeviceIngress(): boolean {
+    if (this.buffer.length === 0) {
+      return true;
+    }
+    // All complete frames were written; waiting on more socket bytes to finish the tail frame.
+    return nextIpv6Frame(this.buffer, 0).kind === 'incomplete';
   }
 
   private pauseDeviceIngress(): void {
@@ -311,26 +310,6 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     }
     this.deviceIngressPausedForTun = false;
     this.deviceConn.resume();
-  }
-
-  private scheduleDrainDeviceToTun(): void {
-    if (this.drainingDeviceToTun || this.cancelled) {
-      return;
-    }
-    this.drainingDeviceToTun = true;
-    setImmediate(() => {
-      this.drainingDeviceToTun = false;
-      if (this.cancelled) {
-        return;
-      }
-      try {
-        this.processBuffer();
-      } catch (err: any) {
-        if (!this.cancelled) {
-          log.error('Error draining device ingress buffer:', err.message);
-        }
-      }
-    });
   }
 
   private tapL4Packet(packet: Buffer, nextHeader: number, src: string, dst: string): void {
