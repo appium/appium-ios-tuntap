@@ -17,3 +17,6 @@ export const IPV6_HEADER_SIZE = 40;
 export const IPV6_VERSION = 6;
 export const IPPROTO_TCP = 6;
 export const IPPROTO_UDP = 17;
+
+/** Pause device ingress when the reassembly buffer exceeds this size. */
+export const MAX_DEVICE_INGRESS_BUFFER = 8 * 1024 * 1024;

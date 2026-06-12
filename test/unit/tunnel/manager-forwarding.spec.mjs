@@ -25,8 +25,11 @@ class MockTunTap {
 
   close() {}
 
-  write() {
-    return 0;
+  write(data) {
+    if (this.blockWrites) {
+      return 0;
+    }
+    return data?.length ?? 0;
   }
 
   async configure() {}
@@ -54,6 +57,7 @@ class MockSocket extends EventEmitter {
     this.destroyed = false;
     this.writableNeedDrain = false;
     this._writable = true;
+    this.paused = false;
   }
 
   setNoDelay() {}
@@ -63,6 +67,14 @@ class MockSocket extends EventEmitter {
   write(data) {
     this.emit('written', data);
     return this._writable;
+  }
+
+  pause() {
+    this.paused = true;
+  }
+
+  resume() {
+    this.paused = false;
   }
 
   destroy() {
@@ -123,5 +135,34 @@ describe('TunnelManager forwarding', () => {
 
     assert.strictEqual(tun.paused, false);
     assert.strictEqual(manager.tunReadPausedForBackpressure, false);
+  });
+
+  it('pauses device ingress when TUN write blocks and resumes after drain', async () => {
+    const manager = new TunnelManager();
+    const tun = new MockTunTap();
+    const socket = new MockSocket();
+
+    manager.tun = tun;
+    manager.deviceConn = socket;
+    manager.mtu = 1280;
+
+    const packet = Buffer.alloc(1280);
+    packet[0] = 0x60;
+    packet.writeUInt16BE(1240, 4);
+
+    tun.blockWrites = true;
+    manager.buffer = packet;
+    manager.processBuffer();
+
+    assert.strictEqual(socket.paused, true);
+    assert.strictEqual(manager.deviceIngressPausedForTun, true);
+    assert.strictEqual(manager.buffer.length, 1280);
+
+    tun.blockWrites = false;
+    manager.processBuffer();
+
+    assert.strictEqual(socket.paused, false);
+    assert.strictEqual(manager.deviceIngressPausedForTun, false);
+    assert.strictEqual(manager.buffer.length, 0);
   });
 });

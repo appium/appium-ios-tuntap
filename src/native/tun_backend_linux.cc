@@ -104,6 +104,9 @@ public:
     }
     ssize_t bytes_written = write(fd_.get(), data, length);
     if (bytes_written < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        return 0;
+      }
       error = std::string("Write error: ") + strerror(errno);
       return -1;
     }
