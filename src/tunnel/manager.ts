@@ -255,11 +255,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
         break;
       }
 
-      const writeResult = this.writeDeviceFrameToTun(
-        this.tun,
-        frame.packet,
-        frame.nextHeader,
-      );
+      const writeResult = this.writeDeviceFrameToTun(this.tun, frame.packet, frame.nextHeader);
       if (writeResult === 'blocked') {
         this.pauseDeviceIngress();
         this.scheduleDrainDeviceToTun();
@@ -282,11 +278,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     }
   }
 
-  private writeDeviceFrameToTun(
-    tun: TunTap,
-    packet: Buffer,
-    nextHeader: number,
-  ): 'ok' | 'blocked' {
+  private writeDeviceFrameToTun(tun: TunTap, packet: Buffer, nextHeader: number): 'ok' | 'blocked' {
     let offset = 0;
     while (offset < packet.length) {
       const written = tun.write(packet.subarray(offset));
