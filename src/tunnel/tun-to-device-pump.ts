@@ -86,7 +86,11 @@ export class TunToDevicePump {
 
     this.tunPacketWaiter = null;
     this.readReject = null;
-    waiter(this.tunIngressQueue.shift()!);
+    const packet = this.tunIngressQueue.shift();
+    if (!packet) {
+      return;
+    }
+    waiter(packet);
     this.maybeResumeTunPolling();
   }
 
@@ -102,9 +106,11 @@ export class TunToDevicePump {
     }
 
     if (this.tunIngressQueue.length > 0) {
-      const packet = this.tunIngressQueue.shift()!;
-      this.maybeResumeTunPolling();
-      return Promise.resolve(packet);
+      const packet = this.tunIngressQueue.shift();
+      if (packet) {
+        this.maybeResumeTunPolling();
+        return Promise.resolve(packet);
+      }
     }
 
     return new Promise((resolve, reject) => {

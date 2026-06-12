@@ -43,25 +43,6 @@ export class DeviceToTunPump {
     this.loopPromise = this.runLoop(deviceConn, tun);
   }
 
-  private enqueueDeviceData(chunk: Buffer): void {
-    if (this.cancelled || chunk.length === 0) {
-      return;
-    }
-    this.pendingDeviceChunks.push(chunk);
-    if (this.deviceDrainScheduled) {
-      return;
-    }
-    this.deviceDrainScheduled = true;
-    setImmediate(() => {
-      this.deviceDrainScheduled = false;
-      const chunks = this.pendingDeviceChunks;
-      this.pendingDeviceChunks = [];
-      for (const pending of chunks) {
-        this.onDeviceData(pending);
-      }
-    });
-  }
-
   notifyTunWritable(): void {
     const waiter = this.tunWritableWaiter;
     if (waiter) {
@@ -85,6 +66,25 @@ export class DeviceToTunPump {
     this.buffer = Buffer.alloc(0);
     this.deviceConn = null;
     this.running = false;
+  }
+
+  private enqueueDeviceData(chunk: Buffer): void {
+    if (this.cancelled || chunk.length === 0) {
+      return;
+    }
+    this.pendingDeviceChunks.push(chunk);
+    if (this.deviceDrainScheduled) {
+      return;
+    }
+    this.deviceDrainScheduled = true;
+    setImmediate(() => {
+      this.deviceDrainScheduled = false;
+      const chunks = this.pendingDeviceChunks;
+      this.pendingDeviceChunks = [];
+      for (const pending of chunks) {
+        this.onDeviceData(pending);
+      }
+    });
   }
 
   private onDeviceData(chunk: Buffer): void {

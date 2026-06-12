@@ -6,6 +6,7 @@ export const TUNTAP_FORWARD_DEBUG =
 
 let seq = 0;
 
+/** Log a numbered tunnel forward diagnostic when {@link TUNTAP_FORWARD_DEBUG} is enabled. */
 export function fwdDebug(event: string, detail?: Record<string, string | number | boolean>): void {
   if (!TUNTAP_FORWARD_DEBUG) {
     return;
@@ -20,6 +21,7 @@ export function fwdDebug(event: string, detail?: Record<string, string | number 
   log.info(`[fwd] ${parts.join(' ')}`);
 }
 
+/** Summarize reassembly buffer state for forward debug logs. */
 export function fwdBufferState(buffer: Buffer): {
   buf: number;
   tailKind: string;
