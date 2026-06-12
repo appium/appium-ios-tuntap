@@ -27,15 +27,15 @@ npm run build
 npm run lint
 npm run lint:fix
 
-# Tests (unit + integration; scripts invoke sudo for mocha on macOS/Linux)
+# Tests (unit + integration; privileged cases need sudo on macOS/Linux)
 npm test
 
 # Unit or integration only
 npm run test:unit
 npm run test:integration
 
-# Ad-hoc: run mocha on a single file (add sudo if the test needs root)
-sudo npx mocha 'test/unit/**/*.spec.mjs' --exit --timeout 2m
+# Ad-hoc: run node:test on a single file (add sudo if the test needs root)
+sudo node --test --test-force-exit --test-timeout=120000 test/unit/tuntap-unit.spec.mjs
 ```
 
 ## Project structure
@@ -103,7 +103,7 @@ Native implementation details are split into `src/native/*`:
 
 ### Tests
 
-Mocha **`.mjs`** ES modules under **`test/`**. **`test/unit/tuntap-unit.spec.mjs`** and **`test/integration/tuntap-integration.spec.mjs`** expect **root**. Run test commands with `sudo` when privileged cases are required; non-root runs may skip or fail depending on the case.
+**`node:test`** **`.mjs`** ES modules under **`test/`**. **`test/unit/tuntap-unit.spec.mjs`** and **`test/integration/tuntap-integration.spec.mjs`** expect **root**. Run test commands with `sudo` when privileged cases are required; non-root runs may skip or fail depending on the case.
 
 ### Key constraints
 

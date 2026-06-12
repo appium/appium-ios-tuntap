@@ -272,13 +272,13 @@ Most tests for this module require **root privileges** (sudo) to create and mana
 From the project root, run:
 
 ```sh
-sudo npx mocha test/tuntap-unit.spec.js
+sudo npm run test:unit
 ```
 
-Or, to run all tests in the `test/` directory:
+Or, to run all tests:
 
 ```sh
-sudo npx mocha
+sudo npm test
 ```
 
 If you are **not** running as root, you will see a message that tests are skipped.
