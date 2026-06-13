@@ -1,3 +1,9 @@
+## [0.5.0](https://github.com/appium/appium-ios-tuntap/compare/v0.4.4...v0.5.0) (2026-06-13)
+
+### Features
+
+* Switch to a different tunnelling architecture ([#51](https://github.com/appium/appium-ios-tuntap/issues/51)) ([7267755](https://github.com/appium/appium-ios-tuntap/commit/726775526d50d1976192bf3ebfbae6cb81883631))
+
 ## [0.4.4](https://github.com/appium/appium-ios-tuntap/compare/v0.4.3...v0.4.4) (2026-06-12)
 
 ### Bug Fixes
