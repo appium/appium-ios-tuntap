@@ -10,17 +10,16 @@ import {
   CD_TUNNEL_MAGIC,
   CD_TUNNEL_MAGIC_SIZE,
   CD_TUNNEL_MTU,
-  DEFAULT_TUN_POLL_QUEUE_DEPTH,
-  FAST_TUN_POLL_QUEUE_DEPTH,
   IPV6_HEADER_SIZE,
-  LARGE_TUN_POLL_BUFFER,
   MAX_DEVICE_INGRESS_BUFFER,
-  MAX_TUN_POLL_BUFFER,
   IPV6_VERSION,
   IPPROTO_TCP,
   IPPROTO_UDP,
 } from './constants.js';
 import {appendBuffer} from './buffer-utils.js';
+import {fwdBufferState, fwdDebug, tunDebug} from './debug-log.js';
+import {TunToDevicePump} from './tun-to-device-pump.js';
+import {DeviceToTunPump} from './device-to-tun-pump.js';
 import type {
   CdTunnelParseResult,
   Ipv6Frame,
@@ -43,8 +42,10 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
   private readonly packetConsumers: Set<PacketConsumer> = new Set();
   private deviceConn: Socket | null = null;
   private cleanupPromise: Promise<void> | null = null;
-  private tunReadPausedForBackpressure = false;
-  private deviceIngressPausedForTun = false;
+  private tunToDevicePump: TunToDevicePump | null = null;
+  private deviceToTunPump: DeviceToTunPump | null = null;
+  private deviceIngressPaused = false;
+  private fwdDeviceDataChunks = 0;
 
   /**
    * Register a listener for parsed tunnel packets (in addition to the `data` event).
@@ -115,7 +116,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
   async setupInterface(
     tunnelInfo: TunnelInfo,
   ): Promise<{name: string; mtu: number; interface: TunTap}> {
-    log.debug(`Setting up tunnel with parameters:`, tunnelInfo);
+    tunDebug(`Setting up tunnel with parameters:`, tunnelInfo);
 
     try {
       this.tun = new TunTap();
@@ -125,7 +126,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
         throw new Error('Failed to open TUN device');
       }
 
-      log.debug(`Opened TUN device: ${this.tun.name}`);
+      tunDebug(`Opened TUN device: ${this.tun.name}`);
 
       this.mtu = tunnelInfo.clientParameters.mtu;
 
@@ -138,7 +139,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       // Add route for the server address
       await this.tun.addRoute(`${tunnelInfo.serverAddress}/128`);
 
-      log.debug(
+      tunDebug(
         `Configured TUN interface ${this.tun.name} with address ${tunnelInfo.clientParameters.address} and MTU ${tunnelInfo.clientParameters.mtu}`,
       );
 
@@ -173,38 +174,54 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     }
 
     this.deviceConn = deviceConn;
-    log.debug(`Starting bidirectional data forwarding for ${this.tun.name}`);
+    tunDebug(`Starting bidirectional data forwarding for ${this.tun.name}`);
 
     deviceConn.setNoDelay(true);
     deviceConn.setKeepAlive(true, 1000);
 
-    // Handle data from the device connection
-    deviceConn.on('data', (data: Buffer) => {
-      if (this.cancelled) {
-        return;
-      }
-
-      try {
-        this.buffer = appendBuffer(this.buffer, data);
-
-        if (this.buffer.length > MAX_DEVICE_INGRESS_BUFFER) {
-          this.pauseDeviceIngress();
+    if (this.hasPacketTap()) {
+      deviceConn.on('data', (data: Buffer) => {
+        if (this.cancelled) {
+          return;
         }
 
-        this.processBuffer();
-      } catch (err: any) {
-        if (!this.cancelled) {
-          log.error('Error processing device data:', err.message);
+        try {
+          this.fwdDeviceDataChunks += 1;
+          this.buffer = appendBuffer(this.buffer, data);
+
+          if (this.buffer.length > MAX_DEVICE_INGRESS_BUFFER) {
+            this.pauseDeviceIngress('max-buffer');
+          }
+
+          if (this.fwdDeviceDataChunks === 1 || this.fwdDeviceDataChunks % 200 === 0) {
+            fwdDebug('device-data', {
+              chunk: data.length,
+              ...fwdBufferState(this.buffer),
+              ingressPaused: this.deviceIngressPaused,
+              chunks: this.fwdDeviceDataChunks,
+            });
+          }
+
+          this.processBuffer('data');
+        } catch (err: any) {
+          if (!this.cancelled) {
+            log.error('Error processing device data:', err.message);
+          }
         }
-      }
+      });
+    } else {
+      this.startDeviceToTunPump(deviceConn);
+    }
+
+    deviceConn.on('drain', () => {
+      this.deviceToTunPump?.notifyTunWritable();
     });
 
-    // Set up TUN read loop
-    this.startTunReadLoop(deviceConn);
+    this.startTunToDevicePump(deviceConn);
 
     // Listen for device connection close
     deviceConn.on('close', async () => {
-      log.debug('Device connection closed, stopping tunnel');
+      tunDebug('Device connection closed, stopping tunnel');
       try {
         await this.stop();
       } catch (err) {
@@ -236,8 +253,34 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     return this.packetConsumers.size > 0 || this.listenerCount('data') > 0;
   }
 
-  private processBuffer(): void {
+  private pauseDeviceIngress(reason: string): void {
+    if (this.deviceIngressPaused || !this.deviceConn || this.deviceConn.destroyed) {
+      return;
+    }
+    this.deviceIngressPaused = true;
+    this.deviceConn.pause();
+    fwdDebug('ingress-pause', {
+      reason,
+      ...fwdBufferState(this.buffer),
+    });
+  }
+
+  private resumeDeviceIngress(): void {
+    if (!this.deviceIngressPaused || !this.deviceConn || this.deviceConn.destroyed) {
+      return;
+    }
+    this.deviceIngressPaused = false;
+    this.deviceConn.resume();
+    fwdDebug('ingress-resume', {
+      ...fwdBufferState(this.buffer),
+    });
+  }
+
+  private processBuffer(trigger = 'unknown'): void {
     let offset = 0;
+    let tunWriteBlocked = false;
+    let framesWritten = 0;
+    const bufBefore = this.buffer.length;
 
     while (offset + IPV6_HEADER_SIZE <= this.buffer.length) {
       const frame = nextIpv6Frame(this.buffer, offset);
@@ -255,11 +298,22 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       }
 
       try {
-        this.writeDeviceFrameToTun(this.tun, frame.packet, frame.nextHeader);
+        const bytesWritten = this.writeDeviceFrameToTun(this.tun, frame.packet, frame.nextHeader);
+        if (bytesWritten === 'blocked') {
+          tunWriteBlocked = true;
+          fwdDebug('tun-write-blocked', {
+            trigger,
+            frameLen: frame.length,
+            ...fwdBufferState(this.buffer),
+            ingressPaused: this.deviceIngressPaused,
+          });
+          break;
+        }
       } catch (err: any) {
         log.error(`Error writing to TUN: ${err.message}`);
       }
 
+      framesWritten += 1;
       offset += frame.length;
     }
 
@@ -271,45 +325,47 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       }
     }
 
-    if (this.deviceIngressPausedForTun && this.shouldResumeDeviceIngress()) {
-      this.resumeDeviceIngress();
+    if (this.deviceIngressPaused) {
+      const mayResume =
+        !tunWriteBlocked &&
+        (this.buffer.length === 0 || this.buffer.length <= MAX_DEVICE_INGRESS_BUFFER / 2);
+      if (mayResume) {
+        this.resumeDeviceIngress();
+      } else if (tunWriteBlocked || framesWritten > 0 || bufBefore > 0) {
+        fwdDebug('process-buffer', {
+          trigger,
+          bufBefore,
+          bufAfter: this.buffer.length,
+          offset,
+          framesWritten,
+          tunWriteBlocked,
+          mayResume,
+          ingressPaused: this.deviceIngressPaused,
+          ...fwdBufferState(this.buffer),
+        });
+      }
     }
   }
 
-  private writeDeviceFrameToTun(tun: TunTap, packet: Buffer, nextHeader: number): void {
-    tun.write(packet);
+  private writeDeviceFrameToTun(
+    tun: TunTap,
+    packet: Buffer,
+    nextHeader: number,
+  ): number | 'blocked' {
+    const bytesWritten = tun.write(packet);
+    if (bytesWritten <= 0) {
+      this.pauseDeviceIngress('tun-write-blocked');
+      return 'blocked';
+    }
 
     if (!this.hasPacketTap()) {
-      return;
+      return bytesWritten;
     }
 
     const {src, dst} = ipv6Endpoints(packet);
-    log.debug(`Device → TUN: ${packet.length} bytes, IPv6 src=${src}, dst=${dst}`);
+    tunDebug(`Device → TUN: ${bytesWritten} bytes, IPv6 src=${src}, dst=${dst}`);
     this.tapL4Packet(packet, nextHeader, src, dst);
-  }
-
-  private shouldResumeDeviceIngress(): boolean {
-    if (this.buffer.length === 0) {
-      return true;
-    }
-    // All complete frames were written; waiting on more socket bytes to finish the tail frame.
-    return nextIpv6Frame(this.buffer, 0).kind === 'incomplete';
-  }
-
-  private pauseDeviceIngress(): void {
-    if (this.deviceIngressPausedForTun || !this.deviceConn || this.deviceConn.destroyed) {
-      return;
-    }
-    this.deviceIngressPausedForTun = true;
-    this.deviceConn.pause();
-  }
-
-  private resumeDeviceIngress(): void {
-    if (!this.deviceIngressPausedForTun || !this.deviceConn || this.deviceConn.destroyed) {
-      return;
-    }
-    this.deviceIngressPausedForTun = false;
-    this.deviceConn.resume();
+    return bytesWritten;
   }
 
   private tapL4Packet(packet: Buffer, nextHeader: number, src: string, dst: string): void {
@@ -318,19 +374,19 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     if (nextHeader === IPPROTO_UDP) {
       packetData = parseUdpPacketData(packet, src, dst);
       if (!packetData) {
-        log.debug('UDP payload too short, not emitting event.');
+        tunDebug('UDP payload too short, not emitting event.');
       } else {
-        log.debug(`UDP packet detected: payload length=${packetData.payload.length}`);
+        tunDebug(`UDP packet detected: payload length=${packetData.payload.length}`);
       }
     } else if (nextHeader === IPPROTO_TCP) {
       packetData = parseTcpPacketData(packet, src, dst);
       if (!packetData) {
-        log.debug('TCP packet too short or malformed, skipping.');
+        tunDebug('TCP packet too short or malformed, skipping.');
       } else {
-        log.debug(`TCP packet detected: payload length=${packetData.payload.length}`);
+        tunDebug(`TCP packet detected: payload length=${packetData.payload.length}`);
       }
     } else {
-      log.debug('Packet is not UDP or TCP (nextHeader !== 17 and !== 6)');
+      tunDebug('Packet is not UDP or TCP (nextHeader !== 17 and !== 6)');
     }
 
     if (packetData) {
@@ -347,71 +403,68 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
         log.error('Error in packet consumer:', err);
       }
     }
-    log.debug(`Emitted data event for ${packetData.protocol} packet`);
+    tunDebug(`Emitted data event for ${packetData.protocol} packet`);
   }
 
-  private startTunReadLoop(deviceConn: Socket): void {
+  private startDeviceToTunPump(deviceConn: Socket): void {
+    if (!this.tun) {
+      return;
+    }
+
+    this.deviceToTunPump = new DeviceToTunPump();
+    this.deviceToTunPump.start(deviceConn, this.tun);
+  }
+
+  private startTunToDevicePump(deviceConn: Socket): void {
     if (!this.tun) {
       return;
     }
 
     const tapOn = this.hasPacketTap();
-    const pollBuffer = tapOn
-      ? this.mtu
-      : Math.min(MAX_TUN_POLL_BUFFER, Math.max(this.mtu, LARGE_TUN_POLL_BUFFER));
-    const queueDepth = tapOn ? DEFAULT_TUN_POLL_QUEUE_DEPTH : FAST_TUN_POLL_QUEUE_DEPTH;
-
-    this.tun.startPolling(
-      (data: Buffer) => {
-        if (this.cancelled || !data.length || deviceConn.destroyed) {
-          return;
+    this.tunToDevicePump = new TunToDevicePump(
+      this.tun,
+      this.mtu,
+      tapOn
+        ? (data) => {
+            if (data.length >= IPV6_HEADER_SIZE) {
+              tunDebug(
+                `TUN → Device: ${data.length} bytes, IPv6 src=${formatIPv6Address(data.subarray(8, 24))}, dst=${formatIPv6Address(data.subarray(24, 40))}`,
+              );
+            } else {
+              tunDebug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
+            }
+          }
+        : undefined,
+      () => {
+        this.deviceToTunPump?.notifyTunWritable();
+        if (this.deviceIngressPaused) {
+          fwdDebug('forward-progress', {
+            ingressPaused: this.deviceIngressPaused,
+            ...fwdBufferState(this.buffer),
+          });
+          this.processBuffer('forward-progress');
         }
-
-        if (tapOn && data.length >= IPV6_HEADER_SIZE) {
-          log.debug(
-            `TUN → Device: ${data.length} bytes, IPv6 src=${formatIPv6Address(data.subarray(8, 24))}, dst=${formatIPv6Address(data.subarray(24, 40))}`,
-          );
-        } else if (tapOn) {
-          log.debug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
-        }
-
-        this.writeTunPacketToDevice(deviceConn, data);
       },
-      pollBuffer,
-      queueDepth,
     );
-  }
-
-  private writeTunPacketToDevice(deviceConn: Socket, data: Buffer): void {
-    if (deviceConn.destroyed) {
-      return;
-    }
-
-    const canWriteMore = deviceConn.write(data);
-    if (canWriteMore || this.tunReadPausedForBackpressure || !this.tun) {
-      return;
-    }
-
-    this.tunReadPausedForBackpressure = true;
-    this.tun.pausePolling();
-
-    const onDrain = (): void => {
-      if (this.cancelled || deviceConn.destroyed) {
-        return;
-      }
-      this.tunReadPausedForBackpressure = false;
-      this.tun?.resumePolling();
-    };
-
-    deviceConn.once('drain', onDrain);
+    this.tunToDevicePump.start(deviceConn);
   }
 
   private async _performStop(): Promise<void> {
     const tunName = this.tun ? this.tun.name : 'unknown';
-    log.debug(`Stopping tunnel manager for ${tunName}`);
+    tunDebug(`Stopping tunnel manager for ${tunName}`);
 
     // Signal cancellation
     this.cancelled = true;
+
+    if (this.tunToDevicePump) {
+      await this.tunToDevicePump.stop();
+      this.tunToDevicePump = null;
+    }
+
+    if (this.deviceToTunPump) {
+      await this.deviceToTunPump.stop();
+      this.deviceToTunPump = null;
+    }
 
     // Close device connection if exists
     if (this.deviceConn && !this.deviceConn.destroyed) {
@@ -438,7 +491,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       this.tun = null;
     }
 
-    log.debug(`Tunnel for ${tunName} closed successfully`);
+    tunDebug(`Tunnel for ${tunName} closed successfully`);
   }
 }
 
@@ -455,7 +508,7 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
   });
   const message = encodeCdTunnelMessage(requestJson);
 
-  log.debug(
+  tunDebug(
     `Sending CDTunnel packet: magic=${CD_TUNNEL_MAGIC}, length=${message.length - CD_TUNNEL_HEADER_SIZE}, body=${requestJson}`,
   );
 
@@ -477,18 +530,18 @@ export async function connectToTunnelLockdown(
   try {
     // Exchange tunnel parameters with the device
     const tunnelInfo = await exchangeCoreTunnelParameters(secureServiceSocket);
-    log.debug('Tunnel parameters exchanged:', tunnelInfo);
+    tunDebug('Tunnel parameters exchanged:', tunnelInfo);
 
     // Setup tunnel interface
     const tunInterfaceInfo = await tunnelManager.setupInterface(tunnelInfo);
-    log.debug('Tunnel interface set up:', tunInterfaceInfo.name);
+    tunDebug('Tunnel interface set up:', tunInterfaceInfo.name);
 
     // Start bidirectional forwarding
     tunnelManager.startForwarding(secureServiceSocket);
 
     // Create close function
     const closeFunc = async () => {
-      log.debug('Closing tunnel connection');
+      tunDebug('Closing tunnel connection');
       await tunnelManager.stop();
 
       if (!secureServiceSocket.destroyed) {
@@ -569,12 +622,12 @@ function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<Tunnel
     };
 
     const onData = (chunk: Buffer) => {
-      log.debug('Received data chunk:', chunk.length, 'bytes');
+      tunDebug('Received data chunk:', chunk.length, 'bytes');
       buffer = appendBuffer(buffer, chunk);
 
       if (buffer.length >= CD_TUNNEL_HEADER_SIZE) {
         const payloadLength = buffer.readUInt16BE(CD_TUNNEL_MAGIC_SIZE);
-        log.debug(
+        tunDebug(
           'Expected total packet length:',
           CD_TUNNEL_HEADER_SIZE + payloadLength,
           'current buffer:',
@@ -591,7 +644,7 @@ function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<Tunnel
         return;
       }
 
-      log.debug('Parsed CDTunnel response:', result.value);
+      tunDebug('Parsed CDTunnel response:', result.value);
       finish(() => resolve(result.value));
     };
 
@@ -601,9 +654,9 @@ function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<Tunnel
     };
 
     const onEnd = () => {
-      log.debug('Connection ended');
+      tunDebug('Connection ended');
       if (buffer.length > 0) {
-        log.debug('Buffer at end:', buffer.toString('hex'));
+        tunDebug('Buffer at end:', buffer.toString('hex'));
       }
       finish(() => reject(new Error('Connection closed before receiving complete response')));
     };

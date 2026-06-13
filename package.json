@@ -18,8 +18,8 @@
     "refresh:wintun": "node scripts/fetch-wintun.mjs",
     "prepare": "npm run build",
     "test": "npm run test:integration && npm run test:unit",
-    "test:unit": "node --test --test-force-exit --test-timeout=120000 \"test/unit/**/*.spec.mjs\"",
-    "test:integration": "node --test --test-force-exit --test-timeout=120000 \"test/integration/**/*.spec.mjs\""
+    "test:unit": "node --test --test-force-exit --test-timeout=5000 \"test/unit/**/*.spec.mjs\"",
+    "test:integration": "node --test --test-force-exit --test-timeout=15000 \"test/integration/**/*.spec.mjs\""
   },
   "files": [
     "src/tuntap.cc",

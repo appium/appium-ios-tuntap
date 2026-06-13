@@ -319,8 +319,8 @@ private:
                                       : static_cast<size_t>(packet_size);
           std::vector<uint8_t> data(packet, packet + copy_len);
           api.ReleaseReceivePacket(session_, packet);
-          if (on_packet) {
-            on_packet(std::move(data));
+          if (on_packet && !on_packet(std::move(data))) {
+            break;
           }
           continue;
         }
