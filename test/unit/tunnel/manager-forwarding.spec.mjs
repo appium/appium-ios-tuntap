@@ -230,6 +230,28 @@ describe('DeviceToTunPump', {timeout: 5000}, () => {
 
     await pump.stop();
   });
+
+  it('stop() returns while utun write is blocked', async () => {
+    const tun = new MockTunTap();
+    const socket = new MockSocket();
+    tun.write = () => 0;
+
+    const pump = new DeviceToTunPump();
+    pump.start(socket, tun);
+
+    const packet = Buffer.alloc(1280);
+    packet[0] = 0x60;
+    packet.writeUInt16BE(1240, 4);
+    socket.emit('data', packet);
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const stopPromise = pump.stop();
+    const timeout = new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error('stop timed out')), 1000);
+    });
+    await Promise.race([stopPromise, timeout]);
+  });
 });
 
 describe('TunnelManager forwarding', {timeout: 5000}, () => {

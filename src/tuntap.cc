@@ -381,12 +381,14 @@ void TunDevice::StopPollingLocked() {
 }
 
 void TunDevice::ReleaseTsfnLocked() {
-  if (poll_dispatch_ != nullptr) {
-    delete poll_dispatch_;
-    poll_dispatch_ = nullptr;
-  }
+  // Release TSFN first — it blocks until queued callbacks finish. Those callbacks
+  // may still dereference poll_dispatch_, so it must outlive the TSFN drain.
   if (tsfn_) {
     tsfn_.Release();
     tsfn_ = nullptr;
+  }
+  if (poll_dispatch_ != nullptr) {
+    delete poll_dispatch_;
+    poll_dispatch_ = nullptr;
   }
 }

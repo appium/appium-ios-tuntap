@@ -58,10 +58,13 @@ export class DeviceToTunPump {
   async stop(): Promise<void> {
     this.cancelled = true;
     if (this.frameReject) {
-      this.frameReject(new Error('device pump cancelled'));
-      this.frameReject = null;
+      this.frameReject(new Error(DEVICE_PUMP_CANCELLED));
+    }
+    if (this.tunWritableWaiter) {
+      this.tunWritableWaiter();
     }
     this.frameWaiter = null;
+    this.frameReject = null;
     this.tunWritableWaiter = null;
     if (this.loopPromise) {
       await this.loopPromise.catch(() => undefined);
@@ -141,7 +144,7 @@ export class DeviceToTunPump {
 
   private readOneFrame(): Promise<Buffer> {
     if (this.cancelled) {
-      return Promise.reject(new Error('device pump cancelled'));
+      return Promise.reject(new Error(DEVICE_PUMP_CANCELLED));
     }
 
     const taken = takeOneIpv6Frame(this.buffer);
@@ -180,7 +183,7 @@ export class DeviceToTunPump {
 
   private waitTunWritable(): Promise<void> {
     if (this.cancelled) {
-      return Promise.reject(new Error('device pump cancelled'));
+      return Promise.reject(new Error(DEVICE_PUMP_CANCELLED));
     }
     return new Promise((resolve) => {
       this.tunWritableWaiter = resolve;
@@ -218,11 +221,19 @@ export class DeviceToTunPump {
           await new Promise((resolve) => setImmediate(resolve));
         }
       }
-    } catch {
-      // stop() rejected a pending readOneFrame()
+    } catch (err) {
+      if (!isPumpCancelled(err)) {
+        throw err;
+      }
     }
     fwdDebug('device-pump-stop', {frames: this.fwdFrames});
   }
+}
+
+const DEVICE_PUMP_CANCELLED = 'device pump cancelled';
+
+function isPumpCancelled(err: unknown): boolean {
+  return err instanceof Error && err.message === DEVICE_PUMP_CANCELLED;
 }
 
 function takeOneIpv6Frame(

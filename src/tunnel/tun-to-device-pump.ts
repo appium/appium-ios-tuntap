@@ -52,10 +52,12 @@ export class TunToDevicePump {
     this.drainAbort = null;
     this.tun.pausePolling();
     if (this.ingressReject) {
-      this.ingressReject(new Error('pump cancelled'));
-      this.ingressReject = null;
+      this.ingressReject(new Error(TUN_PUMP_CANCELLED));
+    } else if (this.ingressWaiter) {
+      this.ingressWaiter();
     }
     this.ingressWaiter = null;
+    this.ingressReject = null;
     this.tunIngressQueue = [];
     if (this.loopPromise) {
       await this.loopPromise.catch(() => undefined);
@@ -96,7 +98,7 @@ export class TunToDevicePump {
 
   private waitForIngress(): Promise<void> {
     if (this.cancelled) {
-      return Promise.reject(new Error('pump cancelled'));
+      return Promise.reject(new Error(TUN_PUMP_CANCELLED));
     }
     if (this.tunIngressQueue.length > 0) {
       return Promise.resolve();
@@ -165,9 +167,17 @@ export class TunToDevicePump {
           await this.writeAndDrain(deviceConn, packet);
         }
       }
-    } catch {
-      // stop() rejected waitForIngress()
+    } catch (err) {
+      if (!isPumpCancelled(err)) {
+        throw err;
+      }
     }
     fwdDebug('pump-stop', {packets: this.fwdPumpPackets});
   }
+}
+
+const TUN_PUMP_CANCELLED = 'pump cancelled';
+
+function isPumpCancelled(err: unknown): boolean {
+  return err instanceof Error && err.message === TUN_PUMP_CANCELLED;
 }
