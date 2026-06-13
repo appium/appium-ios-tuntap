@@ -17,7 +17,7 @@ import {
   IPPROTO_UDP,
 } from './constants.js';
 import {appendBuffer} from './buffer-utils.js';
-import {fwdBufferState, fwdDebug} from './forward-debug.js';
+import {fwdBufferState, fwdDebug, tunDebug} from './debug-log.js';
 import {TunToDevicePump} from './tun-to-device-pump.js';
 import {DeviceToTunPump} from './device-to-tun-pump.js';
 import type {
@@ -116,7 +116,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
   async setupInterface(
     tunnelInfo: TunnelInfo,
   ): Promise<{name: string; mtu: number; interface: TunTap}> {
-    log.debug(`Setting up tunnel with parameters:`, tunnelInfo);
+    tunDebug(`Setting up tunnel with parameters:`, tunnelInfo);
 
     try {
       this.tun = new TunTap();
@@ -126,7 +126,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
         throw new Error('Failed to open TUN device');
       }
 
-      log.debug(`Opened TUN device: ${this.tun.name}`);
+      tunDebug(`Opened TUN device: ${this.tun.name}`);
 
       this.mtu = tunnelInfo.clientParameters.mtu;
 
@@ -139,7 +139,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       // Add route for the server address
       await this.tun.addRoute(`${tunnelInfo.serverAddress}/128`);
 
-      log.debug(
+      tunDebug(
         `Configured TUN interface ${this.tun.name} with address ${tunnelInfo.clientParameters.address} and MTU ${tunnelInfo.clientParameters.mtu}`,
       );
 
@@ -174,7 +174,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     }
 
     this.deviceConn = deviceConn;
-    log.debug(`Starting bidirectional data forwarding for ${this.tun.name}`);
+    tunDebug(`Starting bidirectional data forwarding for ${this.tun.name}`);
 
     deviceConn.setNoDelay(true);
     deviceConn.setKeepAlive(true, 1000);
@@ -221,7 +221,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
 
     // Listen for device connection close
     deviceConn.on('close', async () => {
-      log.debug('Device connection closed, stopping tunnel');
+      tunDebug('Device connection closed, stopping tunnel');
       try {
         await this.stop();
       } catch (err) {
@@ -363,7 +363,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     }
 
     const {src, dst} = ipv6Endpoints(packet);
-    log.debug(`Device → TUN: ${bytesWritten} bytes, IPv6 src=${src}, dst=${dst}`);
+    tunDebug(`Device → TUN: ${bytesWritten} bytes, IPv6 src=${src}, dst=${dst}`);
     this.tapL4Packet(packet, nextHeader, src, dst);
     return bytesWritten;
   }
@@ -374,19 +374,19 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     if (nextHeader === IPPROTO_UDP) {
       packetData = parseUdpPacketData(packet, src, dst);
       if (!packetData) {
-        log.debug('UDP payload too short, not emitting event.');
+        tunDebug('UDP payload too short, not emitting event.');
       } else {
-        log.debug(`UDP packet detected: payload length=${packetData.payload.length}`);
+        tunDebug(`UDP packet detected: payload length=${packetData.payload.length}`);
       }
     } else if (nextHeader === IPPROTO_TCP) {
       packetData = parseTcpPacketData(packet, src, dst);
       if (!packetData) {
-        log.debug('TCP packet too short or malformed, skipping.');
+        tunDebug('TCP packet too short or malformed, skipping.');
       } else {
-        log.debug(`TCP packet detected: payload length=${packetData.payload.length}`);
+        tunDebug(`TCP packet detected: payload length=${packetData.payload.length}`);
       }
     } else {
-      log.debug('Packet is not UDP or TCP (nextHeader !== 17 and !== 6)');
+      tunDebug('Packet is not UDP or TCP (nextHeader !== 17 and !== 6)');
     }
 
     if (packetData) {
@@ -403,7 +403,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
         log.error('Error in packet consumer:', err);
       }
     }
-    log.debug(`Emitted data event for ${packetData.protocol} packet`);
+    tunDebug(`Emitted data event for ${packetData.protocol} packet`);
   }
 
   private startDeviceToTunPump(deviceConn: Socket): void {
@@ -427,11 +427,11 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       tapOn
         ? (data) => {
             if (data.length >= IPV6_HEADER_SIZE) {
-              log.debug(
+              tunDebug(
                 `TUN → Device: ${data.length} bytes, IPv6 src=${formatIPv6Address(data.subarray(8, 24))}, dst=${formatIPv6Address(data.subarray(24, 40))}`,
               );
             } else {
-              log.debug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
+              tunDebug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
             }
           }
         : undefined,
@@ -451,7 +451,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
 
   private async _performStop(): Promise<void> {
     const tunName = this.tun ? this.tun.name : 'unknown';
-    log.debug(`Stopping tunnel manager for ${tunName}`);
+    tunDebug(`Stopping tunnel manager for ${tunName}`);
 
     // Signal cancellation
     this.cancelled = true;
@@ -491,7 +491,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       this.tun = null;
     }
 
-    log.debug(`Tunnel for ${tunName} closed successfully`);
+    tunDebug(`Tunnel for ${tunName} closed successfully`);
   }
 }
 
@@ -508,7 +508,7 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
   });
   const message = encodeCdTunnelMessage(requestJson);
 
-  log.debug(
+  tunDebug(
     `Sending CDTunnel packet: magic=${CD_TUNNEL_MAGIC}, length=${message.length - CD_TUNNEL_HEADER_SIZE}, body=${requestJson}`,
   );
 
@@ -530,18 +530,18 @@ export async function connectToTunnelLockdown(
   try {
     // Exchange tunnel parameters with the device
     const tunnelInfo = await exchangeCoreTunnelParameters(secureServiceSocket);
-    log.debug('Tunnel parameters exchanged:', tunnelInfo);
+    tunDebug('Tunnel parameters exchanged:', tunnelInfo);
 
     // Setup tunnel interface
     const tunInterfaceInfo = await tunnelManager.setupInterface(tunnelInfo);
-    log.debug('Tunnel interface set up:', tunInterfaceInfo.name);
+    tunDebug('Tunnel interface set up:', tunInterfaceInfo.name);
 
     // Start bidirectional forwarding
     tunnelManager.startForwarding(secureServiceSocket);
 
     // Create close function
     const closeFunc = async () => {
-      log.debug('Closing tunnel connection');
+      tunDebug('Closing tunnel connection');
       await tunnelManager.stop();
 
       if (!secureServiceSocket.destroyed) {
@@ -622,12 +622,12 @@ function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<Tunnel
     };
 
     const onData = (chunk: Buffer) => {
-      log.debug('Received data chunk:', chunk.length, 'bytes');
+      tunDebug('Received data chunk:', chunk.length, 'bytes');
       buffer = appendBuffer(buffer, chunk);
 
       if (buffer.length >= CD_TUNNEL_HEADER_SIZE) {
         const payloadLength = buffer.readUInt16BE(CD_TUNNEL_MAGIC_SIZE);
-        log.debug(
+        tunDebug(
           'Expected total packet length:',
           CD_TUNNEL_HEADER_SIZE + payloadLength,
           'current buffer:',
@@ -644,7 +644,7 @@ function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<Tunnel
         return;
       }
 
-      log.debug('Parsed CDTunnel response:', result.value);
+      tunDebug('Parsed CDTunnel response:', result.value);
       finish(() => resolve(result.value));
     };
 
@@ -654,9 +654,9 @@ function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<Tunnel
     };
 
     const onEnd = () => {
-      log.debug('Connection ended');
+      tunDebug('Connection ended');
       if (buffer.length > 0) {
-        log.debug('Buffer at end:', buffer.toString('hex'));
+        tunDebug('Buffer at end:', buffer.toString('hex'));
       }
       finish(() => reject(new Error('Connection closed before receiving complete response')));
     };

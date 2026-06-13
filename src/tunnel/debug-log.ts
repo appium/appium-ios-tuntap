@@ -1,14 +1,22 @@
 import {log} from '../logger.js';
 
-/** Wedge diagnostics — set TUNTAP_DEBUG_FORWARD=1 on the tunnel process. */
-export const TUNTAP_FORWARD_DEBUG =
-  process.env.TUNTAP_DEBUG_FORWARD === '1' || process.env.TUNTAP_DEBUG_FORWARD === 'true';
+/** Tunnel debug logging — set APPIUM_TUNTAP_DEBUG=1 on the tunnel process. */
+export const APPIUM_TUNTAP_DEBUG =
+  process.env.APPIUM_TUNTAP_DEBUG === '1' || process.env.APPIUM_TUNTAP_DEBUG === 'true';
 
 let seq = 0;
 
-/** Log a numbered tunnel forward diagnostic when {@link TUNTAP_FORWARD_DEBUG} is enabled. */
+/** {@link log.debug} when {@link APPIUM_TUNTAP_DEBUG} is enabled. */
+export function tunDebug(...args: Parameters<typeof log.debug>): void {
+  if (!APPIUM_TUNTAP_DEBUG) {
+    return;
+  }
+  log.debug(...args);
+}
+
+/** Log a numbered tunnel forward diagnostic when {@link APPIUM_TUNTAP_DEBUG} is enabled. */
 export function fwdDebug(event: string, detail?: Record<string, string | number | boolean>): void {
-  if (!TUNTAP_FORWARD_DEBUG) {
+  if (!APPIUM_TUNTAP_DEBUG) {
     return;
   }
   seq += 1;
@@ -21,7 +29,7 @@ export function fwdDebug(event: string, detail?: Record<string, string | number 
   log.info(`[fwd] ${parts.join(' ')}`);
 }
 
-/** Summarize reassembly buffer state for forward debug logs. */
+/** Summarize reassembly buffer state for debug logs. */
 export function fwdBufferState(buffer: Buffer): {
   buf: number;
   tailKind: string;

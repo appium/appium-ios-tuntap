@@ -3,7 +3,7 @@ import {Buffer} from 'node:buffer';
 
 import type {TunTap} from '../TunTap.js';
 import {appendBuffer} from './buffer-utils.js';
-import {fwdDebug} from './forward-debug.js';
+import {fwdDebug} from './debug-log.js';
 import {
   IPV6_HEADER_SIZE,
   IPV6_VERSION,

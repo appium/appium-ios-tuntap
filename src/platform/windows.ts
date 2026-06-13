@@ -2,6 +2,7 @@ import type {ExecException} from 'node:child_process';
 
 import {TunTapError} from '../errors.js';
 import {log} from '../logger.js';
+import {tunDebug} from '../tunnel/debug-log.js';
 import {assertAdminOnWindows} from './require-admin.js';
 import {execFileAsync} from './exec.js';
 import type {TunTapInterfaceStats, TunTapPlatform} from './types.js';
@@ -25,7 +26,7 @@ export class WindowsTunTapPlatform implements TunTapPlatform {
   async configure(interfaceName: string, address: string, mtu: number): Promise<void> {
     await assertAdminOnWindows();
     assertSafeAdapterName(interfaceName);
-    log.debug(`[win] configure: interface=${interfaceName} address=${address} mtu=${mtu}`);
+    tunDebug(`[win] configure: interface=${interfaceName} address=${address} mtu=${mtu}`);
 
     await addIpv6Address(interfaceName, address);
     await setIpv6Mtu(interfaceName, mtu);
@@ -36,7 +37,7 @@ export class WindowsTunTapPlatform implements TunTapPlatform {
     await assertAdminOnWindows();
     assertSafeAdapterName(interfaceName);
 
-    log.debug(`[win] addRoute: interface=${interfaceName} destination=${destination}`);
+    tunDebug(`[win] addRoute: interface=${interfaceName} destination=${destination}`);
 
     await addIpv6Route(interfaceName, destination);
 
@@ -124,7 +125,7 @@ async function addIpv6Address(interfaceName: string, address: string): Promise<v
       `address=${address}/64`,
       'store=active',
     ]);
-    log.debug(`[win] add address ok: ${r.stdout.trim() || '(no output)'}`);
+    tunDebug(`[win] add address ok: ${r.stdout.trim() || '(no output)'}`);
   } catch (err: unknown) {
     const message = (err as ExecException).message ?? '';
     log.warn(`[win] add address err: ${message}`);
@@ -146,7 +147,7 @@ async function setIpv6Mtu(interfaceName: string, mtu: number): Promise<void> {
       `mtu=${mtu}`,
       'store=active',
     ]);
-    log.debug(`[win] set mtu ok: ${r.stdout.trim() || '(no output)'}`);
+    tunDebug(`[win] set mtu ok: ${r.stdout.trim() || '(no output)'}`);
   } catch (err: unknown) {
     log.warn(`[win] set mtu err: ${(err as ExecException).message ?? err}`);
     throw err;
@@ -164,12 +165,12 @@ async function addIpv6Route(interfaceName: string, destination: string): Promise
       interfaceName,
       'store=active',
     ]);
-    log.debug(`[win] add route ok: ${r.stdout.trim() || '(no output)'}`);
+    tunDebug(`[win] add route ok: ${r.stdout.trim() || '(no output)'}`);
   } catch (err: unknown) {
     const message = (err as ExecException).message ?? '';
     log.warn(`[win] add route err: ${message}`);
     if (/already exists|object already/i.test(message)) {
-      log.debug(`Route to ${destination} already exists`);
+      tunDebug(`Route to ${destination} already exists`);
       return;
     }
     throw err;
@@ -196,7 +197,7 @@ async function deleteIpv6Route(interfaceName: string, destination: string): Prom
 }
 
 async function addStaticNeighbor(interfaceName: string, address: string): Promise<void> {
-  log.debug(`[win] addStaticNeighbor: interface=${interfaceName} address=${address}`);
+  tunDebug(`[win] addStaticNeighbor: interface=${interfaceName} address=${address}`);
   try {
     const r = await execFileAsync('netsh', [
       'interface',
@@ -208,7 +209,7 @@ async function addStaticNeighbor(interfaceName: string, address: string): Promis
       '00-00-00-00-00-01',
       'store=active',
     ]);
-    log.debug(`[win] add neighbor ok: ${r.stdout.trim() || '(no output)'}`);
+    tunDebug(`[win] add neighbor ok: ${r.stdout.trim() || '(no output)'}`);
   } catch (err) {
     const msg = (err as ExecException).message ?? String(err);
     log.warn(`[win] add neighbor err: ${msg}`);

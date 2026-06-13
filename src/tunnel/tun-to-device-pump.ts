@@ -3,7 +3,7 @@ import type {Socket} from 'node:net';
 
 import type {TunTap} from '../TunTap.js';
 import {MAX_TUN_INGRESS_QUEUE, TUN_POLL_TSFN_QUEUE_DEPTH} from './constants.js';
-import {fwdDebug} from './forward-debug.js';
+import {fwdDebug} from './debug-log.js';
 
 export type TunToDeviceProgressHook = () => void;
 
