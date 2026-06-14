@@ -8,18 +8,6 @@ import type {TunnelInfo} from './types.js';
 const require = createRequire(import.meta.url);
 const pkgRoot = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
-interface NativeTunnelForwarder {
-  connect(tcpFd: number, certPem: string, keyPem: string): void;
-  connectPsk(tcpFd: number, psk: Buffer, identity?: string): void;
-  handshake(requestedMtu: number): TunnelInfo;
-  startForwarding(tunFd: number, onError?: (message: string) => void): void;
-  stop(): void;
-}
-
-interface NativeTuntapModule {
-  TunnelForwarder: new () => NativeTunnelForwarder;
-}
-
 /** PEM host certificate + private key from the usbmux pair record (lockdown TLS). */
 export interface TunnelLockdownTlsCredentials {
   cert: string;
@@ -31,6 +19,18 @@ export interface TunnelPskTlsCredentials {
   psk: Buffer;
   /** PSK identity sent to the device (Apple TV uses empty string). */
   identity?: string;
+}
+
+interface NativeTunnelForwarder {
+  connect(tcpFd: number, certPem: string, keyPem: string): void;
+  connectPsk(tcpFd: number, psk: Buffer, identity?: string): void;
+  handshake(requestedMtu: number): TunnelInfo;
+  startForwarding(tunFd: number, onError?: (message: string) => void): void;
+  stop(): void;
+}
+
+interface NativeTuntapModule {
+  TunnelForwarder: new () => NativeTunnelForwarder;
 }
 
 /**

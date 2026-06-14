@@ -87,9 +87,10 @@ export class TunnelManager {
     forwarder.startForwarding(this.tun.fd, (message) => {
       log.error('Tunnel forwarder error:', message);
       setImmediate(() => {
-        void this.stop().then(() => {
+        void (async () => {
+          await this.stop();
           onDead?.(message);
-        });
+        })();
       });
     });
   }
@@ -131,6 +132,45 @@ export class TunnelManager {
 
     tunDebug(`Tunnel for ${tunName} closed successfully`);
   }
+}
+
+/**
+ * End-to-end setup with native OpenSSL forwarding over lockdown client-cert TLS.
+ *
+ * Pass a **plain TCP** CoreDeviceProxy socket and lockdown host cert/key PEM — do not
+ * upgrade to Node `TLSSocket` first.
+ */
+export async function connectToTunnelLockdown(
+  tcpSocket: Socket,
+  credentials: TunnelLockdownTlsCredentials,
+  options?: {onDead?: (reason: string) => void},
+): Promise<TunnelConnection> {
+  return connectTunnel(
+    tcpSocket,
+    (forwarder) => {
+      forwarder.connect(tcpSocket, credentials);
+    },
+    options?.onDead,
+  );
+}
+
+/**
+ * End-to-end setup with native OpenSSL TLS-PSK forwarding (Apple TV Remote Pairing).
+ *
+ * Pass a **plain TCP** socket to the device listener port and the pair-verify encryption key.
+ */
+export async function connectToTunnelPsk(
+  tcpSocket: Socket,
+  credentials: TunnelPskTlsCredentials,
+  options?: {onDead?: (reason: string) => void},
+): Promise<TunnelConnection> {
+  return connectTunnel(
+    tcpSocket,
+    (forwarder) => {
+      forwarder.connectPsk(tcpSocket, credentials);
+    },
+    options?.onDead,
+  );
 }
 
 async function connectTunnel(
@@ -178,43 +218,4 @@ async function connectTunnel(
     }
     throw err;
   }
-}
-
-/**
- * End-to-end setup with native OpenSSL forwarding over lockdown client-cert TLS.
- *
- * Pass a **plain TCP** CoreDeviceProxy socket and lockdown host cert/key PEM — do not
- * upgrade to Node `TLSSocket` first.
- */
-export async function connectToTunnelLockdown(
-  tcpSocket: Socket,
-  credentials: TunnelLockdownTlsCredentials,
-  options?: {onDead?: (reason: string) => void},
-): Promise<TunnelConnection> {
-  return connectTunnel(
-    tcpSocket,
-    (forwarder) => {
-      forwarder.connect(tcpSocket, credentials);
-    },
-    options?.onDead,
-  );
-}
-
-/**
- * End-to-end setup with native OpenSSL TLS-PSK forwarding (Apple TV Remote Pairing).
- *
- * Pass a **plain TCP** socket to the device listener port and the pair-verify encryption key.
- */
-export async function connectToTunnelPsk(
-  tcpSocket: Socket,
-  credentials: TunnelPskTlsCredentials,
-  options?: {onDead?: (reason: string) => void},
-): Promise<TunnelConnection> {
-  return connectTunnel(
-    tcpSocket,
-    (forwarder) => {
-      forwarder.connectPsk(tcpSocket, credentials);
-    },
-    options?.onDead,
-  );
 }
