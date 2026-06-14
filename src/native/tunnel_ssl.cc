@@ -172,7 +172,7 @@ bool TunnelSslClient::Connect(int tcp_fd,
     return false;
   }
   if (timeout_ms <= 0) {
-    timeout_ms = 30000;
+    timeout_ms = kTunnelHandshakeTimeoutMs;
   }
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
@@ -243,7 +243,7 @@ bool TunnelSslClient::ConnectPsk(int tcp_fd,
     return false;
   }
   if (timeout_ms <= 0) {
-    timeout_ms = 30000;
+    timeout_ms = kTunnelHandshakeTimeoutMs;
   }
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L

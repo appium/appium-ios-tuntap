@@ -24,7 +24,6 @@ constexpr size_t kUtunHeaderSize = 4;
 
 constexpr char kCdTunnelMagic[] = "CDTunnel";
 constexpr size_t kCdTunnelHeaderSize = 10;
-constexpr int kHandshakeTimeoutMs = 30000;
 constexpr size_t kMaxIngressBuffer = 256 * 1024;
 
 using Clock = std::chrono::steady_clock;
@@ -159,7 +158,7 @@ bool TunnelForwarder::Connect(int tcp_fd,
                               const std::string& key_pem,
                               std::string& error) {
   Stop();
-  return ssl_.Connect(tcp_fd, cert_pem, key_pem, kHandshakeTimeoutMs, error);
+  return ssl_.Connect(tcp_fd, cert_pem, key_pem, kTunnelHandshakeTimeoutMs, error);
 }
 
 bool TunnelForwarder::ConnectPsk(int tcp_fd,
@@ -168,7 +167,7 @@ bool TunnelForwarder::ConnectPsk(int tcp_fd,
                                  const std::string& identity,
                                  std::string& error) {
   Stop();
-  return ssl_.ConnectPsk(tcp_fd, psk, psk_len, identity, kHandshakeTimeoutMs, error);
+  return ssl_.ConnectPsk(tcp_fd, psk, psk_len, identity, kTunnelHandshakeTimeoutMs, error);
 }
 
 bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error) {
@@ -178,7 +177,7 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
     return false;
   }
 
-  handshake_deadline_ = Clock::now() + std::chrono::milliseconds(kHandshakeTimeoutMs);
+  handshake_deadline_ = Clock::now() + std::chrono::milliseconds(kTunnelHandshakeTimeoutMs);
 
   const std::string request =
       "{\"type\":\"clientHandshakeRequest\",\"mtu\":" + std::to_string(requested_mtu) + "}";

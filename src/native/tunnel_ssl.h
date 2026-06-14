@@ -9,6 +9,9 @@
 #include <string>
 #include <vector>
 
+/** SSL_connect and CDTunnel handshake I/O deadline (milliseconds). */
+inline constexpr int kTunnelHandshakeTimeoutMs = 15000;
+
 /** TLS client for lockdown (PEM cert) or Apple TV Remote Pairing (TLS-PSK). */
 class TunnelSslClient {
 public:
