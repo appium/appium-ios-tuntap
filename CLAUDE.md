@@ -52,10 +52,7 @@ src/
     tun_backend_linux.cc # Linux /dev/net/tun backend implementation
   index.ts               # Package entry: TunTap, PacketCallback, errors, tunnel/*
   TunTap.ts              # Wraps native TunDevice; validation; delegates OS networking to platform layer
-  tunnel/
-    manager.ts           # TunnelManager, connectToTunnelLockdown (native OpenSSL)
-    forwarder.ts         # TunnelForwarder TS wrapper
-    types.ts             # TunnelConnection, TunnelInfo
+  tunnel.ts              # CDTunnel protocol, TunnelManager, connectToTunnelLockdown
   logger.ts              # @appium/support logger
   errors.ts              # TunTapError, TunTapPermissionError, TunTapDeviceError
   platform/
@@ -94,9 +91,9 @@ Native implementation details are split into `src/native/*`:
 - **`errors.ts`** — shared error classes used by `TunTap` and `platform/*`.
 - **`TunTap.ts`** — loads the native addon via **`node-gyp-build`** (prebuilds or `build/Release`), validates IPv6/MTU/buffers, and calls a **`TunTapPlatform`** instance chosen by **`new TunTap(name?, platform?)`** where `platform` is a **`NodeJS.Platform`** string (default `process.platform`). No custom platform object is accepted at runtime; new OS support is wired in **`platform/create-platform.ts`**.
 - **`platform/*`** — OS-specific **`execFile`** usage for address, MTU, routes, and stats. Built-in Darwin/Linux paths require **effective UID 0** (**`assertEffectiveRoot`**); commands are run **without** embedding `sudo` in argv. **`getStats`** uses read-only tooling where possible without an extra root check.
-- **`tunnel/manager.ts`** — **`TunnelManager`**, native OpenSSL **`TunnelForwarder`**, and **`connectToTunnelLockdown`** (raw TCP + pair-record PEM).
+- **`tunnel.ts`** — CDTunnel handshake (`exchangeCoreTunnelParameters`), **`TunnelManager`** (typed **`TunnelManagerEvents`** / `data` → **`PacketData`**), and **`connectToTunnelLockdown`**.
 - **`logger.ts`** — thin wrapper around `@appium/support` logger.
-- **`index.ts`** — re-exports **`TunTap`**, **`PacketCallback`**, errors from **`errors.ts`**, and **`export *`** from **`tunnel/`**. Does **not** export the platform factory or concrete platform classes.
+- **`index.ts`** — re-exports **`TunTap`**, **`PacketCallback`**, errors from **`errors.ts`**, and **`export *`** from **`tunnel.ts`**. Does **not** export the platform factory or concrete platform classes.
 
 ### Build output
 
