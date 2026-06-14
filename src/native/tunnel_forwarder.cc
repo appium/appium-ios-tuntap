@@ -12,6 +12,7 @@
 
 #include <openssl/err.h>
 
+#include "debug_log.h"
 #include "ipv6_frame.h"
 
 namespace {
@@ -164,6 +165,11 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
     return false;
   }
   mtu_ = info.mtu;
+  tuntap::FwdDebug("forwarder-handshake",
+                   "mtu=%u server=%s rsdPort=%u",
+                   info.mtu,
+                   info.server_address.c_str(),
+                   info.server_rsd_port);
   return true;
 }
 
@@ -183,13 +189,19 @@ bool TunnelForwarder::StartForwarding(int tun_fd, std::string& error) {
 
   tun_fd_ = tun_fd;
   running_.store(true);
+  tun_writes_.store(0);
+  ssl_reads_.store(0);
+  tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_fd);
   tun_thread_ = std::thread(&TunnelForwarder::TunToDeviceLoop, this);
   sock_thread_ = std::thread(&TunnelForwarder::DeviceToTunLoop, this);
   return true;
 }
 
 void TunnelForwarder::Stop() {
-  running_.store(false);
+  const bool was_running = running_.exchange(false);
+  if (was_running) {
+    tuntap::FwdDebug("forwarder-stop");
+  }
 
   {
     std::lock_guard<std::mutex> lock(ssl_mutex_);
@@ -335,6 +347,7 @@ bool TunnelForwarder::ReadTunPacket(std::vector<uint8_t>& out) {
       continue;
     }
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      tuntap::FwdDebug("forwarder-tun-poll", "fd=%d", tun_fd_);
       if (!PollFd(tun_fd_, POLLIN, &running_)) {
         return false;
       }
@@ -359,6 +372,7 @@ ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
         continue;
       }
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_fd_);
         if (!PollFd(tun_fd_, POLLOUT, &running_)) {
           return -1;
         }
@@ -381,6 +395,7 @@ ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
         continue;
       }
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_fd_);
         if (!PollFd(tun_fd_, POLLOUT, &running_)) {
           return -1;
         }
@@ -405,8 +420,14 @@ void TunnelForwarder::TunToDeviceLoop() {
       continue;
     }
     if (SslWriteAll(packet.data(), packet.size()) < 0) {
+      tuntap::FwdDebug("forwarder-tun-loop-exit", "reason=ssl-write-failed");
       running_.store(false);
       return;
+    }
+    const uint64_t count = ++tun_writes_;
+    if (count == 1 || count % 200 == 0) {
+      tuntap::FwdDebug("forwarder-tun-write", "len=%zu packets=%llu", packet.size(),
+                       static_cast<unsigned long long>(count));
     }
   }
 }
@@ -418,11 +439,18 @@ void TunnelForwarder::DeviceToTunLoop() {
   while (running_.load()) {
     const ssize_t n = SslReadChunk(chunk, sizeof(chunk));
     if (n < 0) {
+      tuntap::FwdDebug("forwarder-sock-loop-exit", "reason=ssl-read-failed");
       running_.store(false);
       return;
     }
     if (n == 0) {
       continue;
+    }
+
+    const uint64_t count = ++ssl_reads_;
+    if (count == 1 || count % 200 == 0) {
+      tuntap::FwdDebug("forwarder-ssl-read", "len=%zd chunks=%llu", n,
+                       static_cast<unsigned long long>(count));
     }
 
     ingress.insert(ingress.end(), chunk, chunk + n);
@@ -432,6 +460,7 @@ void TunnelForwarder::DeviceToTunLoop() {
 
     for (const auto& frame : frames) {
       if (WriteTunPacket(frame.data(), frame.size()) < 0) {
+        tuntap::FwdDebug("forwarder-sock-loop-exit", "reason=tun-write-failed");
         running_.store(false);
         return;
       }

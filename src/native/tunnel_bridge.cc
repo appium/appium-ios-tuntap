@@ -11,6 +11,7 @@
 #endif
 
 #include "ipv6_frame.h"
+#include "debug_log.h"
 
 struct TunnelBridge::State {
   TunnelBridge* bridge = nullptr;
@@ -95,6 +96,7 @@ bool TunnelBridge::Start(Napi::Env env,
   }
 
   running_.store(true);
+  tuntap::FwdDebug("bridge-native-start", "mtu=%zu tunFd=%d", mtu_, tun_fd_);
   return true;
 }
 
@@ -102,6 +104,8 @@ void TunnelBridge::Stop() {
   if (!running_.exchange(false)) {
     return;
   }
+
+  tuntap::FwdDebug("bridge-native-stop");
 
   socket_blocked_.store(false);
   tun_write_blocked_.store(false);
@@ -268,6 +272,7 @@ void TunnelBridge::ProcessSocketIngress() {
       socket_ingress_.insert(socket_ingress_.begin(), remainder.begin(), remainder.end());
     }
     tun_write_blocked_.store(true);
+    tuntap::FwdDebug("bridge-tun-write-blocked", "ingress=%zu", socket_ingress_.size());
     UpdateTunPollInterest();
     return;
   }
@@ -294,6 +299,7 @@ void TunnelBridge::FlushTunEgress() {
   while (running_.load() && !tun_egress_.empty()) {
     if (!WritePacketToSocket(tun_egress_.front())) {
       socket_blocked_.store(true);
+      tuntap::FwdDebug("bridge-socket-blocked", "queued=%zu", tun_egress_.size());
       return;
     }
     tun_egress_.erase(tun_egress_.begin());
@@ -304,6 +310,7 @@ void TunnelBridge::FlushTunEgress() {
 
 void TunnelBridge::MaybePauseTunPollForEgress() {
   if (tun_egress_.size() >= kMaxTunEgressQueue) {
+    tuntap::FwdDebug("bridge-egress-pause", "queued=%zu", tun_egress_.size());
     PauseTunPoll();
   } else {
     ResumeTunPoll();
@@ -335,6 +342,7 @@ void TunnelBridge::ProcessTunReadable() {
     if (!socket_blocked_.load()) {
       if (!WritePacketToSocket(packet)) {
         socket_blocked_.store(true);
+        tuntap::FwdDebug("bridge-socket-blocked", "queued=%zu", tun_egress_.size());
         tun_egress_.push_back(std::move(packet));
       }
     } else {

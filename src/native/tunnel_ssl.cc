@@ -1,6 +1,7 @@
 #if defined(__APPLE__) || defined(__linux__)
 
 #include "tunnel_ssl.h"
+#include "debug_log.h"
 
 #include <fcntl.h>
 #include <poll.h>
@@ -137,6 +138,7 @@ bool TunnelSslClient::Connect(int tcp_fd,
   for (;;) {
     const int rc = SSL_connect(ssl_);
     if (rc == 1) {
+      tuntap::FwdDebug("forwarder-ssl-connect", "fd=%d", owned_fd_);
       return true;
     }
     const int err = SSL_get_error(ssl_, rc);

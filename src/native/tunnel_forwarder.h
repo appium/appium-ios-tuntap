@@ -57,6 +57,8 @@ private:
   int tun_fd_ = -1;
   size_t mtu_ = 1280;
   std::atomic<bool> running_{false};
+  std::atomic<uint64_t> tun_writes_{0};
+  std::atomic<uint64_t> ssl_reads_{0};
   std::thread tun_thread_;
   std::thread sock_thread_;
 };
