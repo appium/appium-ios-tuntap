@@ -43,7 +43,7 @@ private:
                                         unsigned char* psk,
                                         unsigned int max_psk_len);
 
-  bool ConnectTls(int tcp_fd, int timeout_ms, std::string& error);
+  bool ConnectTls(int timeout_ms, std::string& error);
 
   SSL_CTX* ctx_ = nullptr;
   SSL* ssl_ = nullptr;

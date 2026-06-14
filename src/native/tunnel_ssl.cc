@@ -127,7 +127,7 @@ unsigned int TunnelSslClient::PskClientCallback(SSL* ssl,
   return static_cast<unsigned int>(self->psk_key_.size());
 }
 
-bool TunnelSslClient::ConnectTls(int tcp_fd, int timeout_ms, std::string& error) {
+bool TunnelSslClient::ConnectTls(int timeout_ms, std::string& error) {
   if (owned_fd_ < 0 || ssl_ == nullptr) {
     error = "TLS session is not initialized";
     return false;
@@ -218,7 +218,7 @@ bool TunnelSslClient::Connect(int tcp_fd,
   }
 
   SSL_set_fd(ssl_, owned_fd_);
-  if (!ConnectTls(tcp_fd, timeout_ms, error)) {
+  if (!ConnectTls(timeout_ms, error)) {
     Close();
     return false;
   }
@@ -285,7 +285,7 @@ bool TunnelSslClient::ConnectPsk(int tcp_fd,
 
   SSL_set_app_data(ssl_, this);
   SSL_set_fd(ssl_, owned_fd_);
-  if (!ConnectTls(tcp_fd, timeout_ms, error)) {
+  if (!ConnectTls(timeout_ms, error)) {
     Close();
     return false;
   }

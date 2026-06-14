@@ -88,6 +88,9 @@
           ]
         }],
         ["OS=='mac'", {
+          "variables": {
+            "openssl_prefix%": "<!(brew --prefix openssl@3 2>/dev/null || brew --prefix openssl 2>/dev/null || echo /opt/homebrew/opt/openssl@3)"
+          },
           "sources": [
             "src/native/file_descriptor.cc",
             "src/native/posix_uv_poll_loop.cc",
@@ -97,14 +100,14 @@
             "src/native/tunnel_forwarder.cc"
           ],
           "include_dirs": [
-            "<!(pkg-config --cflags-only-I openssl 2>/dev/null | sed 's/-I//g' || echo /opt/homebrew/opt/openssl@3/include)"
+            "<!(pkg-config --cflags-only-I openssl 2>/dev/null | sed 's/-I//g' || echo '<(openssl_prefix)/include')"
           ],
           "xcode_settings": {
             "OTHER_LDFLAGS": [
               "-framework", "SystemConfiguration",
               "-framework", "CoreFoundation",
-              "/opt/homebrew/opt/openssl@3/lib/libssl.a",
-              "/opt/homebrew/opt/openssl@3/lib/libcrypto.a",
+              '<(openssl_prefix)/lib/libssl.a',
+              '<(openssl_prefix)/lib/libcrypto.a',
               "-lz"
             ]
           }
