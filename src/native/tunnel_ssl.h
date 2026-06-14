@@ -18,6 +18,7 @@ public:
   bool Connect(int tcp_fd,
                const std::string& cert_pem,
                const std::string& key_pem,
+               int timeout_ms,
                std::string& error);
 
   void Close();

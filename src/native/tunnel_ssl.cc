@@ -7,6 +7,9 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include <chrono>
+#include <cerrno>
+
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -57,13 +60,24 @@ void SetNonBlockingFd(int fd) {
   }
 }
 
-bool PollConnectFd(int fd, short events) {
+bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point deadline) {
   struct pollfd pfd {};
   pfd.fd = fd;
   pfd.events = events;
+  using Clock = std::chrono::steady_clock;
   for (;;) {
-    const int rc = poll(&pfd, 1, 5000);
+    const Clock::time_point now = Clock::now();
+    if (now >= deadline) {
+      return false;
+    }
+    const auto remaining_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+    const int timeout_ms = remaining_ms > 5000 ? 5000 : static_cast<int>(remaining_ms);
+    const int rc = poll(&pfd, 1, timeout_ms);
     if (rc > 0) {
+      if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+        return false;
+      }
       return (pfd.revents & events) != 0;
     }
     if (rc == 0) {
@@ -85,12 +99,19 @@ TunnelSslClient::~TunnelSslClient() {
 bool TunnelSslClient::Connect(int tcp_fd,
                               const std::string& cert_pem,
                               const std::string& key_pem,
+                              int timeout_ms,
                               std::string& error) {
   Close();
   if (tcp_fd < 0) {
     error = "Invalid TCP file descriptor";
     return false;
   }
+  if (timeout_ms <= 0) {
+    timeout_ms = 30000;
+  }
+
+  const auto connect_deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
   if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr) != 1) {
@@ -143,7 +164,7 @@ bool TunnelSslClient::Connect(int tcp_fd,
     }
     const int err = SSL_get_error(ssl_, rc);
     if (err == SSL_ERROR_WANT_READ) {
-      if (!PollConnectFd(owned_fd_, POLLIN)) {
+      if (!PollConnectFd(owned_fd_, POLLIN, connect_deadline)) {
         error = "SSL_connect timed out waiting to read";
         Close();
         return false;
@@ -151,7 +172,7 @@ bool TunnelSslClient::Connect(int tcp_fd,
       continue;
     }
     if (err == SSL_ERROR_WANT_WRITE) {
-      if (!PollConnectFd(owned_fd_, POLLOUT)) {
+      if (!PollConnectFd(owned_fd_, POLLOUT, connect_deadline)) {
         error = "SSL_connect timed out waiting to write";
         Close();
         return false;

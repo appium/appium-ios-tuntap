@@ -11,7 +11,7 @@ const pkgRoot = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', '.
 interface NativeTunnelForwarder {
   connect(tcpFd: number, certPem: string, keyPem: string): void;
   handshake(requestedMtu: number): TunnelInfo;
-  startForwarding(tunFd: number): void;
+  startForwarding(tunFd: number, onError?: (message: string) => void): void;
   stop(): void;
 }
 
@@ -56,14 +56,18 @@ export class TunnelForwarder {
     return this.forwarder.handshake(requestedMtu);
   }
 
-  startForwarding(tunFd: number): void {
+  startForwarding(tunFd: number, onError?: (message: string) => void): void {
     if (!this.forwarder) {
       throw new Error('Tunnel forwarder is not connected');
     }
     if (tunFd < 0) {
       throw new Error('TUN file descriptor is not available');
     }
-    this.forwarder.startForwarding(tunFd);
+    if (onError) {
+      this.forwarder.startForwarding(tunFd, onError);
+    } else {
+      this.forwarder.startForwarding(tunFd);
+    }
   }
 
   stop(): void {

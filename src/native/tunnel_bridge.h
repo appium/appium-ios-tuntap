@@ -36,6 +36,7 @@ private:
   struct State;
 
   static void OnTunPoll(uv_poll_t* handle, int status, int events);
+  static void OnPollClose(uv_handle_t* handle);
 
   void ProcessTunReadable();
   void ProcessSocketIngress();

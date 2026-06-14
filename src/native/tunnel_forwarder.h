@@ -3,7 +3,9 @@
 #if defined(__APPLE__) || defined(__linux__)
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -18,6 +20,14 @@ struct TunnelHandshakeInfo {
   uint32_t mtu = 1280;
   std::string server_address;
   uint16_t server_rsd_port = 0;
+};
+
+using ForwarderErrorCallback = std::function<void(std::string)>;
+
+enum class TunReadResult {
+  kOk,
+  kWouldBlock,
+  kFatal,
 };
 
 /**
@@ -39,7 +49,7 @@ public:
 
   bool Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error);
 
-  bool StartForwarding(int tun_fd, std::string& error);
+  bool StartForwarding(int tun_fd, ForwarderErrorCallback on_error, std::string& error);
 
   void Stop();
 
@@ -48,17 +58,22 @@ private:
   ssize_t SslWriteAll(const uint8_t* data, size_t len, bool only_while_running = true);
   void TunToDeviceLoop();
   void DeviceToTunLoop();
-  bool ReadTunPacket(std::vector<uint8_t>& out);
+  TunReadResult ReadTunPacket(std::vector<uint8_t>& out);
   ssize_t WriteTunPacket(const uint8_t* data, size_t len);
   ssize_t SslReadChunk(uint8_t* buf, size_t max_len, bool only_while_running = true);
+  void Fail(const std::string& reason);
 
   TunnelSslClient ssl_;
   std::mutex ssl_mutex_;
+  std::mutex error_mutex_;
+  ForwarderErrorCallback on_error_;
+  std::atomic<bool> error_reported_{false};
   int tun_fd_ = -1;
   size_t mtu_ = 1280;
   std::atomic<bool> running_{false};
   std::atomic<uint64_t> tun_writes_{0};
   std::atomic<uint64_t> ssl_reads_{0};
+  std::chrono::steady_clock::time_point handshake_deadline_{};
   std::thread tun_thread_;
   std::thread sock_thread_;
 };

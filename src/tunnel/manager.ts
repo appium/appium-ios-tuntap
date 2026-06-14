@@ -131,7 +131,12 @@ export class TunnelManager {
 
     tunDebug(`Starting OpenSSL tunnel forwarding for ${this.tun.name}`);
     this.forwarder = forwarder;
-    forwarder.startForwarding(this.tun.fd);
+    forwarder.startForwarding(this.tun.fd, (message) => {
+      log.error('Tunnel forwarder error:', message);
+      setImmediate(() => {
+        void this.stop();
+      });
+    });
   }
 
   /**

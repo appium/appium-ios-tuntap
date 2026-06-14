@@ -25,6 +25,8 @@ constexpr size_t kUtunHeaderSize = 4;
 
 /** Max utun packets buffered before pausing TUN poll (matches former TunToDevicePump). */
 constexpr size_t kMaxTunEgressQueue = 256;
+/** Max TLS ingress bytes before declaring framing failure. */
+constexpr size_t kMaxIngressBuffer = 256 * 1024;
 
 }  // namespace
 
@@ -111,22 +113,26 @@ void TunnelBridge::Stop() {
   tun_write_blocked_.store(false);
   tun_poll_paused_.store(false);
 
+  on_socket_write_.Reset();
+  on_error_.Reset();
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    socket_ingress_.clear();
+    tun_egress_.clear();
+    tun_fd_ = -1;
+  }
+
   if (poll_inited_) {
     uv_poll_stop(&tun_poll_);
-    uv_close(reinterpret_cast<uv_handle_t*>(&tun_poll_), nullptr);
     poll_inited_ = false;
+    uv_close(reinterpret_cast<uv_handle_t*>(&tun_poll_), &TunnelBridge::OnPollClose);
+    state_ = nullptr;
+    return;
   }
 
   delete state_;
   state_ = nullptr;
-
-  on_socket_write_.Reset();
-  on_error_.Reset();
-
-  std::lock_guard<std::mutex> lock(mutex_);
-  socket_ingress_.clear();
-  tun_egress_.clear();
-  tun_fd_ = -1;
 }
 
 void TunnelBridge::FeedSocket(const uint8_t* data, size_t len) {
@@ -135,6 +141,11 @@ void TunnelBridge::FeedSocket(const uint8_t* data, size_t len) {
   }
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (socket_ingress_.size() + len > kMaxIngressBuffer) {
+      EmitError("Socket ingress buffer overflow");
+      running_.store(false);
+      return;
+    }
     socket_ingress_.insert(socket_ingress_.end(), data, data + len);
   }
   ProcessSocketIngress();
@@ -218,27 +229,51 @@ ssize_t TunnelBridge::WriteTunPacket(const uint8_t* data, size_t len) {
   const uint32_t family = htonl(AF_INET6);
   std::memcpy(frame.data(), &family, kUtunHeaderSize);
   std::memcpy(frame.data() + kUtunHeaderSize, data, len);
-  const ssize_t n = write(tun_fd_, frame.data(), frame.size());
-  if (n < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return 0;
+  size_t offset = 0;
+  while (offset < frame.size()) {
+    const ssize_t n = write(tun_fd_, frame.data() + offset, frame.size() - offset);
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        return 0;
+      }
+      EmitError(std::string("TUN write error: ") + strerror(errno));
+      running_.store(false);
+      return -1;
     }
-    EmitError(std::string("TUN write error: ") + strerror(errno));
-    running_.store(false);
-    return -1;
+    if (n == 0) {
+      EmitError("TUN write returned zero");
+      running_.store(false);
+      return -1;
+    }
+    offset += static_cast<size_t>(n);
   }
-  return n > static_cast<ssize_t>(kUtunHeaderSize) ? n - static_cast<ssize_t>(kUtunHeaderSize) : 0;
+  return static_cast<ssize_t>(len);
 #else
-  const ssize_t n = write(tun_fd_, data, len);
-  if (n < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      return 0;
+  size_t offset = 0;
+  while (offset < len) {
+    const ssize_t n = write(tun_fd_, data + offset, len - offset);
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        return 0;
+      }
+      EmitError(std::string("TUN write error: ") + strerror(errno));
+      running_.store(false);
+      return -1;
     }
-    EmitError(std::string("TUN write error: ") + strerror(errno));
-    running_.store(false);
-    return -1;
+    if (n == 0) {
+      EmitError("TUN write returned zero");
+      running_.store(false);
+      return -1;
+    }
+    offset += static_cast<size_t>(n);
   }
-  return n;
+  return static_cast<ssize_t>(len);
 #endif
 }
 
@@ -258,7 +293,7 @@ void TunnelBridge::ProcessSocketIngress() {
     if (written < 0) {
       return;
     }
-    if (written > 0) {
+    if (written == static_cast<ssize_t>(frames[i].size())) {
       continue;
     }
 
@@ -361,6 +396,10 @@ void TunnelBridge::EmitError(const std::string& message) {
   Napi::Env env = on_error_.Env();
   Napi::HandleScope scope(env);
   on_error_.Call({Napi::String::New(env, message)});
+}
+
+void TunnelBridge::OnPollClose(uv_handle_t* handle) {
+  delete static_cast<State*>(handle->data);
 }
 
 void TunnelBridge::OnTunPoll(uv_poll_t* handle, int status, int events) {

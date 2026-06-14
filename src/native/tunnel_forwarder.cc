@@ -3,6 +3,7 @@
 #include "tunnel_forwarder.h"
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <poll.h>
@@ -23,6 +24,11 @@ constexpr size_t kUtunHeaderSize = 4;
 
 constexpr char kCdTunnelMagic[] = "CDTunnel";
 constexpr size_t kCdTunnelHeaderSize = 10;
+constexpr int kHandshakeTimeoutMs = 30000;
+constexpr size_t kMaxIngressBuffer = 256 * 1024;
+
+using Clock = std::chrono::steady_clock;
+using TimePoint = Clock::time_point;
 
 std::string EncodeCdTunnelMessage(const std::string& json) {
   std::string out;
@@ -90,7 +96,7 @@ bool ParseHandshakeJson(const std::string& json, TunnelHandshakeInfo& info, std:
   return true;
 }
 
-bool PollFd(int fd, short events, const std::atomic<bool>* running) {
+bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint deadline) {
   if (fd < 0) {
     return false;
   }
@@ -101,8 +107,18 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running) {
     if (running != nullptr && !running->load()) {
       return false;
     }
-    const int rc = poll(&pfd, 1, 200);
+    const TimePoint now = Clock::now();
+    if (now >= deadline) {
+      return false;
+    }
+    const auto remaining_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+    const int timeout_ms = remaining_ms > 200 ? 200 : static_cast<int>(remaining_ms);
+    const int rc = poll(&pfd, 1, timeout_ms);
     if (rc > 0) {
+      if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+        return false;
+      }
       return (pfd.revents & events) != 0;
     }
     if (rc == 0) {
@@ -121,12 +137,29 @@ TunnelForwarder::~TunnelForwarder() {
   Stop();
 }
 
+void TunnelForwarder::Fail(const std::string& reason) {
+  running_.store(false);
+  if (error_reported_.exchange(true)) {
+    return;
+  }
+
+  ForwarderErrorCallback cb;
+  {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    cb = std::move(on_error_);
+    on_error_ = nullptr;
+  }
+  if (cb) {
+    cb(reason);
+  }
+}
+
 bool TunnelForwarder::Connect(int tcp_fd,
                               const std::string& cert_pem,
                               const std::string& key_pem,
                               std::string& error) {
   Stop();
-  return ssl_.Connect(tcp_fd, cert_pem, key_pem, error);
+  return ssl_.Connect(tcp_fd, cert_pem, key_pem, kHandshakeTimeoutMs, error);
 }
 
 bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error) {
@@ -136,17 +169,21 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
     return false;
   }
 
+  handshake_deadline_ = Clock::now() + std::chrono::milliseconds(kHandshakeTimeoutMs);
+
   const std::string request =
       "{\"type\":\"clientHandshakeRequest\",\"mtu\":" + std::to_string(requested_mtu) + "}";
   const std::string packet = EncodeCdTunnelMessage(request);
   if (SslWriteAll(reinterpret_cast<const uint8_t*>(packet.data()), packet.size(), false) < 0) {
-    error = "Failed to send CDTunnel handshake request";
+    error = Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout"
+                                                : "Failed to send CDTunnel handshake request";
     return false;
   }
 
   uint8_t header[kCdTunnelHeaderSize];
   if (SslReadExact(header, kCdTunnelHeaderSize) < 0) {
-    error = "Failed to read CDTunnel handshake header";
+    error = Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout"
+                                                : "Failed to read CDTunnel handshake header";
     return false;
   }
   if (std::memcmp(header, kCdTunnelMagic, 8) != 0) {
@@ -156,7 +193,8 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
   const uint16_t payload_len = ntohs(*reinterpret_cast<uint16_t*>(header + 8));
   std::vector<uint8_t> body(payload_len);
   if (payload_len > 0 && SslReadExact(body.data(), body.size()) < 0) {
-    error = "Failed to read CDTunnel handshake body";
+    error = Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout"
+                                                : "Failed to read CDTunnel handshake body";
     return false;
   }
 
@@ -173,7 +211,7 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
   return true;
 }
 
-bool TunnelForwarder::StartForwarding(int tun_fd, std::string& error) {
+bool TunnelForwarder::StartForwarding(int tun_fd, ForwarderErrorCallback on_error, std::string& error) {
   if (running_.load()) {
     error = "Tunnel forwarder already running";
     return false;
@@ -187,6 +225,19 @@ bool TunnelForwarder::StartForwarding(int tun_fd, std::string& error) {
     return false;
   }
 
+  if (tun_thread_.joinable()) {
+    tun_thread_.join();
+  }
+  if (sock_thread_.joinable()) {
+    sock_thread_.join();
+  }
+
+  error_reported_.store(false);
+  {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    on_error_ = std::move(on_error);
+  }
+
   tun_fd_ = tun_fd;
   running_.store(true);
   tun_writes_.store(0);
@@ -198,10 +249,7 @@ bool TunnelForwarder::StartForwarding(int tun_fd, std::string& error) {
 }
 
 void TunnelForwarder::Stop() {
-  const bool was_running = running_.exchange(false);
-  if (was_running) {
-    tuntap::FwdDebug("forwarder-stop");
-  }
+  running_.store(false);
 
   {
     std::lock_guard<std::mutex> lock(ssl_mutex_);
@@ -217,6 +265,11 @@ void TunnelForwarder::Stop() {
     sock_thread_.join();
   }
 
+  {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    on_error_ = nullptr;
+  }
+
   ssl_.Close();
   tun_fd_ = -1;
 }
@@ -226,8 +279,14 @@ ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_wh
     return -1;
   }
 
+  const TimePoint deadline =
+      only_while_running ? TimePoint::max() : handshake_deadline_;
+
   for (;;) {
     if (only_while_running && !running_.load()) {
+      return -1;
+    }
+    if (!only_while_running && Clock::now() >= handshake_deadline_) {
       return -1;
     }
 
@@ -258,7 +317,7 @@ ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_wh
     }
 
     const std::atomic<bool>* running = only_while_running ? &running_ : nullptr;
-    if (!PollFd(fd, poll_events, running)) {
+    if (!PollFd(fd, poll_events, running, deadline)) {
       return -1;
     }
   }
@@ -278,8 +337,14 @@ ssize_t TunnelForwarder::SslReadExact(uint8_t* buf, size_t len) {
 
 ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_while_running) {
   size_t sent = 0;
+  const TimePoint deadline =
+      only_while_running ? TimePoint::max() : handshake_deadline_;
+
   while (sent < len) {
     if (only_while_running && !running_.load()) {
+      return -1;
+    }
+    if (!only_while_running && Clock::now() >= handshake_deadline_) {
       return -1;
     }
 
@@ -311,14 +376,14 @@ ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_
     }
 
     const std::atomic<bool>* running = only_while_running ? &running_ : nullptr;
-    if (!PollFd(fd, poll_events, running)) {
+    if (!PollFd(fd, poll_events, running, deadline)) {
       return -1;
     }
   }
   return static_cast<ssize_t>(sent);
 }
 
-bool TunnelForwarder::ReadTunPacket(std::vector<uint8_t>& out) {
+TunReadResult TunnelForwarder::ReadTunPacket(std::vector<uint8_t>& out) {
 #ifdef __APPLE__
   uint8_t frame[4 + 65535];
   const size_t cap = 4 + mtu_;
@@ -327,35 +392,32 @@ bool TunnelForwarder::ReadTunPacket(std::vector<uint8_t>& out) {
   const size_t cap = mtu_;
 #endif
 
-  while (running_.load()) {
-    const ssize_t n = ::read(tun_fd_, frame, cap);
-    if (n > 0) {
+  const ssize_t n = ::read(tun_fd_, frame, cap);
+  if (n > 0) {
 #ifdef __APPLE__
-      if (n <= static_cast<ssize_t>(kUtunHeaderSize)) {
-        continue;
-      }
-      out.assign(frame + kUtunHeaderSize, frame + n);
+    if (n <= static_cast<ssize_t>(kUtunHeaderSize)) {
+      return TunReadResult::kWouldBlock;
+    }
+    out.assign(frame + kUtunHeaderSize, frame + n);
 #else
-      out.assign(frame, frame + n);
+    out.assign(frame, frame + n);
 #endif
-      return true;
-    }
-    if (n == 0) {
-      return false;
-    }
-    if (errno == EINTR) {
-      continue;
-    }
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      tuntap::FwdDebug("forwarder-tun-poll", "fd=%d", tun_fd_);
-      if (!PollFd(tun_fd_, POLLIN, &running_)) {
-        return false;
-      }
-      continue;
-    }
-    return false;
+    return TunReadResult::kOk;
   }
-  return false;
+  if (n == 0) {
+    return TunReadResult::kFatal;
+  }
+  if (errno == EINTR) {
+    return TunReadResult::kWouldBlock;
+  }
+  if (errno == EAGAIN || errno == EWOULDBLOCK) {
+    tuntap::FwdDebug("forwarder-tun-poll", "fd=%d", tun_fd_);
+    if (!PollFd(tun_fd_, POLLIN, &running_, TimePoint::max())) {
+      return TunReadResult::kFatal;
+    }
+    return TunReadResult::kWouldBlock;
+  }
+  return TunReadResult::kFatal;
 }
 
 ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
@@ -373,7 +435,7 @@ ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
       }
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_fd_);
-        if (!PollFd(tun_fd_, POLLOUT, &running_)) {
+        if (!PollFd(tun_fd_, POLLOUT, &running_, TimePoint::max())) {
           return -1;
         }
         continue;
@@ -396,7 +458,7 @@ ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
       }
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_fd_);
-        if (!PollFd(tun_fd_, POLLOUT, &running_)) {
+        if (!PollFd(tun_fd_, POLLOUT, &running_, TimePoint::max())) {
           return -1;
         }
         continue;
@@ -416,12 +478,16 @@ void TunnelForwarder::TunToDeviceLoop() {
   std::vector<uint8_t> packet;
 
   while (running_.load()) {
-    if (!ReadTunPacket(packet) || packet.empty()) {
+    const TunReadResult read_result = ReadTunPacket(packet);
+    if (read_result == TunReadResult::kFatal) {
+      Fail("TUN read failed in tun-to-device loop");
+      return;
+    }
+    if (read_result != TunReadResult::kOk || packet.empty()) {
       continue;
     }
     if (SslWriteAll(packet.data(), packet.size()) < 0) {
-      tuntap::FwdDebug("forwarder-tun-loop-exit", "reason=ssl-write-failed");
-      running_.store(false);
+      Fail("SSL write failed in tun-to-device loop");
       return;
     }
     const uint64_t count = ++tun_writes_;
@@ -439,8 +505,9 @@ void TunnelForwarder::DeviceToTunLoop() {
   while (running_.load()) {
     const ssize_t n = SslReadChunk(chunk, sizeof(chunk));
     if (n < 0) {
-      tuntap::FwdDebug("forwarder-sock-loop-exit", "reason=ssl-read-failed");
-      running_.store(false);
+      if (running_.load()) {
+        Fail("SSL read failed in device-to-tun loop");
+      }
       return;
     }
     if (n == 0) {
@@ -453,6 +520,10 @@ void TunnelForwarder::DeviceToTunLoop() {
                        static_cast<unsigned long long>(count));
     }
 
+    if (ingress.size() + static_cast<size_t>(n) > kMaxIngressBuffer) {
+      Fail("SSL ingress buffer overflow");
+      return;
+    }
     ingress.insert(ingress.end(), chunk, chunk + n);
 
     std::vector<std::vector<uint8_t>> frames;
@@ -460,8 +531,7 @@ void TunnelForwarder::DeviceToTunLoop() {
 
     for (const auto& frame : frames) {
       if (WriteTunPacket(frame.data(), frame.size()) < 0) {
-        tuntap::FwdDebug("forwarder-sock-loop-exit", "reason=tun-write-failed");
-        running_.store(false);
+        Fail("TUN write failed in device-to-tun loop");
         return;
       }
     }
@@ -486,9 +556,36 @@ public:
 
   TunnelForwarderWrap(const Napi::CallbackInfo& info) : Napi::ObjectWrap<TunnelForwarderWrap>(info) {}
 
-  ~TunnelForwarderWrap() override { forwarder_.Stop(); }
+  ~TunnelForwarderWrap() override {
+    ReleaseErrorTsfn();
+    forwarder_.Stop();
+  }
 
 private:
+  void ReleaseErrorTsfn() {
+    if (error_tsfn_) {
+      error_tsfn_.Release();
+      error_tsfn_ = nullptr;
+    }
+  }
+
+  void ReportError(std::string message) {
+    if (!error_tsfn_) {
+      return;
+    }
+    auto* copy = new std::string(std::move(message));
+    const napi_status status = error_tsfn_.NonBlockingCall(
+        copy,
+        [](Napi::Env env, Napi::Function js_callback, std::string* msg) {
+          js_callback.Call({Napi::String::New(env, *msg)});
+          delete msg;
+        });
+    if (status != napi_ok) {
+      fprintf(stderr, "TunnelForwarder error (callback queue full): %s\n", copy->c_str());
+      delete copy;
+    }
+  }
+
   Napi::Value Connect(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsString() || !info[2].IsString()) {
@@ -535,12 +632,28 @@ private:
   Napi::Value StartForwarding(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 1 || !info[0].IsNumber()) {
-      Napi::TypeError::New(env, "Expected tunFd number").ThrowAsJavaScriptException();
+      Napi::TypeError::New(env, "Expected (tunFd[, onError])").ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
+    ReleaseErrorTsfn();
+
+    Napi::Function on_error = Napi::Function::New(env, [](const Napi::CallbackInfo&) {});
+    if (info.Length() >= 2 && info[1].IsFunction()) {
+      on_error = info[1].As<Napi::Function>();
+    }
+
+    error_tsfn_ = Napi::ThreadSafeFunction::New(env,
+                                                on_error,
+                                                "TunnelForwarderOnError",
+                                                0,
+                                                1);
+
+    const int tun_fd = info[0].As<Napi::Number>().Int32Value();
     std::string error;
-    if (!forwarder_.StartForwarding(info[0].As<Napi::Number>().Int32Value(), error)) {
+    ForwarderErrorCallback callback = [this](std::string msg) { ReportError(std::move(msg)); };
+    if (!forwarder_.StartForwarding(tun_fd, std::move(callback), error)) {
+      ReleaseErrorTsfn();
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
     return env.Undefined();
@@ -548,10 +661,12 @@ private:
 
   Napi::Value Stop(const Napi::CallbackInfo& info) {
     forwarder_.Stop();
+    ReleaseErrorTsfn();
     return info.Env().Undefined();
   }
 
   TunnelForwarder forwarder_;
+  Napi::ThreadSafeFunction error_tsfn_;
 };
 
 Napi::Object InitTunnelForwarder(Napi::Env env, Napi::Object exports) {
