@@ -10,16 +10,23 @@
 
 #include "native/tun_backend.h"
 
+#if defined(__APPLE__) || defined(__linux__)
+#include "native/tunnel_bridge.h"
+#endif
+
 struct TunPollDispatch {
   Napi::ThreadSafeFunction tsfn;
   std::mutex mutex;
   std::deque<std::vector<uint8_t>> pending;
-  static constexpr size_t MAX_PENDING = 512;
+  size_t max_pending_ = 1;
+  class TunDevice* device_ = nullptr;
 
   struct PacketJob {
     TunPollDispatch* dispatch;
     std::vector<uint8_t>* packet;
   };
+
+  void OnJsConsumed();
 
   static void CallJs(Napi::Env env,
                      Napi::Function jsCallback,
@@ -38,7 +45,7 @@ struct TunPollDispatch {
         backing);
     jsCallback.Call({buf});
     if (self != nullptr) {
-      self->FlushPending();
+      self->OnJsConsumed();
     }
   }
 
@@ -65,12 +72,14 @@ struct TunPollDispatch {
   bool PostPacket(std::vector<uint8_t> packet) {
     {
       std::lock_guard<std::mutex> lock(mutex);
+      if (pending.size() >= max_pending_) {
+        return false;
+      }
       pending.push_back(std::move(packet));
     }
     FlushPending();
     std::lock_guard<std::mutex> lock(mutex);
-    // Stop reading more from utun until JS drains the backlog.
-    return pending.size() < MAX_PENDING;
+    return pending.size() < max_pending_;
   }
 };
 
@@ -81,8 +90,10 @@ public:
   ~TunDevice();
 
   void CloseInternal();
+  void ResumeReceiveFromDispatch();
 
 private:
+  friend struct TunPollDispatch;
   static Napi::FunctionReference constructor;
 
   Napi::Value Open(const Napi::CallbackInfo& info);
@@ -108,6 +119,7 @@ private:
 
   void StopPollingLocked();
   void ReleaseTsfnLocked();
+  void PauseReceiveFromDispatch();
 };
 
 Napi::FunctionReference TunDevice::constructor;
@@ -307,9 +319,16 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   Napi::ThreadSafeFunction tsfn = tsfn_;
   auto* dispatch = new TunPollDispatch();
   dispatch->tsfn = tsfn;
+  dispatch->max_pending_ = queue_depth;
+  dispatch->device_ = this;
   poll_dispatch_ = dispatch;
-  auto packet_cb = [dispatch](std::vector<uint8_t> packet) mutable -> bool {
-    return dispatch->PostPacket(std::move(packet));
+  auto packet_cb = [this, dispatch](std::vector<uint8_t> packet) mutable -> bool {
+    const bool accepted = dispatch->PostPacket(std::move(packet));
+    if (polling_ && backend_) {
+      // Pause until the JS callback runs (pmd3 reads one utun packet per iteration).
+      backend_->PauseReceiveLoop();
+    }
+    return accepted;
   };
   // Terminal errors from the receive loop (poll error, device closed, read
   // error) call back here so the JS-side polling_ flag and TSFN are released
@@ -358,7 +377,11 @@ Napi::Value TunDevice::ResumePolling(const Napi::CallbackInfo& info) {
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  return TunDevice::Init(env, exports);
+  TunDevice::Init(env, exports);
+#if defined(__APPLE__) || defined(__linux__)
+  InitTunnelBridge(env, exports);
+#endif
+  return exports;
 }
 
 NODE_API_MODULE(tuntap, Init)
@@ -390,5 +413,33 @@ void TunDevice::ReleaseTsfnLocked() {
   if (poll_dispatch_ != nullptr) {
     delete poll_dispatch_;
     poll_dispatch_ = nullptr;
+  }
+}
+
+void TunPollDispatch::OnJsConsumed() {
+  FlushPending();
+  TunDevice* device = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (pending.empty() && device_ != nullptr) {
+      device = device_;
+    }
+  }
+  if (device != nullptr) {
+    device->ResumeReceiveFromDispatch();
+  }
+}
+
+void TunDevice::PauseReceiveFromDispatch() {
+  std::lock_guard<std::mutex> lock(device_mutex_);
+  if (polling_ && backend_) {
+    backend_->PauseReceiveLoop();
+  }
+}
+
+void TunDevice::ResumeReceiveFromDispatch() {
+  std::lock_guard<std::mutex> lock(device_mutex_);
+  if (polling_ && backend_) {
+    backend_->ResumeReceiveLoop();
   }
 }

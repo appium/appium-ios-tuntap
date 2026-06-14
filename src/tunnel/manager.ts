@@ -1,6 +1,5 @@
 import {log} from '../logger.js';
 import {TunTap} from '../TunTap.js';
-import {EventEmitter} from 'node:events';
 import type {Socket} from 'node:net';
 import {Buffer} from 'node:buffer';
 
@@ -10,102 +9,22 @@ import {
   CD_TUNNEL_MAGIC,
   CD_TUNNEL_MAGIC_SIZE,
   CD_TUNNEL_MTU,
-  IPV6_HEADER_SIZE,
-  MAX_DEVICE_INGRESS_BUFFER,
-  IPV6_VERSION,
-  IPPROTO_TCP,
-  IPPROTO_UDP,
 } from './constants.js';
 import {appendBuffer} from './buffer-utils.js';
-import {fwdBufferState, fwdDebug, tunDebug} from './debug-log.js';
-import {TunToDevicePump} from './tun-to-device-pump.js';
-import {DeviceToTunPump} from './device-to-tun-pump.js';
-import type {
-  CdTunnelParseResult,
-  Ipv6Frame,
-  PacketConsumer,
-  PacketData,
-  TunnelConnection,
-  TunnelInfo,
-  TunnelManagerEvents,
-} from './types.js';
+import {tunDebug} from './debug-log.js';
+import {TunnelBridge} from './bridge.js';
+import type {CdTunnelParseResult, TunnelConnection, TunnelInfo} from './types.js';
 
 /**
- * Bridges a CoreDevice tunnel `Socket` and a {@link TunTap} interface: IPv6 framing, TUN I/O, and packet fan-out.
- * Emits {@link TunnelManagerEvents} (currently `data` with {@link PacketData}) for TCP/UDP packets, same as registered consumers.
+ * Bridges a CoreDevice tunnel `Socket` and a {@link TunTap} interface via the native tunnel bridge.
  */
-export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
+export class TunnelManager {
   private tun: TunTap | null = null;
   private cancelled: boolean = false;
   private mtu: number = CD_TUNNEL_MTU;
-  private buffer: Buffer = Buffer.alloc(0);
-  private readonly packetConsumers: Set<PacketConsumer> = new Set();
   private deviceConn: Socket | null = null;
   private cleanupPromise: Promise<void> | null = null;
-  private tunToDevicePump: TunToDevicePump | null = null;
-  private deviceToTunPump: DeviceToTunPump | null = null;
-  private deviceIngressPaused = false;
-  private fwdDeviceDataChunks = 0;
-
-  /**
-   * Register a listener for parsed tunnel packets (in addition to the `data` event).
-   *
-   * @param consumer — object with {@link PacketConsumer.onPacket}
-   */
-  addPacketConsumer(consumer: PacketConsumer): void {
-    this.packetConsumers.add(consumer);
-  }
-
-  /**
-   * Unregister a consumer previously added with {@link TunnelManager.addPacketConsumer}.
-   *
-   * @param consumer — same reference as passed to `addPacketConsumer`
-   */
-  removePacketConsumer(consumer: PacketConsumer): void {
-    this.packetConsumers.delete(consumer);
-  }
-
-  /**
-   * Async iterator over tunnel packets until {@link TunnelManager.stop} sets `cancelled`.
-   *
-   * @yields {@link PacketData} for each TCP/UDP packet
-   */
-  async *getPacketStream(): AsyncIterable<PacketData> {
-    const queue: PacketData[] = [];
-    let resolver: ((value: IteratorResult<PacketData>) => void) | null = null;
-
-    const consumer: PacketConsumer = {
-      onPacket: (packet) => {
-        if (resolver) {
-          resolver({value: packet, done: false});
-          resolver = null;
-        } else {
-          queue.push(packet);
-        }
-      },
-    };
-
-    this.addPacketConsumer(consumer);
-
-    try {
-      while (!this.cancelled) {
-        if (queue.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          yield queue.shift()!;
-        } else {
-          yield await new Promise<PacketData>((resolve) => {
-            resolver = (result) => {
-              if (!result.done) {
-                resolve(result.value);
-              }
-            };
-          });
-        }
-      }
-    } finally {
-      this.removePacketConsumer(consumer);
-    }
-  }
+  private bridge: TunnelBridge | null = null;
 
   /**
    * Open a {@link TunTap}, assign the client IPv6 address/MTU, and add a /128 route to the server.
@@ -179,45 +98,8 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     deviceConn.setNoDelay(true);
     deviceConn.setKeepAlive(true, 1000);
 
-    if (this.hasPacketTap()) {
-      deviceConn.on('data', (data: Buffer) => {
-        if (this.cancelled) {
-          return;
-        }
-
-        try {
-          this.fwdDeviceDataChunks += 1;
-          this.buffer = appendBuffer(this.buffer, data);
-
-          if (this.buffer.length > MAX_DEVICE_INGRESS_BUFFER) {
-            this.pauseDeviceIngress('max-buffer');
-          }
-
-          if (this.fwdDeviceDataChunks === 1 || this.fwdDeviceDataChunks % 200 === 0) {
-            fwdDebug('device-data', {
-              chunk: data.length,
-              ...fwdBufferState(this.buffer),
-              ingressPaused: this.deviceIngressPaused,
-              chunks: this.fwdDeviceDataChunks,
-            });
-          }
-
-          this.processBuffer('data');
-        } catch (err: any) {
-          if (!this.cancelled) {
-            log.error('Error processing device data:', err.message);
-          }
-        }
-      });
-    } else {
-      this.startDeviceToTunPump(deviceConn);
-    }
-
-    deviceConn.on('drain', () => {
-      this.deviceToTunPump?.notifyTunWritable();
-    });
-
-    this.startTunToDevicePump(deviceConn);
+    this.bridge = new TunnelBridge();
+    this.bridge.start(deviceConn, this.tun.fd, this.mtu);
 
     // Listen for device connection close
     deviceConn.on('close', async () => {
@@ -235,7 +117,7 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
   }
 
   /**
-   * Idempotent shutdown: stop polling, destroy the socket, clear consumers, close the TUN device.
+   * Idempotent shutdown: stop bridge, destroy the socket, close the TUN device.
    *
    * @returns the same promise if already stopping/stopped
    */
@@ -249,206 +131,6 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     return this.cleanupPromise;
   }
 
-  private hasPacketTap(): boolean {
-    return this.packetConsumers.size > 0 || this.listenerCount('data') > 0;
-  }
-
-  private pauseDeviceIngress(reason: string): void {
-    if (this.deviceIngressPaused || !this.deviceConn || this.deviceConn.destroyed) {
-      return;
-    }
-    this.deviceIngressPaused = true;
-    this.deviceConn.pause();
-    fwdDebug('ingress-pause', {
-      reason,
-      ...fwdBufferState(this.buffer),
-    });
-  }
-
-  private resumeDeviceIngress(): void {
-    if (!this.deviceIngressPaused || !this.deviceConn || this.deviceConn.destroyed) {
-      return;
-    }
-    this.deviceIngressPaused = false;
-    this.deviceConn.resume();
-    fwdDebug('ingress-resume', {
-      ...fwdBufferState(this.buffer),
-    });
-  }
-
-  private processBuffer(trigger = 'unknown'): void {
-    let offset = 0;
-    let tunWriteBlocked = false;
-    let framesWritten = 0;
-    const bufBefore = this.buffer.length;
-
-    while (offset + IPV6_HEADER_SIZE <= this.buffer.length) {
-      const frame = nextIpv6Frame(this.buffer, offset);
-      if (frame.kind === 'incomplete') {
-        break;
-      }
-      if (frame.kind === 'resync') {
-        offset++;
-        continue;
-      }
-
-      if (!this.tun) {
-        log.error('TUN device is null during packet processing');
-        break;
-      }
-
-      try {
-        const bytesWritten = this.writeDeviceFrameToTun(this.tun, frame.packet, frame.nextHeader);
-        if (bytesWritten === 'blocked') {
-          tunWriteBlocked = true;
-          fwdDebug('tun-write-blocked', {
-            trigger,
-            frameLen: frame.length,
-            ...fwdBufferState(this.buffer),
-            ingressPaused: this.deviceIngressPaused,
-          });
-          break;
-        }
-      } catch (err: any) {
-        log.error(`Error writing to TUN: ${err.message}`);
-      }
-
-      framesWritten += 1;
-      offset += frame.length;
-    }
-
-    if (offset > 0) {
-      if (offset >= this.buffer.length) {
-        this.buffer = Buffer.alloc(0);
-      } else {
-        this.buffer = this.buffer.subarray(offset);
-      }
-    }
-
-    if (this.deviceIngressPaused) {
-      const mayResume =
-        !tunWriteBlocked &&
-        (this.buffer.length === 0 || this.buffer.length <= MAX_DEVICE_INGRESS_BUFFER / 2);
-      if (mayResume) {
-        this.resumeDeviceIngress();
-      } else if (tunWriteBlocked || framesWritten > 0 || bufBefore > 0) {
-        fwdDebug('process-buffer', {
-          trigger,
-          bufBefore,
-          bufAfter: this.buffer.length,
-          offset,
-          framesWritten,
-          tunWriteBlocked,
-          mayResume,
-          ingressPaused: this.deviceIngressPaused,
-          ...fwdBufferState(this.buffer),
-        });
-      }
-    }
-  }
-
-  private writeDeviceFrameToTun(
-    tun: TunTap,
-    packet: Buffer,
-    nextHeader: number,
-  ): number | 'blocked' {
-    const bytesWritten = tun.write(packet);
-    if (bytesWritten <= 0) {
-      this.pauseDeviceIngress('tun-write-blocked');
-      return 'blocked';
-    }
-
-    if (!this.hasPacketTap()) {
-      return bytesWritten;
-    }
-
-    const {src, dst} = ipv6Endpoints(packet);
-    tunDebug(`Device → TUN: ${bytesWritten} bytes, IPv6 src=${src}, dst=${dst}`);
-    this.tapL4Packet(packet, nextHeader, src, dst);
-    return bytesWritten;
-  }
-
-  private tapL4Packet(packet: Buffer, nextHeader: number, src: string, dst: string): void {
-    let packetData: PacketData | null = null;
-
-    if (nextHeader === IPPROTO_UDP) {
-      packetData = parseUdpPacketData(packet, src, dst);
-      if (!packetData) {
-        tunDebug('UDP payload too short, not emitting event.');
-      } else {
-        tunDebug(`UDP packet detected: payload length=${packetData.payload.length}`);
-      }
-    } else if (nextHeader === IPPROTO_TCP) {
-      packetData = parseTcpPacketData(packet, src, dst);
-      if (!packetData) {
-        tunDebug('TCP packet too short or malformed, skipping.');
-      } else {
-        tunDebug(`TCP packet detected: payload length=${packetData.payload.length}`);
-      }
-    } else {
-      tunDebug('Packet is not UDP or TCP (nextHeader !== 17 and !== 6)');
-    }
-
-    if (packetData) {
-      this.dispatchPacketData(packetData);
-    }
-  }
-
-  private dispatchPacketData(packetData: PacketData): void {
-    this.emit('data', packetData);
-    for (const consumer of this.packetConsumers) {
-      try {
-        consumer.onPacket(packetData);
-      } catch (err) {
-        log.error('Error in packet consumer:', err);
-      }
-    }
-    tunDebug(`Emitted data event for ${packetData.protocol} packet`);
-  }
-
-  private startDeviceToTunPump(deviceConn: Socket): void {
-    if (!this.tun) {
-      return;
-    }
-
-    this.deviceToTunPump = new DeviceToTunPump();
-    this.deviceToTunPump.start(deviceConn, this.tun);
-  }
-
-  private startTunToDevicePump(deviceConn: Socket): void {
-    if (!this.tun) {
-      return;
-    }
-
-    const tapOn = this.hasPacketTap();
-    this.tunToDevicePump = new TunToDevicePump(
-      this.tun,
-      this.mtu,
-      tapOn
-        ? (data) => {
-            if (data.length >= IPV6_HEADER_SIZE) {
-              tunDebug(
-                `TUN → Device: ${data.length} bytes, IPv6 src=${formatIPv6Address(data.subarray(8, 24))}, dst=${formatIPv6Address(data.subarray(24, 40))}`,
-              );
-            } else {
-              tunDebug(`TUN → Device: ${data.length} bytes (too small for IPv6 header)`);
-            }
-          }
-        : undefined,
-      () => {
-        this.deviceToTunPump?.notifyTunWritable();
-        if (this.deviceIngressPaused) {
-          fwdDebug('forward-progress', {
-            ingressPaused: this.deviceIngressPaused,
-            ...fwdBufferState(this.buffer),
-          });
-          this.processBuffer('forward-progress');
-        }
-      },
-    );
-    this.tunToDevicePump.start(deviceConn);
-  }
-
   private async _performStop(): Promise<void> {
     const tunName = this.tun ? this.tun.name : 'unknown';
     tunDebug(`Stopping tunnel manager for ${tunName}`);
@@ -456,14 +138,9 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
     // Signal cancellation
     this.cancelled = true;
 
-    if (this.tunToDevicePump) {
-      await this.tunToDevicePump.stop();
-      this.tunToDevicePump = null;
-    }
-
-    if (this.deviceToTunPump) {
-      await this.deviceToTunPump.stop();
-      this.deviceToTunPump = null;
+    if (this.bridge) {
+      await this.bridge.stop();
+      this.bridge = null;
     }
 
     // Close device connection if exists
@@ -471,15 +148,6 @@ export class TunnelManager extends EventEmitter<TunnelManagerEvents> {
       this.deviceConn.destroy();
       this.deviceConn = null;
     }
-
-    // Clear buffer
-    this.buffer = Buffer.alloc(0);
-
-    // Clear packet consumers
-    this.packetConsumers.clear();
-
-    // Remove all listeners
-    this.removeAllListeners();
 
     // Close TUN device
     if (this.tun) {
@@ -520,7 +188,7 @@ export async function exchangeCoreTunnelParameters(socket: Socket): Promise<Tunn
  * End-to-end setup: handshake, TUN configuration, route, and forwarding on `secureServiceSocket`.
  *
  * @param secureServiceSocket — tunnel socket (e.g. from lockdown secure service)
- * @returns connection handle with {@link TunnelConnection.closer} and packet APIs
+ * @returns connection handle with {@link TunnelConnection.closer}
  */
 export async function connectToTunnelLockdown(
   secureServiceSocket: Socket,
@@ -554,10 +222,6 @@ export async function connectToTunnelLockdown(
       RsdPort: tunnelInfo.serverRSDPort,
       tunnelManager,
       closer: closeFunc,
-      addPacketConsumer: (consumer: PacketConsumer) => tunnelManager.addPacketConsumer(consumer),
-      removePacketConsumer: (consumer: PacketConsumer) =>
-        tunnelManager.removePacketConsumer(consumer),
-      getPacketStream: () => tunnelManager.getPacketStream(),
     };
   } catch (err: any) {
     log.error('Failed to connect to tunnel:', err);
@@ -669,82 +333,4 @@ function readCdTunnelResponse(socket: Socket, timeoutMs: number): Promise<Tunnel
     socket.on('error', onError);
     socket.on('end', onEnd);
   });
-}
-
-function nextIpv6Frame(buffer: Buffer, offset: number): Ipv6Frame {
-  if (offset + IPV6_HEADER_SIZE > buffer.length) {
-    return {kind: 'incomplete'};
-  }
-
-  const header = buffer.subarray(offset, offset + IPV6_HEADER_SIZE);
-  if (((header[0] >> 4) & 0x0f) !== IPV6_VERSION) {
-    return {kind: 'resync'};
-  }
-
-  const payloadLength = header.readUInt16BE(4);
-  const length = IPV6_HEADER_SIZE + payloadLength;
-  if (offset + length > buffer.length) {
-    return {kind: 'incomplete'};
-  }
-
-  return {
-    kind: 'frame',
-    packet: buffer.subarray(offset, offset + length),
-    nextHeader: header[6],
-    length,
-  };
-}
-
-function ipv6Endpoints(packet: Buffer): {src: string; dst: string} {
-  return {
-    src: formatIPv6Address(packet.subarray(8, 24)),
-    dst: formatIPv6Address(packet.subarray(24, 40)),
-  };
-}
-
-function parseUdpPacketData(packet: Buffer, src: string, dst: string): PacketData | null {
-  const payload = packet.subarray(IPV6_HEADER_SIZE);
-  if (payload.length < 8) {
-    return null;
-  }
-  return {
-    protocol: 'UDP',
-    src,
-    dst,
-    sourcePort: payload.readUInt16BE(0),
-    destPort: payload.readUInt16BE(2),
-    payload: payload.subarray(8),
-  };
-}
-
-function parseTcpPacketData(packet: Buffer, src: string, dst: string): PacketData | null {
-  const tcpStart = IPV6_HEADER_SIZE;
-  if (packet.length < tcpStart + 20) {
-    return null;
-  }
-
-  const tcpHeaderLength = (packet.readUInt8(tcpStart + 12) >> 4) * 4;
-  if (packet.length < tcpStart + tcpHeaderLength) {
-    return null;
-  }
-
-  return {
-    protocol: 'TCP',
-    src,
-    dst,
-    sourcePort: packet.readUInt16BE(tcpStart),
-    destPort: packet.readUInt16BE(tcpStart + 2),
-    payload: packet.subarray(tcpStart + tcpHeaderLength),
-  };
-}
-
-function formatIPv6Address(buffer: Buffer): string {
-  if (!buffer || buffer.length !== 16) {
-    return 'invalid-address';
-  }
-  const parts: string[] = [];
-  for (let i = 0; i < 16; i += 2) {
-    parts.push(buffer.readUInt16BE(i).toString(16));
-  }
-  return parts.join(':');
 }

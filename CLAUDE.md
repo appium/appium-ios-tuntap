@@ -91,7 +91,7 @@ Native implementation details are split into `src/native/*`:
 - **`errors.ts`** — shared error classes used by `TunTap` and `platform/*`.
 - **`TunTap.ts`** — loads the native addon via **`node-gyp-build`** (prebuilds or `build/Release`), validates IPv6/MTU/buffers, and calls a **`TunTapPlatform`** instance chosen by **`new TunTap(name?, platform?)`** where `platform` is a **`NodeJS.Platform`** string (default `process.platform`). No custom platform object is accepted at runtime; new OS support is wired in **`platform/create-platform.ts`**.
 - **`platform/*`** — OS-specific **`execFile`** usage for address, MTU, routes, and stats. Built-in Darwin/Linux paths require **effective UID 0** (**`assertEffectiveRoot`**); commands are run **without** embedding `sudo` in argv. **`getStats`** uses read-only tooling where possible without an extra root check.
-- **`tunnel.ts`** — CDTunnel handshake (`exchangeCoreTunnelParameters`), **`TunnelManager`** (typed **`TunnelManagerEvents`** / `data` → **`PacketData`**), and **`connectToTunnelLockdown`**.
+- **`tunnel.ts`** — CDTunnel handshake (`exchangeCoreTunnelParameters`), **`TunnelManager`** (native **`TunnelBridge`** forwarder), and **`connectToTunnelLockdown`**.
 - **`logger.ts`** — thin wrapper around `@appium/support` logger.
 - **`index.ts`** — re-exports **`TunTap`**, **`PacketCallback`**, errors from **`errors.ts`**, and **`export *`** from **`tunnel.ts`**. Does **not** export the platform factory or concrete platform classes.
 

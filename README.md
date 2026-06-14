@@ -176,18 +176,6 @@ socket.connect(port, host, async () => {
 
     console.log('Tunnel established:', tunnel.Address);
 
-    // Add packet consumer
-    tunnel.addPacketConsumer({
-      onPacket: (packet) => {
-        console.log(`${packet.protocol} packet: ${packet.src}:${packet.sourcePort} → ${packet.dst}:${packet.destPort}`);
-      }
-    });
-
-    // Or use async iteration
-    for await (const packet of tunnel.getPacketStream()) {
-      console.log('Received packet:', packet);
-    }
-
     // Close tunnel when done
     await tunnel.closer();
   } catch (err) {

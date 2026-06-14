@@ -65,7 +65,8 @@
           "sources": [
             "src/native/file_descriptor.cc",
             "src/native/posix_uv_poll_loop.cc",
-            "src/native/tun_backend_linux.cc"
+            "src/native/tun_backend_linux.cc",
+            "src/native/tunnel_bridge.cc"
           ],
           "cflags": [
             "-pthread"
@@ -81,7 +82,8 @@
           "sources": [
             "src/native/file_descriptor.cc",
             "src/native/posix_uv_poll_loop.cc",
-            "src/native/tun_backend_darwin.cc"
+            "src/native/tun_backend_darwin.cc",
+            "src/native/tunnel_bridge.cc"
           ],
           "xcode_settings": {
             "OTHER_LDFLAGS": [
