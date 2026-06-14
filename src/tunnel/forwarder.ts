@@ -73,7 +73,7 @@ export class TunnelForwarder {
 }
 
 function getSocketFd(socket: Socket): number {
-  const handle = (socket as { _handle?: { fd?: number } })._handle;
+  const handle = (socket as {_handle?: {fd?: number}})._handle;
   if (typeof handle?.fd === 'number' && handle.fd >= 0) {
     return handle.fd;
   }

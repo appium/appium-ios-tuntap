@@ -150,7 +150,12 @@ export class TunnelBridge {
   private async writePacketAndDrain(socket: Socket, packet: Buffer): Promise<void> {
     const canWriteMore = socket.write(packet);
     this.writeCount += 1;
-    if (this.writeCount === 1 || this.writeCount % 200 === 0 || !canWriteMore || socket.writableNeedDrain) {
+    if (
+      this.writeCount === 1 ||
+      this.writeCount % 200 === 0 ||
+      !canWriteMore ||
+      socket.writableNeedDrain
+    ) {
       fwdDebug('bridge-write', {
         len: packet.length,
         canWriteMore,
