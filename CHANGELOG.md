@@ -1,3 +1,17 @@
+## [1.0.0](https://github.com/appium/appium-ios-tuntap/compare/v0.6.1...v1.0.0) (2026-06-14)
+
+### ⚠ BREAKING CHANGES
+
+* connectToTunnelLockdown now requires (tcpSocket, { cert, key }) — pass plain TCP to CoreDeviceProxy; do not upgrade to Node TLSSocket first.
+* Packet tap removed — no PacketData, no TunnelManager data / EventEmitter consumers.
+* TunnelBridge and the JS tun↔TLS pump path removed.
+* Native forwarder is macOS/Linux only — Windows throws at connect time.
+* OpenSSL is statically linked in the addon — larger binary; avoids Node/OpenSSL ABI conflicts at runtime.
+
+### Features
+
+* Move tunnel implementation to the native layer ([1287bc8](https://github.com/appium/appium-ios-tuntap/commit/1287bc81e55f95e70ff157c2d3e0f064eed8eada))
+
 ## [0.6.1](https://github.com/appium/appium-ios-tuntap/compare/v0.6.0...v0.6.1) (2026-06-14)
 
 ### Bug Fixes
