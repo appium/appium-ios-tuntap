@@ -4,8 +4,4 @@ export {
   type TunnelLockdownTlsCredentials,
   type TunnelPskTlsCredentials,
 } from './forwarder.js';
-export {
-  TunnelManager,
-  connectToTunnelLockdown,
-  connectToTunnelPsk,
-} from './manager.js';
+export {TunnelManager, connectToTunnelLockdown, connectToTunnelPsk} from './manager.js';

@@ -4,7 +4,11 @@ import type {Socket} from 'node:net';
 
 import {CD_TUNNEL_MTU} from './constants.js';
 import {tunDebug} from './debug-log.js';
-import {TunnelForwarder, type TunnelLockdownTlsCredentials, type TunnelPskTlsCredentials} from './forwarder.js';
+import {
+  TunnelForwarder,
+  type TunnelLockdownTlsCredentials,
+  type TunnelPskTlsCredentials,
+} from './forwarder.js';
 import type {TunnelConnection, TunnelInfo} from './types.js';
 
 /**
