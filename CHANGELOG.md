@@ -1,3 +1,9 @@
+## [0.6.1](https://github.com/appium/appium-ios-tuntap/compare/v0.6.0...v0.6.1) (2026-06-14)
+
+### Bug Fixes
+
+* Revert "feat: Move tunnel implementation to the native layer ([#52](https://github.com/appium/appium-ios-tuntap/issues/52))" ([#53](https://github.com/appium/appium-ios-tuntap/issues/53)) ([7e383f7](https://github.com/appium/appium-ios-tuntap/commit/7e383f772c603501ce5e1cae94ad1581b3138463))
+
 ## [0.6.0](https://github.com/appium/appium-ios-tuntap/compare/v0.5.0...v0.6.0) (2026-06-14)
 
 ### ⚠ BREAKING CHANGES
