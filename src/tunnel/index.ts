@@ -1,7 +1,2 @@
-export type {TunnelConnection} from './types.js';
-export {
-  TunnelForwarder,
-  type TunnelLockdownTlsCredentials,
-  type TunnelPskTlsCredentials,
-} from './forwarder.js';
-export {TunnelManager, connectToTunnelLockdown, connectToTunnelPsk} from './manager.js';
+export type {PacketConsumer, PacketData, TunnelConnection, TunnelManagerEvents} from './types.js';
+export {TunnelManager, connectToTunnelLockdown, exchangeCoreTunnelParameters} from './manager.js';

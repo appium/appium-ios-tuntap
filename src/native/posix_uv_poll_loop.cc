@@ -113,25 +113,27 @@ void PosixUvPollLoop::OnPoll(uv_poll_t* handle, int status, int events) {
     return;
   }
 
-  // One utun packet per poll callback (pmd3 tun_read_task reads once per iteration).
-  std::vector<uint8_t> packet;
-  std::string error;
-  ReadPacketStatus rs = state->read_fn(state->buffer_size, packet, error);
+  // Drain all readable packets before returning to libuv (match WinTun worker).
+  while (true) {
+    std::vector<uint8_t> packet;
+    std::string error;
+    ReadPacketStatus rs = state->read_fn(state->buffer_size, packet, error);
 
-  switch (rs) {
-    case ReadPacketStatus::Data:
-      if (state->on_packet && !state->on_packet(std::move(packet))) {
+    switch (rs) {
+      case ReadPacketStatus::Data:
+        if (state->on_packet && !state->on_packet(std::move(packet))) {
+          return;
+        }
+        break;
+      case ReadPacketStatus::NoData:
         return;
-      }
-      break;
-    case ReadPacketStatus::NoData:
-      return;
-    case ReadPacketStatus::Closed:
-      handle_terminal("Device closed");
-      return;
-    case ReadPacketStatus::Error:
-      handle_terminal(error);
-      return;
+      case ReadPacketStatus::Closed:
+        handle_terminal("Device closed");
+        return;
+      case ReadPacketStatus::Error:
+        handle_terminal(error);
+        return;
+    }
   }
 }
 
