@@ -66,7 +66,9 @@
             "src/native/file_descriptor.cc",
             "src/native/posix_uv_poll_loop.cc",
             "src/native/tun_backend_linux.cc",
-            "src/native/tunnel_bridge.cc"
+            "src/native/tunnel_bridge.cc",
+            "src/native/tunnel_ssl.cc",
+            "src/native/tunnel_forwarder.cc"
           ],
           "cflags": [
             "-pthread"
@@ -74,8 +76,15 @@
           "cflags_cc": [
             "-pthread"
           ],
+          "include_dirs": [
+            "<!(pkg-config --cflags-only-I openssl 2>/dev/null | sed 's/-I//g')"
+          ],
           "ldflags": [
-            "-pthread"
+            "-pthread",
+            "<!(pkg-config --variable=libdir openssl)/libssl.a",
+            "<!(pkg-config --variable=libdir openssl)/libcrypto.a",
+            "-ldl",
+            "-lz"
           ]
         }],
         ["OS=='mac'", {
@@ -83,12 +92,20 @@
             "src/native/file_descriptor.cc",
             "src/native/posix_uv_poll_loop.cc",
             "src/native/tun_backend_darwin.cc",
-            "src/native/tunnel_bridge.cc"
+            "src/native/tunnel_bridge.cc",
+            "src/native/tunnel_ssl.cc",
+            "src/native/tunnel_forwarder.cc"
+          ],
+          "include_dirs": [
+            "<!(pkg-config --cflags-only-I openssl 2>/dev/null | sed 's/-I//g' || echo /opt/homebrew/opt/openssl@3/include)"
           ],
           "xcode_settings": {
             "OTHER_LDFLAGS": [
               "-framework", "SystemConfiguration",
-              "-framework", "CoreFoundation"
+              "-framework", "CoreFoundation",
+              "/opt/homebrew/opt/openssl@3/lib/libssl.a",
+              "/opt/homebrew/opt/openssl@3/lib/libcrypto.a",
+              "-lz"
             ]
           }
         }],

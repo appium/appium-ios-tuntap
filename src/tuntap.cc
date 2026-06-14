@@ -12,6 +12,7 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 #include "native/tunnel_bridge.h"
+#include "native/tunnel_forwarder.h"
 #endif
 
 struct TunPollDispatch {
@@ -380,6 +381,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   TunDevice::Init(env, exports);
 #if defined(__APPLE__) || defined(__linux__)
   InitTunnelBridge(env, exports);
+  InitTunnelForwarder(env, exports);
 #endif
   return exports;
 }

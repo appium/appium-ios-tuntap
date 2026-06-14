@@ -13,6 +13,7 @@ import {
 import {appendBuffer} from './buffer-utils.js';
 import {tunDebug} from './debug-log.js';
 import {TunnelBridge} from './bridge.js';
+import {TunnelForwarder, type TunnelLockdownTlsCredentials} from './forwarder.js';
 import type {CdTunnelParseResult, TunnelConnection, TunnelInfo} from './types.js';
 
 /**
@@ -25,6 +26,7 @@ export class TunnelManager {
   private deviceConn: Socket | null = null;
   private cleanupPromise: Promise<void> | null = null;
   private bridge: TunnelBridge | null = null;
+  private forwarder: TunnelForwarder | null = null;
 
   /**
    * Open a {@link TunTap}, assign the client IPv6 address/MTU, and add a /128 route to the server.
@@ -117,6 +119,22 @@ export class TunnelManager {
   }
 
   /**
+   * Begin bidirectional forwarding via the OpenSSL native forwarder (raw TCP + host cert).
+   *
+   * @param forwarder — connected forwarder after {@link TunnelForwarder.handshake}
+   */
+  startNativeForwarding(forwarder: TunnelForwarder): void {
+    if (!this.tun) {
+      log.error('TUN device is not set up');
+      return;
+    }
+
+    tunDebug(`Starting OpenSSL tunnel forwarding for ${this.tun.name}`);
+    this.forwarder = forwarder;
+    forwarder.startForwarding(this.tun.fd);
+  }
+
+  /**
    * Idempotent shutdown: stop bridge, destroy the socket, close the TUN device.
    *
    * @returns the same promise if already stopping/stopped
@@ -138,18 +156,7 @@ export class TunnelManager {
     // Signal cancellation
     this.cancelled = true;
 
-    if (this.bridge) {
-      await this.bridge.stop();
-      this.bridge = null;
-    }
-
-    // Close device connection if exists
-    if (this.deviceConn && !this.deviceConn.destroyed) {
-      this.deviceConn.destroy();
-      this.deviceConn = null;
-    }
-
-    // Close TUN device
+    // Close TUN first so native forwarder threads unblock on read/write.
     if (this.tun) {
       try {
         this.tun.close();
@@ -157,6 +164,21 @@ export class TunnelManager {
         log.error('Error closing TUN device:', err);
       }
       this.tun = null;
+    }
+
+    if (this.forwarder) {
+      this.forwarder.stop();
+      this.forwarder = null;
+    }
+
+    if (this.bridge) {
+      await this.bridge.stop();
+      this.bridge = null;
+    }
+
+    if (this.deviceConn && !this.deviceConn.destroyed) {
+      this.deviceConn.destroy();
+      this.deviceConn = null;
     }
 
     tunDebug(`Tunnel for ${tunName} closed successfully`);
@@ -228,6 +250,61 @@ export async function connectToTunnelLockdown(
     await tunnelManager.stop();
     if (!secureServiceSocket.destroyed) {
       secureServiceSocket.end();
+    }
+    throw err;
+  }
+}
+
+/**
+ * End-to-end setup with native OpenSSL forwarding (pmd3/go-ios style pthread loops).
+ *
+ * Pass a **plain TCP** CoreDeviceProxy socket and lockdown host cert/key PEM — do not
+ * upgrade to Node `TLSSocket` first.
+ *
+ * @param tcpSocket — connected usbmux TCP socket to CoreDeviceProxy
+ * @param credentials — `HostCertificate` / `HostPrivateKey` from the pair record
+ */
+export async function connectToTunnelLockdownNative(
+  tcpSocket: Socket,
+  credentials: TunnelLockdownTlsCredentials,
+): Promise<TunnelConnection> {
+  if (process.platform === 'win32') {
+    throw new Error('Native OpenSSL tunnel forwarder is not supported on Windows');
+  }
+
+  const tunnelManager = new TunnelManager();
+  const forwarder = new TunnelForwarder();
+
+  try {
+    tcpSocket.setNoDelay(true);
+    tcpSocket.setKeepAlive(true, 1000);
+
+    forwarder.connect(tcpSocket, credentials);
+    const tunnelInfo = forwarder.handshake(CD_TUNNEL_MTU);
+    tunDebug('Tunnel parameters exchanged (native TLS):', tunnelInfo);
+
+    const tunInterfaceInfo = await tunnelManager.setupInterface(tunnelInfo);
+    tunDebug('Tunnel interface set up:', tunInterfaceInfo.name);
+
+    tunnelManager.startNativeForwarding(forwarder);
+
+    const closeFunc = async () => {
+      tunDebug('Closing native tunnel connection');
+      await tunnelManager.stop();
+    };
+
+    return {
+      Address: tunnelInfo.serverAddress,
+      RsdPort: tunnelInfo.serverRSDPort,
+      tunnelManager,
+      closer: closeFunc,
+    };
+  } catch (err: any) {
+    log.error('Failed to connect to tunnel (native TLS):', err);
+    forwarder.stop();
+    await tunnelManager.stop();
+    if (!tcpSocket.destroyed) {
+      tcpSocket.destroy();
     }
     throw err;
   }
