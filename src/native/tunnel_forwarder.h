@@ -32,7 +32,7 @@ enum class TunReadResult {
 
 /**
  * pmd3/go-ios style bidirectional forwarder: blocking tun read/write loops on
- * independent threads over an OpenSSL TLS session (lockdown client cert).
+ * independent threads over an OpenSSL TLS session (lockdown cert or TLS-PSK).
  */
 class TunnelForwarder {
 public:
@@ -46,6 +46,12 @@ public:
                const std::string& cert_pem,
                const std::string& key_pem,
                std::string& error);
+
+  bool ConnectPsk(int tcp_fd,
+                  const uint8_t* psk,
+                  size_t psk_len,
+                  const std::string& identity,
+                  std::string& error);
 
   bool Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error);
 

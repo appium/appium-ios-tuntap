@@ -165,23 +165,13 @@ try {
 
 ```javascript
 import { connectToTunnelLockdown } from 'appium-ios-tuntap';
-import { Socket } from 'net';
 
-// Create a socket connection to your tunnel endpoint
-const socket = new Socket();
-socket.connect(port, host, async () => {
-  try {
-    // Establish tunnel connection
-    const tunnel = await connectToTunnelLockdown(socket);
+// Plain TCP socket to CoreDeviceProxy + lockdown pair-record PEM (do not use Node TLS first)
+const { socket, cert, key } = await startCoreDeviceProxyTcp(...);
 
-    console.log('Tunnel established:', tunnel.Address);
-
-    // Close tunnel when done
-    await tunnel.closer();
-  } catch (err) {
-    console.error('Tunnel error:', err);
-  }
-});
+const tunnel = await connectToTunnelLockdown(socket, { cert, key });
+console.log('Tunnel established:', tunnel.Address);
+await tunnel.closer();
 ```
 
 ## API Reference

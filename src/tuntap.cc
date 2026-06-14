@@ -11,7 +11,6 @@
 #include "native/tun_backend.h"
 
 #if defined(__APPLE__) || defined(__linux__)
-#include "native/tunnel_bridge.h"
 #include "native/tunnel_forwarder.h"
 #endif
 
@@ -380,7 +379,6 @@ Napi::Value TunDevice::ResumePolling(const Napi::CallbackInfo& info) {
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   TunDevice::Init(env, exports);
 #if defined(__APPLE__) || defined(__linux__)
-  InitTunnelBridge(env, exports);
   InitTunnelForwarder(env, exports);
 #endif
   return exports;

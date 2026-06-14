@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <cerrno>
+#include <cstring>
 
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -18,6 +19,9 @@
 #include <openssl/x509.h>
 
 namespace {
+
+constexpr char kAppleTvPskCiphers[] =
+    "PSK-AES256-CBC-SHA:PSK-AES128-CBC-SHA:PSK-3DES-EDE-CBC-SHA:PSK-RC4-SHA:PSK";
 
 bool LoadPem(SSL_CTX* ctx, const std::string& pem, bool is_cert, std::string& error) {
   BIO* bio = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
@@ -96,6 +100,67 @@ TunnelSslClient::~TunnelSslClient() {
   Close();
 }
 
+unsigned int TunnelSslClient::PskClientCallback(SSL* ssl,
+                                                const char* /*hint*/,
+                                                char* identity,
+                                                unsigned int max_identity_len,
+                                                unsigned char* psk,
+                                                unsigned int max_psk_len) {
+  auto* self = static_cast<TunnelSslClient*>(SSL_get_app_data(ssl));
+  if (self == nullptr || self->psk_key_.empty()) {
+    return 0;
+  }
+
+  const size_t identity_len = self->psk_identity_.size();
+  if (identity_len + 1 > max_identity_len) {
+    return 0;
+  }
+  if (!self->psk_identity_.empty()) {
+    std::memcpy(identity, self->psk_identity_.data(), identity_len);
+  }
+  identity[identity_len] = '\0';
+
+  if (self->psk_key_.size() > max_psk_len) {
+    return 0;
+  }
+  std::memcpy(psk, self->psk_key_.data(), self->psk_key_.size());
+  return static_cast<unsigned int>(self->psk_key_.size());
+}
+
+bool TunnelSslClient::ConnectTls(int tcp_fd, int timeout_ms, std::string& error) {
+  if (owned_fd_ < 0 || ssl_ == nullptr) {
+    error = "TLS session is not initialized";
+    return false;
+  }
+
+  const auto connect_deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+
+  for (;;) {
+    const int rc = SSL_connect(ssl_);
+    if (rc == 1) {
+      return true;
+    }
+    const int err = SSL_get_error(ssl_, rc);
+    if (err == SSL_ERROR_WANT_READ) {
+      if (!PollConnectFd(owned_fd_, POLLIN, connect_deadline)) {
+        error = "SSL_connect timed out waiting to read";
+        return false;
+      }
+      continue;
+    }
+    if (err == SSL_ERROR_WANT_WRITE) {
+      if (!PollConnectFd(owned_fd_, POLLOUT, connect_deadline)) {
+        error = "SSL_connect timed out waiting to write";
+        return false;
+      }
+      continue;
+    }
+    error = std::string("SSL_connect failed: ") + ERR_reason_error_string(ERR_get_error());
+    return false;
+  }
+}
+
 bool TunnelSslClient::Connect(int tcp_fd,
                               const std::string& cert_pem,
                               const std::string& key_pem,
@@ -109,9 +174,6 @@ bool TunnelSslClient::Connect(int tcp_fd,
   if (timeout_ms <= 0) {
     timeout_ms = 30000;
   }
-
-  const auto connect_deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
   if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr) != 1) {
@@ -156,37 +218,85 @@ bool TunnelSslClient::Connect(int tcp_fd,
   }
 
   SSL_set_fd(ssl_, owned_fd_);
-  for (;;) {
-    const int rc = SSL_connect(ssl_);
-    if (rc == 1) {
-      tuntap::FwdDebug("forwarder-ssl-connect", "fd=%d", owned_fd_);
-      return true;
-    }
-    const int err = SSL_get_error(ssl_, rc);
-    if (err == SSL_ERROR_WANT_READ) {
-      if (!PollConnectFd(owned_fd_, POLLIN, connect_deadline)) {
-        error = "SSL_connect timed out waiting to read";
-        Close();
-        return false;
-      }
-      continue;
-    }
-    if (err == SSL_ERROR_WANT_WRITE) {
-      if (!PollConnectFd(owned_fd_, POLLOUT, connect_deadline)) {
-        error = "SSL_connect timed out waiting to write";
-        Close();
-        return false;
-      }
-      continue;
-    }
-    error = std::string("SSL_connect failed: ") + ERR_reason_error_string(ERR_get_error());
+  if (!ConnectTls(tcp_fd, timeout_ms, error)) {
     Close();
     return false;
   }
+
+  tuntap::FwdDebug("forwarder-ssl-connect", "fd=%d", owned_fd_);
+  return true;
+}
+
+bool TunnelSslClient::ConnectPsk(int tcp_fd,
+                                 const uint8_t* psk,
+                                 size_t psk_len,
+                                 const std::string& identity,
+                                 int timeout_ms,
+                                 std::string& error) {
+  Close();
+  if (tcp_fd < 0) {
+    error = "Invalid TCP file descriptor";
+    return false;
+  }
+  if (psk == nullptr || psk_len == 0) {
+    error = "TLS-PSK key is empty";
+    return false;
+  }
+  if (timeout_ms <= 0) {
+    timeout_ms = 30000;
+  }
+
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+  if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr) != 1) {
+    error = "Failed to initialize OpenSSL";
+    return false;
+  }
+#endif
+
+  owned_fd_ = dup(tcp_fd);
+  if (owned_fd_ < 0) {
+    error = "Failed to duplicate TCP file descriptor";
+    return false;
+  }
+  SetNonBlockingFd(owned_fd_);
+
+  psk_key_.assign(psk, psk + psk_len);
+  psk_identity_ = identity;
+
+  ctx_ = SSL_CTX_new(TLS_client_method());
+  if (ctx_ == nullptr) {
+    error = "Failed to create SSL context";
+    Close();
+    return false;
+  }
+
+  SSL_CTX_set_min_proto_version(ctx_, TLS1_2_VERSION);
+  SSL_CTX_set_max_proto_version(ctx_, TLS1_2_VERSION);
+  SSL_CTX_set_verify(ctx_, SSL_VERIFY_NONE, nullptr);
+  SSL_CTX_set_cipher_list(ctx_, kAppleTvPskCiphers);
+  SSL_CTX_set_psk_client_callback(ctx_, &TunnelSslClient::PskClientCallback);
+
+  ssl_ = SSL_new(ctx_);
+  if (ssl_ == nullptr) {
+    error = "Failed to create SSL session";
+    Close();
+    return false;
+  }
+
+  SSL_set_app_data(ssl_, this);
+  SSL_set_fd(ssl_, owned_fd_);
+  if (!ConnectTls(tcp_fd, timeout_ms, error)) {
+    Close();
+    return false;
+  }
+
+  tuntap::FwdDebug("forwarder-ssl-psk-connect", "fd=%d psk_len=%zu", owned_fd_, psk_len);
+  return true;
 }
 
 void TunnelSslClient::Close() {
   if (ssl_ != nullptr) {
+    SSL_set_app_data(ssl_, nullptr);
     SSL_shutdown(ssl_);
     SSL_free(ssl_);
     ssl_ = nullptr;
@@ -199,6 +309,8 @@ void TunnelSslClient::Close() {
     ::close(owned_fd_);
     owned_fd_ = -1;
   }
+  psk_key_.clear();
+  psk_identity_.clear();
 }
 
 #endif

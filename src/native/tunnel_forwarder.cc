@@ -162,6 +162,15 @@ bool TunnelForwarder::Connect(int tcp_fd,
   return ssl_.Connect(tcp_fd, cert_pem, key_pem, kHandshakeTimeoutMs, error);
 }
 
+bool TunnelForwarder::ConnectPsk(int tcp_fd,
+                                 const uint8_t* psk,
+                                 size_t psk_len,
+                                 const std::string& identity,
+                                 std::string& error) {
+  Stop();
+  return ssl_.ConnectPsk(tcp_fd, psk, psk_len, identity, kHandshakeTimeoutMs, error);
+}
+
 bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error) {
   SSL* ssl = ssl_.ssl();
   if (ssl == nullptr) {
@@ -547,6 +556,7 @@ public:
         DefineClass(env,
                     "TunnelForwarder",
                     {InstanceMethod("connect", &TunnelForwarderWrap::Connect),
+                     InstanceMethod("connectPsk", &TunnelForwarderWrap::ConnectPsk),
                      InstanceMethod("handshake", &TunnelForwarderWrap::Handshake),
                      InstanceMethod("startForwarding", &TunnelForwarderWrap::StartForwarding),
                      InstanceMethod("stop", &TunnelForwarderWrap::Stop)});
@@ -599,6 +609,31 @@ private:
                             info[1].As<Napi::String>().Utf8Value(),
                             info[2].As<Napi::String>().Utf8Value(),
                             error)) {
+      Napi::Error::New(env, error).ThrowAsJavaScriptException();
+    }
+    return env.Undefined();
+  }
+
+  Napi::Value ConnectPsk(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsBuffer()) {
+      Napi::TypeError::New(env, "Expected (tcpFd, pskBuffer[, identity])")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+
+    std::string identity;
+    if (info.Length() >= 3 && info[2].IsString()) {
+      identity = info[2].As<Napi::String>().Utf8Value();
+    }
+
+    Napi::Buffer<uint8_t> psk = info[1].As<Napi::Buffer<uint8_t>>();
+    std::string error;
+    if (!forwarder_.ConnectPsk(info[0].As<Napi::Number>().Int32Value(),
+                               psk.Data(),
+                               psk.Length(),
+                               identity,
+                               error)) {
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
     return env.Undefined();

@@ -67,7 +67,6 @@
             "src/native/posix_uv_poll_loop.cc",
             "src/native/debug_log.cc",
             "src/native/tun_backend_linux.cc",
-            "src/native/tunnel_bridge.cc",
             "src/native/tunnel_ssl.cc",
             "src/native/tunnel_forwarder.cc"
           ],
@@ -94,7 +93,6 @@
             "src/native/posix_uv_poll_loop.cc",
             "src/native/debug_log.cc",
             "src/native/tun_backend_darwin.cc",
-            "src/native/tunnel_bridge.cc",
             "src/native/tunnel_ssl.cc",
             "src/native/tunnel_forwarder.cc"
           ],

@@ -10,6 +10,7 @@ const pkgRoot = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', '.
 
 interface NativeTunnelForwarder {
   connect(tcpFd: number, certPem: string, keyPem: string): void;
+  connectPsk(tcpFd: number, psk: Buffer, identity?: string): void;
   handshake(requestedMtu: number): TunnelInfo;
   startForwarding(tunFd: number, onError?: (message: string) => void): void;
   stop(): void;
@@ -23,6 +24,13 @@ interface NativeTuntapModule {
 export interface TunnelLockdownTlsCredentials {
   cert: string;
   key: string;
+}
+
+/** Pre-shared key from Apple TV Remote Pairing pair-verify (X25519 shared secret). */
+export interface TunnelPskTlsCredentials {
+  psk: Buffer;
+  /** PSK identity sent to the device (Apple TV uses empty string). */
+  identity?: string;
 }
 
 /**
@@ -44,9 +52,23 @@ export class TunnelForwarder {
     this.forwarder = new native.TunnelForwarder();
     this.forwarder.connect(tcpFd, credentials.cert, credentials.key);
 
-    if (!tcpSocket.destroyed) {
-      tcpSocket.destroy();
+    destroySocket(tcpSocket);
+  }
+
+  connectPsk(tcpSocket: Socket, credentials: TunnelPskTlsCredentials): void {
+    if (process.platform === 'win32') {
+      throw new Error('Native tunnel forwarder is not supported on Windows');
     }
+
+    const tcpFd = getSocketFd(tcpSocket);
+    tcpSocket.pause();
+    tcpSocket.removeAllListeners();
+
+    const native = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
+    this.forwarder = new native.TunnelForwarder();
+    this.forwarder.connectPsk(tcpFd, credentials.psk, credentials.identity ?? '');
+
+    destroySocket(tcpSocket);
   }
 
   handshake(requestedMtu: number): TunnelInfo {
@@ -82,4 +104,10 @@ function getSocketFd(socket: Socket): number {
     return handle.fd;
   }
   throw new Error('TCP socket file descriptor is not available');
+}
+
+function destroySocket(socket: Socket): void {
+  if (!socket.destroyed) {
+    socket.destroy();
+  }
 }
