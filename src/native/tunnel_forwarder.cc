@@ -421,11 +421,11 @@ TunReadResult TunnelForwarder::ReadTunPacket(std::vector<uint8_t>& out) {
   if (errno == EAGAIN || errno == EWOULDBLOCK) {
     tuntap::FwdDebug("forwarder-tun-poll", "fd=%d", tun_fd_);
     if (!PollFd(tun_fd_, POLLIN, &running_, TimePoint::max())) {
-      return TunReadResult::kFatal;
+      return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
     }
     return TunReadResult::kWouldBlock;
   }
-  return TunReadResult::kFatal;
+  return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
 }
 
 ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
@@ -488,14 +488,18 @@ void TunnelForwarder::TunToDeviceLoop() {
   while (running_.load()) {
     const TunReadResult read_result = ReadTunPacket(packet);
     if (read_result == TunReadResult::kFatal) {
-      Fail("TUN read failed in tun-to-device loop");
+      if (running_.load()) {
+        Fail("TUN read failed in tun-to-device loop");
+      }
       return;
     }
     if (read_result != TunReadResult::kOk || packet.empty()) {
       continue;
     }
     if (SslWriteAll(packet.data(), packet.size()) < 0) {
-      Fail("SSL write failed in tun-to-device loop");
+      if (running_.load()) {
+        Fail("SSL write failed in tun-to-device loop");
+      }
       return;
     }
     const uint64_t count = ++tun_writes_;
@@ -539,7 +543,9 @@ void TunnelForwarder::DeviceToTunLoop() {
 
     for (const auto& frame : frames) {
       if (WriteTunPacket(frame.data(), frame.size()) < 0) {
-        Fail("TUN write failed in device-to-tun loop");
+        if (running_.load()) {
+          Fail("TUN write failed in device-to-tun loop");
+        }
         return;
       }
     }
