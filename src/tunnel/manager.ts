@@ -85,6 +85,10 @@ export class TunnelManager {
     tunDebug(`Starting OpenSSL tunnel forwarding for ${this.tun.name}`);
     this.forwarder = forwarder;
     forwarder.startForwarding(this.tun.fd, (message) => {
+      if (this.cancelled) {
+        tunDebug(`Ignoring forwarder error during shutdown: ${message}`);
+        return;
+      }
       log.error('Tunnel forwarder error:', message);
       setImmediate(() => {
         void (async () => {
