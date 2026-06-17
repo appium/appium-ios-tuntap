@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/appium/appium-ios-tuntap/compare/v1.0.0...v1.0.1) (2026-06-17)
+
+### Bug Fixes
+
+* Logging on tunnel shutdown ([#56](https://github.com/appium/appium-ios-tuntap/issues/56)) ([6cfdf11](https://github.com/appium/appium-ios-tuntap/commit/6cfdf11768420598b8a098dc1e59d25fb6082d3a))
+
 ## [1.0.0](https://github.com/appium/appium-ios-tuntap/compare/v0.6.1...v1.0.0) (2026-06-14)
 
 ### ⚠ BREAKING CHANGES
