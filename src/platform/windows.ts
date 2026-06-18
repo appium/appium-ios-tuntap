@@ -159,15 +159,19 @@ async function waitForIpv6AddressReady(interfaceName: string, address: string): 
       script,
     ]);
     lastState = stdout.trim();
-    if (!lastState || /^Preferred$/i.test(lastState)) {
-      tunDebug(`[win] address ready: ${address} state=${lastState || '(unknown)'}`);
+    if (/^Preferred$/i.test(lastState)) {
+      tunDebug(`[win] address ready: ${address} state=${lastState}`);
       return;
     }
-    tunDebug(`[win] waiting for address: ${address} state=${lastState}`);
+    tunDebug(`[win] waiting for address: ${address} state=${lastState || '(not found)'}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  log.warn(`[win] address ${address} did not become Preferred (last state: ${lastState})`);
+  throw new TunTapError(
+    `[win] address ${address} did not become Preferred (last state: ${
+      lastState || 'not found'
+    })`,
+  );
 }
 
 async function setIpv6Mtu(interfaceName: string, mtu: number): Promise<void> {

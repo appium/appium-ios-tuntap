@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <poll.h>
@@ -108,7 +109,13 @@ bool ExtractTcpFdFromNodeHandle(const Napi::Value& value, int& fd, std::string& 
     return false;
   }
 
-  fd = static_cast<int>(reinterpret_cast<uintptr_t>(os_fd));
+  const uintptr_t raw_fd = reinterpret_cast<uintptr_t>(os_fd);
+  if (raw_fd > static_cast<uintptr_t>(std::numeric_limits<int>::max())) {
+    error = "Extracted TCP socket handle is too large for OpenSSL fd API";
+    return false;
+  }
+
+  fd = static_cast<int>(raw_fd);
   if (fd < 0) {
     error = "Extracted TCP socket handle is invalid";
     return false;
@@ -235,7 +242,6 @@ uint16_t ComputeIpv6TransportChecksum(const uint8_t* packet, size_t len, uint8_t
   uint32_t sum = 0;
   sum = AddChecksumBytes(sum, packet + 8, 16);
   sum = AddChecksumBytes(sum, packet + 24, 16);
-  sum += 0;
   sum += static_cast<uint16_t>(payload_len & 0xffff);
   sum += protocol;
   sum = AddChecksumBytes(sum, packet + 40, payload_len);
@@ -848,12 +854,13 @@ public:
   TunnelForwarderWrap(const Napi::CallbackInfo& info) : Napi::ObjectWrap<TunnelForwarderWrap>(info) {}
 
   ~TunnelForwarderWrap() override {
-    ReleaseErrorTsfn();
     forwarder_.Stop();
+    ReleaseErrorTsfn();
   }
 
 private:
   void ReleaseErrorTsfn() {
+    std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
     if (error_tsfn_) {
       error_tsfn_.Release();
       error_tsfn_ = nullptr;
@@ -861,6 +868,7 @@ private:
   }
 
   void ReportError(std::string message) {
+    std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
     if (!error_tsfn_) {
       return;
     }
@@ -1010,11 +1018,14 @@ private:
       on_error = info[1].As<Napi::Function>();
     }
 
-    error_tsfn_ = Napi::ThreadSafeFunction::New(env,
-                                                on_error,
-                                                "TunnelForwarderOnError",
-                                                0,
-                                                1);
+    {
+      std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
+      error_tsfn_ = Napi::ThreadSafeFunction::New(env,
+                                                  on_error,
+                                                  "TunnelForwarderOnError",
+                                                  0,
+                                                  1);
+    }
 
     TunPlatformBackend* tun_backend = info[0].As<Napi::External<TunPlatformBackend>>().Data();
     std::string error;
@@ -1033,6 +1044,7 @@ private:
   }
 
   TunnelForwarder forwarder_;
+  std::mutex error_tsfn_mutex_;
   Napi::ThreadSafeFunction error_tsfn_;
 };
 

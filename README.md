@@ -92,10 +92,11 @@ On Linux, the module requires:
 
 On Windows the module uses [WinTun](https://www.wintun.net/) (the same userspace TUN driver shipped with WireGuard). Requirements:
 
-1. **`wintun.dll`**: ships with the package. The official signed binaries for `amd64`, `arm64`, `x86`, and `arm` are bundled under `vendor/wintun/bin/<arch>/wintun.dll`; the addon discovers the right one automatically based on its own compile-time architecture. No download or copy step is required.
-2. **Administrator privileges**: required to create the kernel adapter and configure addresses/routes via `netsh`. Launch your shell with **Run as administrator**.
-3. **OpenSSL for source builds**: release prebuilds statically link OpenSSL. If compiling from source on Windows, install static OpenSSL (for example `vcpkg install openssl:x64-windows-static`) and set `OPENSSL_ROOT_DIR` to the installed triplet directory.
-4. **Build toolchain (only if compiling from source)**: Visual Studio Build Tools 2022 with the C++ workload, the Windows 10 SDK, and Python 3.x on `PATH`.
+1. **Apple Mobile Device drivers**: required for USB communication with iOS devices. Install them through Apple's standalone iTunes package for Windows (the non-Microsoft Store installer includes the Apple Mobile Device Support drivers).
+2. **`wintun.dll`**: ships with the package. The official signed binaries for `amd64`, `arm64`, `x86`, and `arm` are bundled under `vendor/wintun/bin/<arch>/wintun.dll`; the addon discovers the right one automatically based on its own compile-time architecture. No download or copy step is required.
+3. **Administrator privileges**: required to create the kernel adapter and configure addresses/routes via `netsh`. Launch your shell with **Run as administrator**.
+4. **OpenSSL for source builds**: release prebuilds statically link OpenSSL. If compiling from source on Windows, install static OpenSSL (for example `vcpkg install openssl:x64-windows-static`) and set `OPENSSL_ROOT_DIR` to the installed triplet directory.
+5. **Build toolchain (only if compiling from source)**: Visual Studio Build Tools 2022 with the C++ workload, the Windows 10 SDK, and Python 3.x on `PATH`.
 
 ## Usage
 
