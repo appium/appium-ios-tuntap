@@ -190,6 +190,7 @@ bool ParseHandshakeJson(const std::string& json, TunnelHandshakeInfo& info, std:
   return true;
 }
 
+#ifdef _WIN32
 bool IsIcmpv6NeighborDiscovery(const uint8_t* data, size_t len) {
   if (data == nullptr || len < 41 || (data[0] >> 4) != 6) {
     return false;
@@ -269,6 +270,7 @@ bool NormalizeTcpChecksum(std::vector<uint8_t>& packet, uint16_t& old_checksum, 
   packet[checksum_offset + 1] = static_cast<uint8_t>(new_checksum & 0xff);
   return old_checksum != new_checksum;
 }
+#endif
 
 std::string FormatIpv6Address(const uint8_t* addr) {
   char buf[40];
@@ -750,6 +752,7 @@ void TunnelForwarder::TunToDeviceLoop() {
     if (read_result != TunReadResult::kOk || packet.empty()) {
       continue;
     }
+#ifdef _WIN32
     if (!IsIpv6Packet(packet.data(), packet.size())) {
       const uint64_t count = ++tun_drops_;
       if (count <= 20 || count % 200 == 0) {
@@ -774,6 +777,7 @@ void TunnelForwarder::TunToDeviceLoop() {
     uint16_t old_checksum = 0;
     uint16_t new_checksum = 0;
     const bool checksum_changed = NormalizeTcpChecksum(packet, old_checksum, new_checksum);
+#endif
     if (SslWriteAll(packet.data(), packet.size()) < 0) {
       if (running_.load()) {
         Fail("SSL write failed in tun-to-device loop");
@@ -783,12 +787,14 @@ void TunnelForwarder::TunToDeviceLoop() {
     const uint64_t count = ++tun_writes_;
     if (count <= 100 || count % 200 == 0) {
       DebugIpv6Packet("forwarder-tun-write", packet.data(), packet.size(), count);
+#ifdef _WIN32
       tuntap::FwdDebug("forwarder-tcp-checksum",
                        "packets=%llu changed=%s old=0x%04x new=0x%04x",
                        static_cast<unsigned long long>(count),
                        checksum_changed ? "true" : "false",
                        old_checksum,
                        new_checksum);
+#endif
     }
   }
 }
