@@ -31,5 +31,5 @@ jobs:
       node-version: ${{ matrix.node-version }}
       test-command: ${{ matrix.image == 'windows-latest' && 'npm run build:addon' || 'npm run test:unit' }}
       test-name: ${{ matrix.image == 'windows-latest' && 'Windows native build' || 'Unit tests' }}
-      run-lint: true
-      run-format-check: true
+      run-lint: ${{ matrix.image != 'windows-latest' }}
+      run-format-check: ${{ matrix.image != 'windows-latest' }}
