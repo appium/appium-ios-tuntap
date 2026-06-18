@@ -14,6 +14,7 @@
 #include <winsock2.h>
 #include <uv.h>
 #include <v8.h>
+#include <v8-version.h>
 #endif
 
 #include <openssl/err.h>
@@ -62,6 +63,14 @@ bool TryReadUvHandle(void* wrapper, size_t offset, uv_tcp_t** out) {
   return matched;
 }
 
+void* GetNodeBaseObjectWrapper(v8::Local<v8::Object> object) {
+#if V8_MAJOR_VERSION >= 14
+  return object->GetAlignedPointerFromInternalField(1, v8::kEmbedderDataTypeTagDefault);
+#else
+  return object->GetAlignedPointerFromInternalField(1);
+#endif
+}
+
 bool ExtractTcpFdFromNodeHandle(const Napi::Value& value, int& fd, std::string& error) {
   if (!value.IsObject()) {
     error = "Expected Node TCP handle object";
@@ -83,7 +92,7 @@ bool ExtractTcpFdFromNodeHandle(const Napi::Value& value, int& fd, std::string& 
   // Node BaseObject stores an embedder tag in field 0 and the C++ wrapper in
   // BaseObject::kSlot (field 1). TCPWrap is private, so avoid including Node
   // internals and only use this stable internal-field convention.
-  void* wrapper = handle_obj->GetAlignedPointerFromInternalField(1);
+  void* wrapper = GetNodeBaseObjectWrapper(handle_obj);
   if (wrapper == nullptr) {
     error = "Node TCP handle internal wrapper is null";
     return false;
