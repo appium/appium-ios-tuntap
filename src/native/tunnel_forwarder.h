@@ -79,6 +79,7 @@ private:
   size_t mtu_ = 1280;
   std::atomic<bool> running_{false};
   std::atomic<uint64_t> tun_writes_{0};
+  std::atomic<uint64_t> tun_drops_{0};
   std::atomic<uint64_t> ssl_reads_{0};
   std::chrono::steady_clock::time_point handshake_deadline_{};
   std::thread tun_thread_;

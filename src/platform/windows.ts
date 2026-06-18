@@ -19,6 +19,8 @@ const MISSING_TARGET_HINTS = [
   'not found',
 ];
 
+const ADDRESS_READY_TIMEOUT_MS = 5000;
+
 /** Windows implementation backed by `netsh` for configuration/routing and
  *  PowerShell `Get-NetAdapterStatistics` for byte counters. */
 export class WindowsTunTapPlatform implements TunTapPlatform {
@@ -29,6 +31,7 @@ export class WindowsTunTapPlatform implements TunTapPlatform {
     tunDebug(`[win] configure: interface=${interfaceName} address=${address} mtu=${mtu}`);
 
     await addIpv6Address(interfaceName, address);
+    await waitForIpv6AddressReady(interfaceName, address);
     await setIpv6Mtu(interfaceName, mtu);
   }
 
@@ -134,6 +137,37 @@ async function addIpv6Address(interfaceName: string, address: string): Promise<v
     }
     log.warn(`Address ${address} may already be configured on ${interfaceName}`);
   }
+}
+
+async function waitForIpv6AddressReady(interfaceName: string, address: string): Promise<void> {
+  const deadline = Date.now() + ADDRESS_READY_TIMEOUT_MS;
+  let lastState = '';
+
+  while (Date.now() < deadline) {
+    const escapedName = interfaceName.replace(/'/g, '\'\'');
+    const escapedAddress = address.replace(/'/g, '\'\'');
+    const script =
+      `Get-NetIPAddress -InterfaceAlias '${escapedName}' -IPAddress '${escapedAddress}' ` +
+      '-AddressFamily IPv6 -ErrorAction SilentlyContinue | ' +
+      'Select-Object -First 1 -ExpandProperty AddressState';
+    const {stdout} = await execFileAsync('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script,
+    ]);
+    lastState = stdout.trim();
+    if (!lastState || /^Preferred$/i.test(lastState)) {
+      tunDebug(`[win] address ready: ${address} state=${lastState || '(unknown)'}`);
+      return;
+    }
+    tunDebug(`[win] waiting for address: ${address} state=${lastState}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  log.warn(`[win] address ${address} did not become Preferred (last state: ${lastState})`);
 }
 
 async function setIpv6Mtu(interfaceName: string, mtu: number): Promise<void> {

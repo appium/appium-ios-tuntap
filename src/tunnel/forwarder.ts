@@ -24,7 +24,9 @@ export interface TunnelPskTlsCredentials {
 
 interface NativeTunnelForwarder {
   connect(tcpFd: number, certPem: string, keyPem: string): void;
+  connectSocket(tcpHandle: unknown, certPem: string, keyPem: string): void;
   connectPsk(tcpFd: number, psk: Buffer, identity?: string): void;
+  connectPskSocket(tcpHandle: unknown, psk: Buffer, identity?: string): void;
   handshake(requestedMtu: number): TunnelInfo;
   startForwarding(tunForwardingHandle: unknown, onError?: (message: string) => void): void;
   stop(): void;
@@ -42,25 +44,35 @@ export class TunnelForwarder {
   private retainedSocket: Socket | null = null;
 
   connect(tcpSocket: Socket, credentials: TunnelLockdownTlsCredentials): void {
-    const tcpFd = getSocketFd(tcpSocket);
     tcpSocket.pause();
     tcpSocket.removeAllListeners();
 
     const native = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
     this.forwarder = new native.TunnelForwarder();
-    this.forwarder.connect(tcpFd, credentials.cert, credentials.key);
+    if (process.platform === 'win32') {
+      this.forwarder.connectSocket(getSocketHandle(tcpSocket), credentials.cert, credentials.key);
+    } else {
+      this.forwarder.connect(getSocketFd(tcpSocket), credentials.cert, credentials.key);
+    }
 
     this.takeSocketOwnership(tcpSocket);
   }
 
   connectPsk(tcpSocket: Socket, credentials: TunnelPskTlsCredentials): void {
-    const tcpFd = getSocketFd(tcpSocket);
     tcpSocket.pause();
     tcpSocket.removeAllListeners();
 
     const native = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
     this.forwarder = new native.TunnelForwarder();
-    this.forwarder.connectPsk(tcpFd, credentials.psk, credentials.identity ?? '');
+    if (process.platform === 'win32') {
+      this.forwarder.connectPskSocket(
+        getSocketHandle(tcpSocket),
+        credentials.psk,
+        credentials.identity ?? '',
+      );
+    } else {
+      this.forwarder.connectPsk(getSocketFd(tcpSocket), credentials.psk, credentials.identity ?? '');
+    }
 
     this.takeSocketOwnership(tcpSocket);
   }
@@ -94,11 +106,7 @@ export class TunnelForwarder {
   }
 
   private takeSocketOwnership(socket: Socket): void {
-    if (process.platform === 'win32') {
-      this.retainedSocket = socket;
-    } else {
-      destroySocket(socket);
-    }
+    destroySocket(socket);
   }
 }
 
@@ -108,6 +116,14 @@ function getSocketFd(socket: Socket): number {
     return handle.fd;
   }
   throw new Error('TCP socket file descriptor is not available');
+}
+
+function getSocketHandle(socket: Socket): unknown {
+  const handle = (socket as {_handle?: unknown})._handle;
+  if (handle) {
+    return handle;
+  }
+  throw new Error('TCP socket handle is not available');
 }
 
 function destroySocket(socket: Socket): void {

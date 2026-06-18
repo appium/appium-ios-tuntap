@@ -3,6 +3,7 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <windows.h>
 #else
 #include <fcntl.h>
 #include <poll.h>
@@ -78,6 +79,35 @@ void SetNonBlockingFd(int fd) {
   }
 #endif
 }
+
+#ifdef _WIN32
+int DuplicateSocketFd(int tcp_fd, std::string& error) {
+  if (tcp_fd < 0) {
+    error = "Invalid TCP socket handle";
+    return -1;
+  }
+
+  WSAPROTOCOL_INFOW protocol_info {};
+  if (WSADuplicateSocketW(static_cast<SOCKET>(tcp_fd), ::GetCurrentProcessId(), &protocol_info) !=
+      0) {
+    error = "WSADuplicateSocket failed: " + std::to_string(WSAGetLastError());
+    return -1;
+  }
+
+  SOCKET duplicated = WSASocketW(protocol_info.iAddressFamily,
+                                 protocol_info.iSocketType,
+                                 protocol_info.iProtocol,
+                                 &protocol_info,
+                                 0,
+                                 WSA_FLAG_OVERLAPPED);
+  if (duplicated == INVALID_SOCKET) {
+    error = "WSASocket duplicate failed: " + std::to_string(WSAGetLastError());
+    return -1;
+  }
+
+  return static_cast<int>(duplicated);
+}
+#endif
 
 bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point deadline) {
 #ifdef _WIN32
@@ -216,8 +246,7 @@ bool TunnelSslClient::Connect(int tcp_fd,
 
   close_owned_fd_ = true;
 #ifdef _WIN32
-  owned_fd_ = tcp_fd;
-  close_owned_fd_ = false;
+  owned_fd_ = DuplicateSocketFd(tcp_fd, error);
 #else
   owned_fd_ = dup(tcp_fd);
 #endif
@@ -293,8 +322,7 @@ bool TunnelSslClient::ConnectPsk(int tcp_fd,
 
   close_owned_fd_ = true;
 #ifdef _WIN32
-  owned_fd_ = tcp_fd;
-  close_owned_fd_ = false;
+  owned_fd_ = DuplicateSocketFd(tcp_fd, error);
 #else
   owned_fd_ = dup(tcp_fd);
 #endif

@@ -11,6 +11,8 @@
 #include <arpa/inet.h>
 #else
 #include <winsock2.h>
+#include <uv.h>
+#include <v8.h>
 #endif
 
 #include <openssl/err.h>
@@ -34,6 +36,86 @@ constexpr short kPollOut = POLLOUT;
 
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
+
+#ifdef _WIN32
+v8::Local<v8::Value> ToV8Local(napi_value value) {
+  return *reinterpret_cast<v8::Local<v8::Value>*>(&value);
+}
+
+bool TryReadUvHandle(void* wrapper, size_t offset, uv_tcp_t** out) {
+  bool matched = false;
+#ifdef _MSC_VER
+  __try {
+#endif
+    auto* handle = reinterpret_cast<uv_handle_t*>(
+        reinterpret_cast<uintptr_t>(wrapper) + offset);
+    if (handle->type == UV_TCP && handle->data == wrapper) {
+      *out = reinterpret_cast<uv_tcp_t*>(handle);
+      matched = true;
+    }
+#ifdef _MSC_VER
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    matched = false;
+  }
+#endif
+  return matched;
+}
+
+bool ExtractTcpFdFromNodeHandle(const Napi::Value& value, int& fd, std::string& error) {
+  if (!value.IsObject()) {
+    error = "Expected Node TCP handle object";
+    return false;
+  }
+
+  v8::Local<v8::Value> v8_value = ToV8Local(value);
+  if (!v8_value->IsObject()) {
+    error = "Expected V8 object for Node TCP handle";
+    return false;
+  }
+
+  v8::Local<v8::Object> handle_obj = v8_value.As<v8::Object>();
+  if (handle_obj->InternalFieldCount() <= 1) {
+    error = "Node TCP handle has no internal fields";
+    return false;
+  }
+
+  // Node BaseObject stores an embedder tag in field 0 and the C++ wrapper in
+  // BaseObject::kSlot (field 1). TCPWrap is private, so avoid including Node
+  // internals and only use this stable internal-field convention.
+  void* wrapper = handle_obj->GetAlignedPointerFromInternalField(1);
+  if (wrapper == nullptr) {
+    error = "Node TCP handle internal wrapper is null";
+    return false;
+  }
+
+  uv_tcp_t* tcp = nullptr;
+  // TCPWrap is private Node internals. Look for the embedded uv_tcp_t by
+  // scanning the wrapper object for a uv_handle_t whose data points back to it.
+  for (size_t offset = 0; offset < 2048; offset += sizeof(void*)) {
+    if (TryReadUvHandle(wrapper, offset, &tcp)) {
+      break;
+    }
+  }
+  if (tcp == nullptr) {
+    error = "Failed to locate uv_tcp_t in Node TCP handle";
+    return false;
+  }
+
+  uv_os_fd_t os_fd{};
+  const int rc = uv_fileno(reinterpret_cast<const uv_handle_t*>(tcp), &os_fd);
+  if (rc != 0) {
+    error = std::string("uv_fileno failed: ") + uv_strerror(rc);
+    return false;
+  }
+
+  fd = static_cast<int>(reinterpret_cast<uintptr_t>(os_fd));
+  if (fd < 0) {
+    error = "Extracted TCP socket handle is invalid";
+    return false;
+  }
+  return true;
+}
+#endif
 
 std::string EncodeCdTunnelMessage(const std::string& json) {
   std::string out;
@@ -99,6 +181,167 @@ bool ParseHandshakeJson(const std::string& json, TunnelHandshakeInfo& info, std:
   }
   info.server_rsd_port = static_cast<uint16_t>(port);
   return true;
+}
+
+bool IsIcmpv6NeighborDiscovery(const uint8_t* data, size_t len) {
+  if (data == nullptr || len < 41 || (data[0] >> 4) != 6) {
+    return false;
+  }
+  // This forwarder only handles simple IPv6 packets with no extension-header
+  // parsing today. That is enough for Windows NDP packets from WinTun.
+  if (data[6] != 58) {
+    return false;
+  }
+  const uint8_t icmp_type = data[40];
+  return icmp_type >= 133 && icmp_type <= 137;
+}
+
+bool IsIpv6Multicast(const uint8_t* data, size_t len) {
+  return data != nullptr && len >= 40 && (data[0] >> 4) == 6 && data[24] == 0xff;
+}
+
+bool IsIpv6Packet(const uint8_t* data, size_t len) {
+  return data != nullptr && len >= 40 && (data[0] >> 4) == 6;
+}
+
+uint32_t AddChecksumBytes(uint32_t sum, const uint8_t* data, size_t len) {
+  size_t i = 0;
+  for (; i + 1 < len; i += 2) {
+    sum += static_cast<uint16_t>((data[i] << 8) | data[i + 1]);
+  }
+  if (i < len) {
+    sum += static_cast<uint16_t>(data[i] << 8);
+  }
+  return sum;
+}
+
+uint16_t FinishChecksum(uint32_t sum) {
+  while ((sum >> 16) != 0) {
+    sum = (sum & 0xffff) + (sum >> 16);
+  }
+  return static_cast<uint16_t>(~sum);
+}
+
+uint16_t ComputeIpv6TransportChecksum(const uint8_t* packet, size_t len, uint8_t protocol) {
+  if (packet == nullptr || len < 40 || (packet[0] >> 4) != 6) {
+    return 0;
+  }
+
+  const uint16_t payload_len = static_cast<uint16_t>((packet[4] << 8) | packet[5]);
+  if (payload_len == 0 || len < 40 + payload_len) {
+    return 0;
+  }
+
+  uint32_t sum = 0;
+  sum = AddChecksumBytes(sum, packet + 8, 16);
+  sum = AddChecksumBytes(sum, packet + 24, 16);
+  sum += 0;
+  sum += static_cast<uint16_t>(payload_len & 0xffff);
+  sum += protocol;
+  sum = AddChecksumBytes(sum, packet + 40, payload_len);
+  return FinishChecksum(sum);
+}
+
+bool NormalizeTcpChecksum(std::vector<uint8_t>& packet, uint16_t& old_checksum, uint16_t& new_checksum) {
+  if (packet.size() < 60 || (packet[0] >> 4) != 6 || packet[6] != 6) {
+    return false;
+  }
+
+  const uint16_t payload_len = static_cast<uint16_t>((packet[4] << 8) | packet[5]);
+  if (payload_len < 20 || packet.size() < 40 + payload_len) {
+    return false;
+  }
+
+  constexpr size_t tcp_offset = 40;
+  constexpr size_t checksum_offset = tcp_offset + 16;
+  old_checksum =
+      static_cast<uint16_t>((packet[checksum_offset] << 8) | packet[checksum_offset + 1]);
+  packet[checksum_offset] = 0;
+  packet[checksum_offset + 1] = 0;
+  new_checksum = ComputeIpv6TransportChecksum(packet.data(), packet.size(), 6);
+  packet[checksum_offset] = static_cast<uint8_t>(new_checksum >> 8);
+  packet[checksum_offset + 1] = static_cast<uint8_t>(new_checksum & 0xff);
+  return old_checksum != new_checksum;
+}
+
+std::string FormatIpv6Address(const uint8_t* addr) {
+  char buf[40];
+  std::snprintf(buf,
+                sizeof(buf),
+                "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+                addr[0],
+                addr[1],
+                addr[2],
+                addr[3],
+                addr[4],
+                addr[5],
+                addr[6],
+                addr[7],
+                addr[8],
+                addr[9],
+                addr[10],
+                addr[11],
+                addr[12],
+                addr[13],
+                addr[14],
+                addr[15]);
+  return buf;
+}
+
+void DebugIpv6Packet(const char* tag, const uint8_t* data, size_t len, uint64_t count) {
+  if (data == nullptr || len < 40 || (data[0] >> 4) != 6) {
+    tuntap::FwdDebug(tag, "len=%zu packets=%llu non-ipv6", len,
+                     static_cast<unsigned long long>(count));
+    return;
+  }
+  const uint16_t payload_len = static_cast<uint16_t>((data[4] << 8) | data[5]);
+  const std::string src = FormatIpv6Address(data + 8);
+  const std::string dst = FormatIpv6Address(data + 24);
+
+  if (data[6] == 6 && len >= 60) {
+    const size_t tcp_offset = 40;
+    const uint16_t src_port = static_cast<uint16_t>((data[tcp_offset] << 8) | data[tcp_offset + 1]);
+    const uint16_t dst_port =
+        static_cast<uint16_t>((data[tcp_offset + 2] << 8) | data[tcp_offset + 3]);
+    const uint8_t flags = data[tcp_offset + 13];
+    tuntap::FwdDebug(tag,
+                     "len=%zu packets=%llu next=%u payload=%u %s:%u -> %s:%u flags=0x%02x",
+                     len,
+                     static_cast<unsigned long long>(count),
+                     data[6],
+                     payload_len,
+                     src.c_str(),
+                     src_port,
+                     dst.c_str(),
+                     dst_port,
+                     flags);
+    return;
+  }
+
+  tuntap::FwdDebug(tag,
+                   "len=%zu packets=%llu next=%u payload=%u %s -> %s",
+                   len,
+                   static_cast<unsigned long long>(count),
+                   data[6],
+                   payload_len,
+                   src.c_str(),
+                   dst.c_str());
+}
+
+void DebugSslError(const char* tag, int ssl_error) {
+  unsigned long openssl_error = ERR_get_error();
+#ifdef _WIN32
+  const int socket_error = WSAGetLastError();
+#else
+  const int socket_error = errno;
+#endif
+  const char* reason = openssl_error == 0 ? nullptr : ERR_reason_error_string(openssl_error);
+  tuntap::FwdDebug(tag,
+                   "ssl_error=%d openssl=%lu reason=%s socket_error=%d",
+                   ssl_error,
+                   openssl_error,
+                   reason == nullptr ? "(none)" : reason,
+                   socket_error);
 }
 
 bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint deadline) {
@@ -274,6 +517,7 @@ bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend,
   tun_backend_ = tun_backend;
   running_.store(true);
   tun_writes_.store(0);
+  tun_drops_.store(0);
   ssl_reads_.store(0);
   tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_backend->GetNativeFd());
   tun_thread_ = std::thread(&TunnelForwarder::TunToDeviceLoop, this);
@@ -340,9 +584,11 @@ ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_wh
       }
       err = SSL_get_error(ssl, n);
       if (err == SSL_ERROR_ZERO_RETURN) {
+        DebugSslError("forwarder-ssl-read-close", err);
         return -1;
       }
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+        DebugSslError("forwarder-ssl-read-error", err);
         return -1;
       }
       fd = SSL_get_fd(ssl);
@@ -399,9 +645,11 @@ ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_
       }
       err = SSL_get_error(ssl, n);
       if (err == SSL_ERROR_ZERO_RETURN) {
+        DebugSslError("forwarder-ssl-write-close", err);
         return -1;
       }
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+        DebugSslError("forwarder-ssl-write-error", err);
         return -1;
       }
       fd = SSL_get_fd(ssl);
@@ -493,6 +741,30 @@ void TunnelForwarder::TunToDeviceLoop() {
     if (read_result != TunReadResult::kOk || packet.empty()) {
       continue;
     }
+    if (!IsIpv6Packet(packet.data(), packet.size())) {
+      const uint64_t count = ++tun_drops_;
+      if (count <= 20 || count % 200 == 0) {
+        DebugIpv6Packet("forwarder-tun-drop-nonipv6", packet.data(), packet.size(), count);
+      }
+      continue;
+    }
+    if (IsIpv6Multicast(packet.data(), packet.size())) {
+      const uint64_t count = ++tun_drops_;
+      if (count <= 20 || count % 200 == 0) {
+        DebugIpv6Packet("forwarder-tun-drop-mcast", packet.data(), packet.size(), count);
+      }
+      continue;
+    }
+    if (IsIcmpv6NeighborDiscovery(packet.data(), packet.size())) {
+      const uint64_t count = ++tun_drops_;
+      if (count <= 20 || count % 200 == 0) {
+        DebugIpv6Packet("forwarder-tun-drop-ndp", packet.data(), packet.size(), count);
+      }
+      continue;
+    }
+    uint16_t old_checksum = 0;
+    uint16_t new_checksum = 0;
+    const bool checksum_changed = NormalizeTcpChecksum(packet, old_checksum, new_checksum);
     if (SslWriteAll(packet.data(), packet.size()) < 0) {
       if (running_.load()) {
         Fail("SSL write failed in tun-to-device loop");
@@ -500,9 +772,14 @@ void TunnelForwarder::TunToDeviceLoop() {
       return;
     }
     const uint64_t count = ++tun_writes_;
-    if (count == 1 || count % 200 == 0) {
-      tuntap::FwdDebug("forwarder-tun-write", "len=%zu packets=%llu", packet.size(),
-                       static_cast<unsigned long long>(count));
+    if (count <= 100 || count % 200 == 0) {
+      DebugIpv6Packet("forwarder-tun-write", packet.data(), packet.size(), count);
+      tuntap::FwdDebug("forwarder-tcp-checksum",
+                       "packets=%llu changed=%s old=0x%04x new=0x%04x",
+                       static_cast<unsigned long long>(count),
+                       checksum_changed ? "true" : "false",
+                       old_checksum,
+                       new_checksum);
     }
   }
 }
@@ -558,7 +835,9 @@ public:
         DefineClass(env,
                     "TunnelForwarder",
                     {InstanceMethod("connect", &TunnelForwarderWrap::Connect),
+                     InstanceMethod("connectSocket", &TunnelForwarderWrap::ConnectSocket),
                      InstanceMethod("connectPsk", &TunnelForwarderWrap::ConnectPsk),
+                     InstanceMethod("connectPskSocket", &TunnelForwarderWrap::ConnectPskSocket),
                      InstanceMethod("handshake", &TunnelForwarderWrap::Handshake),
                      InstanceMethod("startForwarding", &TunnelForwarderWrap::StartForwarding),
                      InstanceMethod("stop", &TunnelForwarderWrap::Stop)});
@@ -616,6 +895,30 @@ private:
     return env.Undefined();
   }
 
+  Napi::Value ConnectSocket(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 3 || !info[1].IsString() || !info[2].IsString()) {
+      Napi::TypeError::New(env, "Expected (tcpHandle, certPem, keyPem)")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+
+#ifdef _WIN32
+    int tcp_fd = -1;
+    std::string error;
+    if (!ExtractTcpFdFromNodeHandle(info[0], tcp_fd, error) ||
+        !forwarder_.Connect(tcp_fd,
+                            info[1].As<Napi::String>().Utf8Value(),
+                            info[2].As<Napi::String>().Utf8Value(),
+                            error)) {
+      Napi::Error::New(env, error).ThrowAsJavaScriptException();
+    }
+#else
+    Napi::Error::New(env, "connectSocket is only supported on Windows").ThrowAsJavaScriptException();
+#endif
+    return env.Undefined();
+  }
+
   Napi::Value ConnectPsk(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsBuffer()) {
@@ -638,6 +941,33 @@ private:
                                error)) {
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
+    return env.Undefined();
+  }
+
+  Napi::Value ConnectPskSocket(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[1].IsBuffer()) {
+      Napi::TypeError::New(env, "Expected (tcpHandle, pskBuffer[, identity])")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+
+    std::string identity;
+    if (info.Length() >= 3 && info[2].IsString()) {
+      identity = info[2].As<Napi::String>().Utf8Value();
+    }
+
+#ifdef _WIN32
+    int tcp_fd = -1;
+    std::string error;
+    Napi::Buffer<uint8_t> psk = info[1].As<Napi::Buffer<uint8_t>>();
+    if (!ExtractTcpFdFromNodeHandle(info[0], tcp_fd, error) ||
+        !forwarder_.ConnectPsk(tcp_fd, psk.Data(), psk.Length(), identity, error)) {
+      Napi::Error::New(env, error).ThrowAsJavaScriptException();
+    }
+#else
+    Napi::Error::New(env, "connectPskSocket is only supported on Windows").ThrowAsJavaScriptException();
+#endif
     return env.Undefined();
   }
 
