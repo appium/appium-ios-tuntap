@@ -71,7 +71,11 @@ export class TunnelForwarder {
         credentials.identity ?? '',
       );
     } else {
-      this.forwarder.connectPsk(getSocketFd(tcpSocket), credentials.psk, credentials.identity ?? '');
+      this.forwarder.connectPsk(
+        getSocketFd(tcpSocket),
+        credentials.psk,
+        credentials.identity ?? '',
+      );
     }
 
     this.takeSocketOwnership(tcpSocket);

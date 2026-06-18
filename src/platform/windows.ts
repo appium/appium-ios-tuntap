@@ -145,8 +145,8 @@ async function waitForIpv6AddressReady(interfaceName: string, address: string): 
   let lastState = '';
 
   while (performance.now() < deadline) {
-    const escapedName = interfaceName.replace(/'/g, '\'\'');
-    const escapedAddress = address.replace(/'/g, '\'\'');
+    const escapedName = interfaceName.replace(/'/g, "''");
+    const escapedAddress = address.replace(/'/g, "''");
     const script =
       `Get-NetIPAddress -InterfaceAlias '${escapedName}' -IPAddress '${escapedAddress}' ` +
       '-AddressFamily IPv6 -ErrorAction SilentlyContinue | ' +
@@ -169,9 +169,7 @@ async function waitForIpv6AddressReady(interfaceName: string, address: string): 
   }
 
   throw new TunTapError(
-    `[win] address ${address} did not become Preferred (last state: ${
-      lastState || 'not found'
-    })`,
+    `[win] address ${address} did not become Preferred (last state: ${lastState || 'not found'})`,
   );
 }
 
