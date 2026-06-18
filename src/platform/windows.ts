@@ -1,4 +1,5 @@
 import type {ExecException} from 'node:child_process';
+import {performance} from 'node:perf_hooks';
 
 import {TunTapError} from '../errors.js';
 import {log} from '../logger.js';
@@ -140,10 +141,10 @@ async function addIpv6Address(interfaceName: string, address: string): Promise<v
 }
 
 async function waitForIpv6AddressReady(interfaceName: string, address: string): Promise<void> {
-  const deadline = Date.now() + ADDRESS_READY_TIMEOUT_MS;
+  const deadline = performance.now() + ADDRESS_READY_TIMEOUT_MS;
   let lastState = '';
 
-  while (Date.now() < deadline) {
+  while (performance.now() < deadline) {
     const escapedName = interfaceName.replace(/'/g, '\'\'');
     const escapedAddress = address.replace(/'/g, '\'\'');
     const script =

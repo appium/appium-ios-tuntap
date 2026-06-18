@@ -295,6 +295,9 @@ std::string FormatIpv6Address(const uint8_t* addr) {
 }
 
 void DebugIpv6Packet(const char* tag, const uint8_t* data, size_t len, uint64_t count) {
+  if (!tuntap::DebugEnabled()) {
+    return;
+  }
   if (data == nullptr || len < 40 || (data[0] >> 4) != 6) {
     tuntap::FwdDebug(tag, "len=%zu packets=%llu non-ipv6", len,
                      static_cast<unsigned long long>(count));
