@@ -113,12 +113,24 @@
           }
         }],
         ["OS=='win'", {
+          "variables": {
+            "openssl_root%": "<!(node -p \"process.env.OPENSSL_ROOT_DIR || process.env.OPENSSL_ROOT || ''\")"
+          },
           "sources": [
+            "src/native/debug_log.cc",
             "src/native/handle.cc",
             "src/native/wintun_loader.cc",
-            "src/native/tun_backend_windows.cc"
+            "src/native/tun_backend_windows.cc",
+            "src/native/tunnel_ssl.cc",
+            "src/native/tunnel_forwarder.cc"
+          ],
+          "include_dirs": [
+            "<(openssl_root)/include"
           ],
           "libraries": [
+            "<(openssl_root)/lib/libssl.lib",
+            "<(openssl_root)/lib/libcrypto.lib",
+            "crypt32.lib",
             "iphlpapi.lib",
             "ws2_32.lib"
           ],

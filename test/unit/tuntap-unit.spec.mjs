@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import {afterEach, before, describe, it} from 'node:test';
 
-import {TunTap} from '../../lib/index.js';
+import {TunTap, TunnelForwarder} from '../../lib/index.js';
 import {hasPrivileges} from '../utils.mjs';
 
 /**
@@ -29,6 +29,15 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
       } catch {}
     }
     tun = null;
+  });
+
+  it('should expose the native tunnel forwarder', () => {
+    const forwarder = new TunnelForwarder();
+    assert.strictEqual(typeof forwarder.connect, 'function');
+    assert.strictEqual(typeof forwarder.connectPsk, 'function');
+    assert.strictEqual(typeof forwarder.handshake, 'function');
+    assert.strictEqual(typeof forwarder.startForwarding, 'function');
+    forwarder.stop();
   });
 
   it('should open and close the TUN device', () => {

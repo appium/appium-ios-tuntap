@@ -1,15 +1,17 @@
-#if defined(__APPLE__) || defined(__linux__)
-
 #include "tunnel_forwarder.h"
 
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#ifndef _WIN32
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 
 #include <arpa/inet.h>
+#else
+#include <winsock2.h>
+#endif
 
 #include <openssl/err.h>
 
@@ -18,13 +20,17 @@
 
 namespace {
 
-#ifdef __APPLE__
-constexpr size_t kUtunHeaderSize = 4;
-#endif
-
 constexpr char kCdTunnelMagic[] = "CDTunnel";
 constexpr size_t kCdTunnelHeaderSize = 10;
 constexpr size_t kMaxIngressBuffer = 256 * 1024;
+
+#ifdef _WIN32
+constexpr short kPollIn = POLLRDNORM;
+constexpr short kPollOut = POLLWRNORM;
+#else
+constexpr short kPollIn = POLLIN;
+constexpr short kPollOut = POLLOUT;
+#endif
 
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
@@ -99,8 +105,13 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint de
   if (fd < 0) {
     return false;
   }
+#ifdef _WIN32
+  WSAPOLLFD pfd {};
+  pfd.fd = static_cast<SOCKET>(fd);
+#else
   struct pollfd pfd {};
   pfd.fd = fd;
+#endif
   pfd.events = events;
   for (;;) {
     if (running != nullptr && !running->load()) {
@@ -113,9 +124,17 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint de
     const auto remaining_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
     const int timeout_ms = remaining_ms > 200 ? 200 : static_cast<int>(remaining_ms);
+#ifdef _WIN32
+    const int rc = WSAPoll(&pfd, 1, timeout_ms);
+#else
     const int rc = poll(&pfd, 1, timeout_ms);
+#endif
     if (rc > 0) {
-      if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      if ((pfd.revents & (POLLERR | POLLHUP
+#ifndef _WIN32
+                          | POLLNVAL
+#endif
+                          )) != 0) {
         return false;
       }
       return (pfd.revents & events) != 0;
@@ -123,7 +142,11 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint de
     if (rc == 0) {
       continue;
     }
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEINTR) {
+#else
     if (errno == EINTR) {
+#endif
       continue;
     }
     return false;
@@ -219,7 +242,9 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
   return true;
 }
 
-bool TunnelForwarder::StartForwarding(int tun_fd, ForwarderErrorCallback on_error, std::string& error) {
+bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend,
+                                      ForwarderErrorCallback on_error,
+                                      std::string& error) {
   if (running_.load()) {
     error = "Tunnel forwarder already running";
     return false;
@@ -228,8 +253,8 @@ bool TunnelForwarder::StartForwarding(int tun_fd, ForwarderErrorCallback on_erro
     error = "TLS session is not connected";
     return false;
   }
-  if (tun_fd < 0) {
-    error = "Invalid TUN file descriptor";
+  if (tun_backend == nullptr || !tun_backend->IsOpen()) {
+    error = "TUN device is not open";
     return false;
   }
 
@@ -246,11 +271,11 @@ bool TunnelForwarder::StartForwarding(int tun_fd, ForwarderErrorCallback on_erro
     on_error_ = std::move(on_error);
   }
 
-  tun_fd_ = tun_fd;
+  tun_backend_ = tun_backend;
   running_.store(true);
   tun_writes_.store(0);
   ssl_reads_.store(0);
-  tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_fd);
+  tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_backend->GetNativeFd());
   tun_thread_ = std::thread(&TunnelForwarder::TunToDeviceLoop, this);
   sock_thread_ = std::thread(&TunnelForwarder::DeviceToTunLoop, this);
   return true;
@@ -279,7 +304,7 @@ void TunnelForwarder::Stop() {
   }
 
   ssl_.Close();
-  tun_fd_ = -1;
+  tun_backend_ = nullptr;
 }
 
 ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_while_running) {
@@ -321,7 +346,7 @@ ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_wh
         return -1;
       }
       fd = SSL_get_fd(ssl);
-      poll_events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+      poll_events = (err == SSL_ERROR_WANT_READ) ? kPollIn : kPollOut;
     }
 
     const std::atomic<bool>* running = only_while_running ? &running_ : nullptr;
@@ -380,7 +405,7 @@ ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_
         return -1;
       }
       fd = SSL_get_fd(ssl);
-      poll_events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+      poll_events = (err == SSL_ERROR_WANT_READ) ? kPollIn : kPollOut;
     }
 
     const std::atomic<bool>* running = only_while_running ? &running_ : nullptr;
@@ -392,94 +417,66 @@ ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_
 }
 
 TunReadResult TunnelForwarder::ReadTunPacket(std::vector<uint8_t>& out) {
-#ifdef __APPLE__
-  uint8_t frame[4 + 65535];
-  const size_t cap = 4 + mtu_;
-#else
-  uint8_t frame[65535];
-  const size_t cap = mtu_;
-#endif
-
-  const ssize_t n = ::read(tun_fd_, frame, cap);
-  if (n > 0) {
-#ifdef __APPLE__
-    if (n <= static_cast<ssize_t>(kUtunHeaderSize)) {
-      return TunReadResult::kWouldBlock;
-    }
-    out.assign(frame + kUtunHeaderSize, frame + n);
-#else
-    out.assign(frame, frame + n);
-#endif
-    return TunReadResult::kOk;
-  }
-  if (n == 0) {
+  if (tun_backend_ == nullptr) {
     return TunReadResult::kFatal;
   }
-  if (errno == EINTR) {
-    return TunReadResult::kWouldBlock;
-  }
-  if (errno == EAGAIN || errno == EWOULDBLOCK) {
-    tuntap::FwdDebug("forwarder-tun-poll", "fd=%d", tun_fd_);
-    if (!PollFd(tun_fd_, POLLIN, &running_, TimePoint::max())) {
+
+  std::string error;
+  const ReadPacketStatus status = tun_backend_->ReadPacket(mtu_, out, error);
+  switch (status) {
+    case ReadPacketStatus::Data:
+      return TunReadResult::kOk;
+    case ReadPacketStatus::NoData:
+      tuntap::FwdDebug("forwarder-tun-wait", "fd=%d", tun_backend_->GetNativeFd());
+      if (!tun_backend_->WaitReadable(running_, error)) {
+        if (!error.empty()) {
+          tuntap::FwdDebug("forwarder-tun-wait-error", "%s", error.c_str());
+        }
+        return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
+      }
+      return TunReadResult::kWouldBlock;
+    case ReadPacketStatus::Closed:
       return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
-    }
-    return TunReadResult::kWouldBlock;
+    case ReadPacketStatus::Error:
+      if (!error.empty()) {
+        tuntap::FwdDebug("forwarder-tun-read-error", "%s", error.c_str());
+      }
+      return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
   }
-  return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
+
+  return TunReadResult::kFatal;
 }
 
 ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
-#ifdef __APPLE__
-  std::vector<uint8_t> frame(len + kUtunHeaderSize);
-  const uint32_t family = htonl(AF_INET6);
-  std::memcpy(frame.data(), &family, kUtunHeaderSize);
-  std::memcpy(frame.data() + kUtunHeaderSize, data, len);
-  size_t offset = 0;
-  while (offset < frame.size()) {
-    const ssize_t n = ::write(tun_fd_, frame.data() + offset, frame.size() - offset);
-    if (n < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_fd_);
-        if (!PollFd(tun_fd_, POLLOUT, &running_, TimePoint::max())) {
-          return -1;
-        }
-        continue;
-      }
-      return -1;
-    }
-    if (n == 0) {
-      return -1;
-    }
-    offset += static_cast<size_t>(n);
+  if (tun_backend_ == nullptr) {
+    return -1;
   }
-  return static_cast<ssize_t>(len);
-#else
-  size_t offset = 0;
-  while (offset < len) {
-    const ssize_t n = ::write(tun_fd_, data + offset, len - offset);
+
+  for (;;) {
+    std::string error;
+    const ssize_t n = tun_backend_->WritePacket(data, len, error);
+    if (n == static_cast<ssize_t>(len)) {
+      return n;
+    }
     if (n < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_fd_);
-        if (!PollFd(tun_fd_, POLLOUT, &running_, TimePoint::max())) {
-          return -1;
-        }
-        continue;
+      if (!error.empty()) {
+        tuntap::FwdDebug("forwarder-tun-write-error", "%s", error.c_str());
       }
       return -1;
     }
-    if (n == 0) {
+    if (n > 0) {
+      tuntap::FwdDebug("forwarder-tun-write-short", "expected=%zu actual=%zd", len, n);
       return -1;
     }
-    offset += static_cast<size_t>(n);
+
+    tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_backend_->GetNativeFd());
+    if (!tun_backend_->WaitWritable(running_, error)) {
+      if (!error.empty()) {
+        tuntap::FwdDebug("forwarder-tun-write-wait-error", "%s", error.c_str());
+      }
+      return -1;
+    }
   }
-  return static_cast<ssize_t>(len);
-#endif
 }
 
 void TunnelForwarder::TunToDeviceLoop() {
@@ -671,8 +668,8 @@ private:
 
   Napi::Value StartForwarding(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    if (info.Length() < 1 || !info[0].IsNumber()) {
-      Napi::TypeError::New(env, "Expected (tunFd[, onError])").ThrowAsJavaScriptException();
+    if (info.Length() < 1 || !info[0].IsExternal()) {
+      Napi::TypeError::New(env, "Expected (tunForwardingHandle[, onError])").ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
@@ -689,10 +686,10 @@ private:
                                                 0,
                                                 1);
 
-    const int tun_fd = info[0].As<Napi::Number>().Int32Value();
+    TunPlatformBackend* tun_backend = info[0].As<Napi::External<TunPlatformBackend>>().Data();
     std::string error;
     ForwarderErrorCallback callback = [this](std::string msg) { ReportError(std::move(msg)); };
-    if (!forwarder_.StartForwarding(tun_fd, std::move(callback), error)) {
+    if (!forwarder_.StartForwarding(tun_backend, std::move(callback), error)) {
       ReleaseErrorTsfn();
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
@@ -712,5 +709,3 @@ private:
 Napi::Object InitTunnelForwarder(Napi::Env env, Napi::Object exports) {
   return TunnelForwarderWrap::Init(env, exports);
 }
-
-#endif

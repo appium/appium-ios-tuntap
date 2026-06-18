@@ -1,11 +1,13 @@
-#if defined(__APPLE__) || defined(__linux__)
-
 #include "tunnel_ssl.h"
 #include "debug_log.h"
 
+#ifdef _WIN32
+#include <winsock2.h>
+#else
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
+#endif
 
 #include <chrono>
 #include <cerrno>
@@ -22,6 +24,14 @@ namespace {
 
 constexpr char kAppleTvPskCiphers[] =
     "PSK-AES256-CBC-SHA:PSK-AES128-CBC-SHA:PSK-3DES-EDE-CBC-SHA:PSK-RC4-SHA:PSK";
+
+#ifdef _WIN32
+constexpr short kPollIn = POLLRDNORM;
+constexpr short kPollOut = POLLWRNORM;
+#else
+constexpr short kPollIn = POLLIN;
+constexpr short kPollOut = POLLOUT;
+#endif
 
 bool LoadPem(SSL_CTX* ctx, const std::string& pem, bool is_cert, std::string& error) {
   BIO* bio = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
@@ -58,15 +68,25 @@ bool LoadPem(SSL_CTX* ctx, const std::string& pem, bool is_cert, std::string& er
 }
 
 void SetNonBlockingFd(int fd) {
+#ifdef _WIN32
+  u_long mode = 1;
+  ioctlsocket(static_cast<SOCKET>(fd), FIONBIO, &mode);
+#else
   const int flags = fcntl(fd, F_GETFL, 0);
   if (flags >= 0) {
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
   }
+#endif
 }
 
 bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point deadline) {
+#ifdef _WIN32
+  WSAPOLLFD pfd {};
+  pfd.fd = static_cast<SOCKET>(fd);
+#else
   struct pollfd pfd {};
   pfd.fd = fd;
+#endif
   pfd.events = events;
   using Clock = std::chrono::steady_clock;
   for (;;) {
@@ -77,9 +97,17 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
     const auto remaining_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
     const int timeout_ms = remaining_ms > 5000 ? 5000 : static_cast<int>(remaining_ms);
+#ifdef _WIN32
+    const int rc = WSAPoll(&pfd, 1, timeout_ms);
+#else
     const int rc = poll(&pfd, 1, timeout_ms);
+#endif
     if (rc > 0) {
-      if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      if ((pfd.revents & (POLLERR | POLLHUP
+#ifndef _WIN32
+                          | POLLNVAL
+#endif
+                          )) != 0) {
         return false;
       }
       return (pfd.revents & events) != 0;
@@ -87,7 +115,11 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
     if (rc == 0) {
       continue;
     }
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEINTR) {
+#else
     if (errno == EINTR) {
+#endif
       continue;
     }
     return false;
@@ -143,14 +175,14 @@ bool TunnelSslClient::ConnectTls(int timeout_ms, std::string& error) {
     }
     const int err = SSL_get_error(ssl_, rc);
     if (err == SSL_ERROR_WANT_READ) {
-      if (!PollConnectFd(owned_fd_, POLLIN, connect_deadline)) {
+      if (!PollConnectFd(owned_fd_, kPollIn, connect_deadline)) {
         error = "SSL_connect timed out waiting to read";
         return false;
       }
       continue;
     }
     if (err == SSL_ERROR_WANT_WRITE) {
-      if (!PollConnectFd(owned_fd_, POLLOUT, connect_deadline)) {
+      if (!PollConnectFd(owned_fd_, kPollOut, connect_deadline)) {
         error = "SSL_connect timed out waiting to write";
         return false;
       }
@@ -182,9 +214,15 @@ bool TunnelSslClient::Connect(int tcp_fd,
   }
 #endif
 
+  close_owned_fd_ = true;
+#ifdef _WIN32
+  owned_fd_ = tcp_fd;
+  close_owned_fd_ = false;
+#else
   owned_fd_ = dup(tcp_fd);
+#endif
   if (owned_fd_ < 0) {
-    error = "Failed to duplicate TCP file descriptor";
+    error = "Failed to acquire TCP socket handle";
     return false;
   }
   SetNonBlockingFd(owned_fd_);
@@ -253,9 +291,15 @@ bool TunnelSslClient::ConnectPsk(int tcp_fd,
   }
 #endif
 
+  close_owned_fd_ = true;
+#ifdef _WIN32
+  owned_fd_ = tcp_fd;
+  close_owned_fd_ = false;
+#else
   owned_fd_ = dup(tcp_fd);
+#endif
   if (owned_fd_ < 0) {
-    error = "Failed to duplicate TCP file descriptor";
+    error = "Failed to acquire TCP socket handle";
     return false;
   }
   SetNonBlockingFd(owned_fd_);
@@ -305,12 +349,17 @@ void TunnelSslClient::Close() {
     SSL_CTX_free(ctx_);
     ctx_ = nullptr;
   }
-  if (owned_fd_ >= 0) {
+  if (owned_fd_ >= 0 && close_owned_fd_) {
+#ifdef _WIN32
+    closesocket(static_cast<SOCKET>(owned_fd_));
+#else
     ::close(owned_fd_);
+#endif
+  }
+  if (owned_fd_ >= 0) {
     owned_fd_ = -1;
   }
+  close_owned_fd_ = true;
   psk_key_.clear();
   psk_identity_.clear();
 }
-
-#endif

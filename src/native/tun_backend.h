@@ -4,6 +4,7 @@
 #error "appium-ios-tuntap native addon supports only Linux, macOS, and Windows"
 #endif
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -62,6 +63,12 @@ public:
   virtual ssize_t WritePacket(const uint8_t* data,
                               size_t length,
                               std::string& error) = 0;
+
+  // Block until a packet can be read/written or `running` becomes false.
+  // Implementations may use short timed waits when the platform does not expose
+  // an explicit writable event.
+  virtual bool WaitReadable(const std::atomic<bool>& running, std::string& error) = 0;
+  virtual bool WaitWritable(const std::atomic<bool>& running, std::string& error) = 0;
 
   // Begin asynchronous packet delivery. `loop` is supplied by Node-API and is
   // used by POSIX backends for `uv_poll_init`; Windows ignores it.

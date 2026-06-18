@@ -1,5 +1,3 @@
-#if defined(__APPLE__) || defined(__linux__)
-
 #include "debug_log.h"
 
 #include <cstdarg>
@@ -56,5 +54,3 @@ void FwdDebug(const char* event, const char* fmt, ...) {
 }
 
 }  // namespace tuntap
-
-#endif

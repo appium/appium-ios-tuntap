@@ -30,6 +30,7 @@ interface NativeTunDevice {
   write(data: Buffer): number;
   getName(): string;
   getFd(): number;
+  getForwardingHandle(): unknown;
   startPolling(callback: PacketCallback, bufferSize?: number, queueDepth?: number): void;
   pausePolling(): void;
   resumePolling(): void;
@@ -100,6 +101,12 @@ export class TunTap {
   /** File descriptor for the open TUN device (for advanced use). */
   get fd(): number {
     return this.device.getFd();
+  }
+
+  /** @internal Opaque native handle consumed by the tunnel forwarder. */
+  get forwardingHandle(): unknown {
+    this.assertReady();
+    return this.device.getForwardingHandle();
   }
 
   /**

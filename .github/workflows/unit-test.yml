@@ -24,12 +24,12 @@ jobs:
       fail-fast: false
       matrix:
         node-version: ${{ fromJSON(needs.node_matrix.outputs.versions) }}
-        image: [ubuntu-latest, macos-latest]
+        image: [ubuntu-latest, macos-latest, windows-latest]
     uses: ./.github/workflows/shared.yml
     with:
       image: ${{ matrix.image }}
       node-version: ${{ matrix.node-version }}
-      test-command: npm run test:unit
-      test-name: Unit tests
+      test-command: ${{ matrix.image == 'windows-latest' && 'npm run build:addon' || 'npm run test:unit' }}
+      test-name: ${{ matrix.image == 'windows-latest' && 'Windows native build' || 'Unit tests' }}
       run-lint: true
       run-format-check: true
