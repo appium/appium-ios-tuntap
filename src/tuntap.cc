@@ -9,10 +9,7 @@
 #include <deque>
 
 #include "native/tun_backend.h"
-
-#if defined(__APPLE__) || defined(__linux__)
 #include "native/tunnel_forwarder.h"
-#endif
 
 struct TunPollDispatch {
   Napi::ThreadSafeFunction tsfn;
@@ -102,6 +99,7 @@ private:
   Napi::Value Write(const Napi::CallbackInfo& info);
   Napi::Value GetName(const Napi::CallbackInfo& info);
   Napi::Value GetFd(const Napi::CallbackInfo& info);
+  Napi::Value GetForwardingHandle(const Napi::CallbackInfo& info);
   Napi::Value StartPolling(const Napi::CallbackInfo& info);
   Napi::Value PausePolling(const Napi::CallbackInfo& info);
   Napi::Value ResumePolling(const Napi::CallbackInfo& info);
@@ -134,6 +132,7 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("write", &TunDevice::Write),
     InstanceMethod("getName", &TunDevice::GetName),
     InstanceMethod("getFd", &TunDevice::GetFd),
+    InstanceMethod("getForwardingHandle", &TunDevice::GetForwardingHandle),
     InstanceMethod("startPolling", &TunDevice::StartPolling),
     InstanceMethod("pausePolling", &TunDevice::PausePolling),
     InstanceMethod("resumePolling", &TunDevice::ResumePolling),
@@ -264,6 +263,18 @@ Napi::Value TunDevice::GetFd(const Napi::CallbackInfo& info) {
   return Napi::Number::New(info.Env(), backend_ ? backend_->GetNativeFd() : -1);
 }
 
+Napi::Value TunDevice::GetForwardingHandle(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  std::lock_guard<std::mutex> lock(device_mutex_);
+
+  if (!is_open_ || !backend_ || !backend_->IsOpen()) {
+    Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+
+  return Napi::External<TunPlatformBackend>::New(env, backend_.get());
+}
+
 Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::lock_guard<std::mutex> lock(device_mutex_);
@@ -378,9 +389,7 @@ Napi::Value TunDevice::ResumePolling(const Napi::CallbackInfo& info) {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   TunDevice::Init(env, exports);
-#if defined(__APPLE__) || defined(__linux__)
   InitTunnelForwarder(env, exports);
-#endif
   return exports;
 }
 

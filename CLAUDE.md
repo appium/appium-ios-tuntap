@@ -36,6 +36,9 @@ npm run test:integration
 
 # Ad-hoc: run node:test on a single file (add sudo if the test needs root)
 sudo node --test --test-force-exit --test-timeout=120000 test/unit/tuntap-unit.spec.mjs
+
+# Windows elevated PowerShell (Administrator) for privileged native tests
+npm run build:addon; npm run test:unit
 ```
 
 ## Project structure
@@ -103,10 +106,11 @@ Native implementation details are split into `src/native/*`:
 - `prebuilds/<platform>-<arch>/*.node` — N-API binaries shipped in the npm package (built in release CI)
 - `build/Release/tuntap.node` — local compile fallback (from `npm run build:addon` or `node-gyp-build` at install)
 - `lib/` — compiled TypeScript output; `lib/index.js` is the package entry point
+- Windows source builds require static OpenSSL and `OPENSSL_ROOT_DIR` pointing at the installed triplet directory (release CI uses vcpkg `openssl:<arch>-windows-static`).
 
 ### Tests
 
-**`node:test`** **`.mjs`** ES modules under **`test/`**. **`test/unit/tuntap-unit.spec.mjs`** and **`test/integration/tuntap-integration.spec.mjs`** expect **root**. Run test commands with `sudo` when privileged cases are required; non-root runs may skip or fail depending on the case.
+**`node:test`** **`.mjs`** ES modules under **`test/`**. **`test/unit/tuntap-unit.spec.mjs`** and **`test/integration/tuntap-integration.spec.mjs`** expect **root** on POSIX or an elevated PowerShell on Windows. Run test commands with `sudo` on POSIX when privileged cases are required; non-root/non-elevated runs may skip or fail depending on the case.
 
 ### Key constraints
 

@@ -1,7 +1,5 @@
 #pragma once
 
-#if defined(__APPLE__) || defined(__linux__)
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -13,6 +11,7 @@
 
 #include <napi.h>
 
+#include "tun_backend.h"
 #include "tunnel_ssl.h"
 
 struct TunnelHandshakeInfo {
@@ -55,7 +54,9 @@ public:
 
   bool Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error);
 
-  bool StartForwarding(int tun_fd, ForwarderErrorCallback on_error, std::string& error);
+  bool StartForwarding(TunPlatformBackend* tun_backend,
+                       ForwarderErrorCallback on_error,
+                       std::string& error);
 
   void Stop();
 
@@ -74,10 +75,11 @@ private:
   std::mutex error_mutex_;
   ForwarderErrorCallback on_error_;
   std::atomic<bool> error_reported_{false};
-  int tun_fd_ = -1;
+  TunPlatformBackend* tun_backend_ = nullptr;
   size_t mtu_ = 1280;
   std::atomic<bool> running_{false};
   std::atomic<uint64_t> tun_writes_{0};
+  std::atomic<uint64_t> tun_drops_{0};
   std::atomic<uint64_t> ssl_reads_{0};
   std::chrono::steady_clock::time_point handshake_deadline_{};
   std::thread tun_thread_;
@@ -85,5 +87,3 @@ private:
 };
 
 Napi::Object InitTunnelForwarder(Napi::Env env, Napi::Object exports);
-
-#endif

@@ -1,4 +1,5 @@
 import type {ExecException} from 'node:child_process';
+import {performance} from 'node:perf_hooks';
 
 import {TunTapError} from '../errors.js';
 import {log} from '../logger.js';
@@ -19,6 +20,8 @@ const MISSING_TARGET_HINTS = [
   'not found',
 ];
 
+const ADDRESS_READY_TIMEOUT_MS = 5000;
+
 /** Windows implementation backed by `netsh` for configuration/routing and
  *  PowerShell `Get-NetAdapterStatistics` for byte counters. */
 export class WindowsTunTapPlatform implements TunTapPlatform {
@@ -29,6 +32,7 @@ export class WindowsTunTapPlatform implements TunTapPlatform {
     tunDebug(`[win] configure: interface=${interfaceName} address=${address} mtu=${mtu}`);
 
     await addIpv6Address(interfaceName, address);
+    await waitForIpv6AddressReady(interfaceName, address);
     await setIpv6Mtu(interfaceName, mtu);
   }
 
@@ -134,6 +138,39 @@ async function addIpv6Address(interfaceName: string, address: string): Promise<v
     }
     log.warn(`Address ${address} may already be configured on ${interfaceName}`);
   }
+}
+
+async function waitForIpv6AddressReady(interfaceName: string, address: string): Promise<void> {
+  const deadline = performance.now() + ADDRESS_READY_TIMEOUT_MS;
+  let lastState = '';
+
+  while (performance.now() < deadline) {
+    const escapedName = interfaceName.replace(/'/g, "''");
+    const escapedAddress = address.replace(/'/g, "''");
+    const script =
+      `Get-NetIPAddress -InterfaceAlias '${escapedName}' -IPAddress '${escapedAddress}' ` +
+      '-AddressFamily IPv6 -ErrorAction SilentlyContinue | ' +
+      'Select-Object -First 1 -ExpandProperty AddressState';
+    const {stdout} = await execFileAsync('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script,
+    ]);
+    lastState = stdout.trim();
+    if (/^Preferred$/i.test(lastState)) {
+      tunDebug(`[win] address ready: ${address} state=${lastState}`);
+      return;
+    }
+    tunDebug(`[win] waiting for address: ${address} state=${lastState || '(not found)'}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new TunTapError(
+    `[win] address ${address} did not become Preferred (last state: ${lastState || 'not found'})`,
+  );
 }
 
 async function setIpv6Mtu(interfaceName: string, mtu: number): Promise<void> {

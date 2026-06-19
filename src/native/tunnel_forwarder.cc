@@ -1,15 +1,21 @@
-#if defined(__APPLE__) || defined(__linux__)
-
 #include "tunnel_forwarder.h"
 
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#ifndef _WIN32
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 
 #include <arpa/inet.h>
+#else
+#include <winsock2.h>
+#include <uv.h>
+#include <v8.h>
+#include <v8-version.h>
+#endif
 
 #include <openssl/err.h>
 
@@ -18,16 +24,114 @@
 
 namespace {
 
-#ifdef __APPLE__
-constexpr size_t kUtunHeaderSize = 4;
-#endif
-
 constexpr char kCdTunnelMagic[] = "CDTunnel";
 constexpr size_t kCdTunnelHeaderSize = 10;
 constexpr size_t kMaxIngressBuffer = 256 * 1024;
 
+#ifdef _WIN32
+constexpr short kPollIn = POLLRDNORM;
+constexpr short kPollOut = POLLWRNORM;
+#else
+constexpr short kPollIn = POLLIN;
+constexpr short kPollOut = POLLOUT;
+#endif
+
 using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
+
+#ifdef _WIN32
+v8::Local<v8::Value> ToV8Local(napi_value value) {
+  return *reinterpret_cast<v8::Local<v8::Value>*>(&value);
+}
+
+bool TryReadUvHandle(void* wrapper, size_t offset, uv_tcp_t** out) {
+  bool matched = false;
+#ifdef _MSC_VER
+  __try {
+#endif
+    auto* handle = reinterpret_cast<uv_handle_t*>(
+        reinterpret_cast<uintptr_t>(wrapper) + offset);
+    if (handle->type == UV_TCP && handle->data == wrapper) {
+      *out = reinterpret_cast<uv_tcp_t*>(handle);
+      matched = true;
+    }
+#ifdef _MSC_VER
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    matched = false;
+  }
+#endif
+  return matched;
+}
+
+void* GetNodeBaseObjectWrapper(v8::Local<v8::Object> object) {
+#if V8_MAJOR_VERSION >= 14
+  return object->GetAlignedPointerFromInternalField(1, v8::kEmbedderDataTypeTagDefault);
+#else
+  return object->GetAlignedPointerFromInternalField(1);
+#endif
+}
+
+bool ExtractTcpFdFromNodeHandle(const Napi::Value& value, int& fd, std::string& error) {
+  if (!value.IsObject()) {
+    error = "Expected Node TCP handle object";
+    return false;
+  }
+
+  v8::Local<v8::Value> v8_value = ToV8Local(value);
+  if (!v8_value->IsObject()) {
+    error = "Expected V8 object for Node TCP handle";
+    return false;
+  }
+
+  v8::Local<v8::Object> handle_obj = v8_value.As<v8::Object>();
+  if (handle_obj->InternalFieldCount() <= 1) {
+    error = "Node TCP handle has no internal fields";
+    return false;
+  }
+
+  // Node BaseObject stores an embedder tag in field 0 and the C++ wrapper in
+  // BaseObject::kSlot (field 1). TCPWrap is private, so avoid including Node
+  // internals and only use this stable internal-field convention.
+  void* wrapper = GetNodeBaseObjectWrapper(handle_obj);
+  if (wrapper == nullptr) {
+    error = "Node TCP handle internal wrapper is null";
+    return false;
+  }
+
+  uv_tcp_t* tcp = nullptr;
+  // TCPWrap is private Node internals. Look for the embedded uv_tcp_t by
+  // scanning the wrapper object for a uv_handle_t whose data points back to it.
+  for (size_t offset = 0; offset < 2048; offset += sizeof(void*)) {
+    if (TryReadUvHandle(wrapper, offset, &tcp)) {
+      break;
+    }
+  }
+  if (tcp == nullptr) {
+    error = "Failed to locate uv_tcp_t in Node TCP handle";
+    return false;
+  }
+
+  uv_os_fd_t os_fd{};
+  const int rc = uv_fileno(reinterpret_cast<const uv_handle_t*>(tcp), &os_fd);
+  if (rc != 0) {
+    error = std::string("uv_fileno failed: ") + uv_strerror(rc);
+    return false;
+  }
+
+  const uintptr_t raw_fd = reinterpret_cast<uintptr_t>(os_fd);
+  if (raw_fd > static_cast<uintptr_t>(std::numeric_limits<int>::max())) {
+    error = "Extracted TCP socket handle is too large for OpenSSL fd API";
+    return false;
+  }
+
+  fd = static_cast<int>(raw_fd);
+  if (fd < 0) {
+    error = "Extracted TCP socket handle is invalid";
+    return false;
+  }
+  return true;
+}
+#endif
 
 std::string EncodeCdTunnelMessage(const std::string& json) {
   std::string out;
@@ -95,12 +199,182 @@ bool ParseHandshakeJson(const std::string& json, TunnelHandshakeInfo& info, std:
   return true;
 }
 
+#ifdef _WIN32
+bool IsIcmpv6NeighborDiscovery(const uint8_t* data, size_t len) {
+  if (data == nullptr || len < 41 || (data[0] >> 4) != 6) {
+    return false;
+  }
+  // This forwarder only handles simple IPv6 packets with no extension-header
+  // parsing today. That is enough for Windows NDP packets from WinTun.
+  if (data[6] != 58) {
+    return false;
+  }
+  const uint8_t icmp_type = data[40];
+  return icmp_type >= 133 && icmp_type <= 137;
+}
+
+bool IsIpv6Multicast(const uint8_t* data, size_t len) {
+  return data != nullptr && len >= 40 && (data[0] >> 4) == 6 && data[24] == 0xff;
+}
+
+bool IsIpv6Packet(const uint8_t* data, size_t len) {
+  return data != nullptr && len >= 40 && (data[0] >> 4) == 6;
+}
+
+uint32_t AddChecksumBytes(uint32_t sum, const uint8_t* data, size_t len) {
+  size_t i = 0;
+  for (; i + 1 < len; i += 2) {
+    sum += static_cast<uint16_t>((data[i] << 8) | data[i + 1]);
+  }
+  if (i < len) {
+    sum += static_cast<uint16_t>(data[i] << 8);
+  }
+  return sum;
+}
+
+uint16_t FinishChecksum(uint32_t sum) {
+  while ((sum >> 16) != 0) {
+    sum = (sum & 0xffff) + (sum >> 16);
+  }
+  return static_cast<uint16_t>(~sum);
+}
+
+uint16_t ComputeIpv6TransportChecksum(const uint8_t* packet, size_t len, uint8_t protocol) {
+  if (packet == nullptr || len < 40 || (packet[0] >> 4) != 6) {
+    return 0;
+  }
+
+  const uint16_t payload_len = static_cast<uint16_t>((packet[4] << 8) | packet[5]);
+  if (payload_len == 0 || len < 40 + payload_len) {
+    return 0;
+  }
+
+  uint32_t sum = 0;
+  sum = AddChecksumBytes(sum, packet + 8, 16);
+  sum = AddChecksumBytes(sum, packet + 24, 16);
+  sum += static_cast<uint16_t>(payload_len & 0xffff);
+  sum += protocol;
+  sum = AddChecksumBytes(sum, packet + 40, payload_len);
+  return FinishChecksum(sum);
+}
+
+bool NormalizeTcpChecksum(std::vector<uint8_t>& packet, uint16_t& old_checksum, uint16_t& new_checksum) {
+  if (packet.size() < 60 || (packet[0] >> 4) != 6 || packet[6] != 6) {
+    return false;
+  }
+
+  const uint16_t payload_len = static_cast<uint16_t>((packet[4] << 8) | packet[5]);
+  if (payload_len < 20 || packet.size() < 40 + payload_len) {
+    return false;
+  }
+
+  constexpr size_t tcp_offset = 40;
+  constexpr size_t checksum_offset = tcp_offset + 16;
+  old_checksum =
+      static_cast<uint16_t>((packet[checksum_offset] << 8) | packet[checksum_offset + 1]);
+  packet[checksum_offset] = 0;
+  packet[checksum_offset + 1] = 0;
+  new_checksum = ComputeIpv6TransportChecksum(packet.data(), packet.size(), 6);
+  packet[checksum_offset] = static_cast<uint8_t>(new_checksum >> 8);
+  packet[checksum_offset + 1] = static_cast<uint8_t>(new_checksum & 0xff);
+  return old_checksum != new_checksum;
+}
+#endif
+
+std::string FormatIpv6Address(const uint8_t* addr) {
+  char buf[40];
+  std::snprintf(buf,
+                sizeof(buf),
+                "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+                addr[0],
+                addr[1],
+                addr[2],
+                addr[3],
+                addr[4],
+                addr[5],
+                addr[6],
+                addr[7],
+                addr[8],
+                addr[9],
+                addr[10],
+                addr[11],
+                addr[12],
+                addr[13],
+                addr[14],
+                addr[15]);
+  return buf;
+}
+
+void DebugIpv6Packet(const char* tag, const uint8_t* data, size_t len, uint64_t count) {
+  if (!tuntap::DebugEnabled()) {
+    return;
+  }
+  if (data == nullptr || len < 40 || (data[0] >> 4) != 6) {
+    tuntap::FwdDebug(tag, "len=%zu packets=%llu non-ipv6", len,
+                     static_cast<unsigned long long>(count));
+    return;
+  }
+  const uint16_t payload_len = static_cast<uint16_t>((data[4] << 8) | data[5]);
+  const std::string src = FormatIpv6Address(data + 8);
+  const std::string dst = FormatIpv6Address(data + 24);
+
+  if (data[6] == 6 && len >= 60) {
+    const size_t tcp_offset = 40;
+    const uint16_t src_port = static_cast<uint16_t>((data[tcp_offset] << 8) | data[tcp_offset + 1]);
+    const uint16_t dst_port =
+        static_cast<uint16_t>((data[tcp_offset + 2] << 8) | data[tcp_offset + 3]);
+    const uint8_t flags = data[tcp_offset + 13];
+    tuntap::FwdDebug(tag,
+                     "len=%zu packets=%llu next=%u payload=%u %s:%u -> %s:%u flags=0x%02x",
+                     len,
+                     static_cast<unsigned long long>(count),
+                     data[6],
+                     payload_len,
+                     src.c_str(),
+                     src_port,
+                     dst.c_str(),
+                     dst_port,
+                     flags);
+    return;
+  }
+
+  tuntap::FwdDebug(tag,
+                   "len=%zu packets=%llu next=%u payload=%u %s -> %s",
+                   len,
+                   static_cast<unsigned long long>(count),
+                   data[6],
+                   payload_len,
+                   src.c_str(),
+                   dst.c_str());
+}
+
+void DebugSslError(const char* tag, int ssl_error) {
+  unsigned long openssl_error = ERR_get_error();
+#ifdef _WIN32
+  const int socket_error = WSAGetLastError();
+#else
+  const int socket_error = errno;
+#endif
+  const char* reason = openssl_error == 0 ? nullptr : ERR_reason_error_string(openssl_error);
+  tuntap::FwdDebug(tag,
+                   "ssl_error=%d openssl=%lu reason=%s socket_error=%d",
+                   ssl_error,
+                   openssl_error,
+                   reason == nullptr ? "(none)" : reason,
+                   socket_error);
+}
+
 bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint deadline) {
   if (fd < 0) {
     return false;
   }
+#ifdef _WIN32
+  WSAPOLLFD pfd {};
+  pfd.fd = static_cast<SOCKET>(fd);
+#else
   struct pollfd pfd {};
   pfd.fd = fd;
+#endif
   pfd.events = events;
   for (;;) {
     if (running != nullptr && !running->load()) {
@@ -113,9 +387,17 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint de
     const auto remaining_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
     const int timeout_ms = remaining_ms > 200 ? 200 : static_cast<int>(remaining_ms);
+#ifdef _WIN32
+    const int rc = WSAPoll(&pfd, 1, timeout_ms);
+#else
     const int rc = poll(&pfd, 1, timeout_ms);
+#endif
     if (rc > 0) {
-      if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      if ((pfd.revents & (POLLERR | POLLHUP
+#ifndef _WIN32
+                          | POLLNVAL
+#endif
+                          )) != 0) {
         return false;
       }
       return (pfd.revents & events) != 0;
@@ -123,7 +405,11 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint de
     if (rc == 0) {
       continue;
     }
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEINTR) {
+#else
     if (errno == EINTR) {
+#endif
       continue;
     }
     return false;
@@ -219,7 +505,9 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
   return true;
 }
 
-bool TunnelForwarder::StartForwarding(int tun_fd, ForwarderErrorCallback on_error, std::string& error) {
+bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend,
+                                      ForwarderErrorCallback on_error,
+                                      std::string& error) {
   if (running_.load()) {
     error = "Tunnel forwarder already running";
     return false;
@@ -228,8 +516,8 @@ bool TunnelForwarder::StartForwarding(int tun_fd, ForwarderErrorCallback on_erro
     error = "TLS session is not connected";
     return false;
   }
-  if (tun_fd < 0) {
-    error = "Invalid TUN file descriptor";
+  if (tun_backend == nullptr || !tun_backend->IsOpen()) {
+    error = "TUN device is not open";
     return false;
   }
 
@@ -246,11 +534,12 @@ bool TunnelForwarder::StartForwarding(int tun_fd, ForwarderErrorCallback on_erro
     on_error_ = std::move(on_error);
   }
 
-  tun_fd_ = tun_fd;
+  tun_backend_ = tun_backend;
   running_.store(true);
   tun_writes_.store(0);
+  tun_drops_.store(0);
   ssl_reads_.store(0);
-  tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_fd);
+  tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_backend->GetNativeFd());
   tun_thread_ = std::thread(&TunnelForwarder::TunToDeviceLoop, this);
   sock_thread_ = std::thread(&TunnelForwarder::DeviceToTunLoop, this);
   return true;
@@ -279,7 +568,7 @@ void TunnelForwarder::Stop() {
   }
 
   ssl_.Close();
-  tun_fd_ = -1;
+  tun_backend_ = nullptr;
 }
 
 ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_while_running) {
@@ -315,13 +604,15 @@ ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_wh
       }
       err = SSL_get_error(ssl, n);
       if (err == SSL_ERROR_ZERO_RETURN) {
+        DebugSslError("forwarder-ssl-read-close", err);
         return -1;
       }
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+        DebugSslError("forwarder-ssl-read-error", err);
         return -1;
       }
       fd = SSL_get_fd(ssl);
-      poll_events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+      poll_events = (err == SSL_ERROR_WANT_READ) ? kPollIn : kPollOut;
     }
 
     const std::atomic<bool>* running = only_while_running ? &running_ : nullptr;
@@ -374,13 +665,15 @@ ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_
       }
       err = SSL_get_error(ssl, n);
       if (err == SSL_ERROR_ZERO_RETURN) {
+        DebugSslError("forwarder-ssl-write-close", err);
         return -1;
       }
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+        DebugSslError("forwarder-ssl-write-error", err);
         return -1;
       }
       fd = SSL_get_fd(ssl);
-      poll_events = (err == SSL_ERROR_WANT_READ) ? POLLIN : POLLOUT;
+      poll_events = (err == SSL_ERROR_WANT_READ) ? kPollIn : kPollOut;
     }
 
     const std::atomic<bool>* running = only_while_running ? &running_ : nullptr;
@@ -392,94 +685,66 @@ ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_
 }
 
 TunReadResult TunnelForwarder::ReadTunPacket(std::vector<uint8_t>& out) {
-#ifdef __APPLE__
-  uint8_t frame[4 + 65535];
-  const size_t cap = 4 + mtu_;
-#else
-  uint8_t frame[65535];
-  const size_t cap = mtu_;
-#endif
-
-  const ssize_t n = ::read(tun_fd_, frame, cap);
-  if (n > 0) {
-#ifdef __APPLE__
-    if (n <= static_cast<ssize_t>(kUtunHeaderSize)) {
-      return TunReadResult::kWouldBlock;
-    }
-    out.assign(frame + kUtunHeaderSize, frame + n);
-#else
-    out.assign(frame, frame + n);
-#endif
-    return TunReadResult::kOk;
-  }
-  if (n == 0) {
+  if (tun_backend_ == nullptr) {
     return TunReadResult::kFatal;
   }
-  if (errno == EINTR) {
-    return TunReadResult::kWouldBlock;
-  }
-  if (errno == EAGAIN || errno == EWOULDBLOCK) {
-    tuntap::FwdDebug("forwarder-tun-poll", "fd=%d", tun_fd_);
-    if (!PollFd(tun_fd_, POLLIN, &running_, TimePoint::max())) {
+
+  std::string error;
+  const ReadPacketStatus status = tun_backend_->ReadPacket(mtu_, out, error);
+  switch (status) {
+    case ReadPacketStatus::Data:
+      return TunReadResult::kOk;
+    case ReadPacketStatus::NoData:
+      tuntap::FwdDebug("forwarder-tun-wait", "fd=%d", tun_backend_->GetNativeFd());
+      if (!tun_backend_->WaitReadable(running_, error)) {
+        if (!error.empty()) {
+          tuntap::FwdDebug("forwarder-tun-wait-error", "%s", error.c_str());
+        }
+        return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
+      }
+      return TunReadResult::kWouldBlock;
+    case ReadPacketStatus::Closed:
       return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
-    }
-    return TunReadResult::kWouldBlock;
+    case ReadPacketStatus::Error:
+      if (!error.empty()) {
+        tuntap::FwdDebug("forwarder-tun-read-error", "%s", error.c_str());
+      }
+      return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
   }
-  return running_.load() ? TunReadResult::kFatal : TunReadResult::kWouldBlock;
+
+  return TunReadResult::kFatal;
 }
 
 ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
-#ifdef __APPLE__
-  std::vector<uint8_t> frame(len + kUtunHeaderSize);
-  const uint32_t family = htonl(AF_INET6);
-  std::memcpy(frame.data(), &family, kUtunHeaderSize);
-  std::memcpy(frame.data() + kUtunHeaderSize, data, len);
-  size_t offset = 0;
-  while (offset < frame.size()) {
-    const ssize_t n = ::write(tun_fd_, frame.data() + offset, frame.size() - offset);
-    if (n < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_fd_);
-        if (!PollFd(tun_fd_, POLLOUT, &running_, TimePoint::max())) {
-          return -1;
-        }
-        continue;
-      }
-      return -1;
-    }
-    if (n == 0) {
-      return -1;
-    }
-    offset += static_cast<size_t>(n);
+  if (tun_backend_ == nullptr) {
+    return -1;
   }
-  return static_cast<ssize_t>(len);
-#else
-  size_t offset = 0;
-  while (offset < len) {
-    const ssize_t n = ::write(tun_fd_, data + offset, len - offset);
+
+  for (;;) {
+    std::string error;
+    const ssize_t n = tun_backend_->WritePacket(data, len, error);
+    if (n == static_cast<ssize_t>(len)) {
+      return n;
+    }
     if (n < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_fd_);
-        if (!PollFd(tun_fd_, POLLOUT, &running_, TimePoint::max())) {
-          return -1;
-        }
-        continue;
+      if (!error.empty()) {
+        tuntap::FwdDebug("forwarder-tun-write-error", "%s", error.c_str());
       }
       return -1;
     }
-    if (n == 0) {
+    if (n > 0) {
+      tuntap::FwdDebug("forwarder-tun-write-short", "expected=%zu actual=%zd", len, n);
       return -1;
     }
-    offset += static_cast<size_t>(n);
+
+    tuntap::FwdDebug("forwarder-tun-write-blocked", "fd=%d", tun_backend_->GetNativeFd());
+    if (!tun_backend_->WaitWritable(running_, error)) {
+      if (!error.empty()) {
+        tuntap::FwdDebug("forwarder-tun-write-wait-error", "%s", error.c_str());
+      }
+      return -1;
+    }
   }
-  return static_cast<ssize_t>(len);
-#endif
 }
 
 void TunnelForwarder::TunToDeviceLoop() {
@@ -496,6 +761,32 @@ void TunnelForwarder::TunToDeviceLoop() {
     if (read_result != TunReadResult::kOk || packet.empty()) {
       continue;
     }
+#ifdef _WIN32
+    if (!IsIpv6Packet(packet.data(), packet.size())) {
+      const uint64_t count = ++tun_drops_;
+      if (count <= 20 || count % 200 == 0) {
+        DebugIpv6Packet("forwarder-tun-drop-nonipv6", packet.data(), packet.size(), count);
+      }
+      continue;
+    }
+    if (IsIpv6Multicast(packet.data(), packet.size())) {
+      const uint64_t count = ++tun_drops_;
+      if (count <= 20 || count % 200 == 0) {
+        DebugIpv6Packet("forwarder-tun-drop-mcast", packet.data(), packet.size(), count);
+      }
+      continue;
+    }
+    if (IsIcmpv6NeighborDiscovery(packet.data(), packet.size())) {
+      const uint64_t count = ++tun_drops_;
+      if (count <= 20 || count % 200 == 0) {
+        DebugIpv6Packet("forwarder-tun-drop-ndp", packet.data(), packet.size(), count);
+      }
+      continue;
+    }
+    uint16_t old_checksum = 0;
+    uint16_t new_checksum = 0;
+    const bool checksum_changed = NormalizeTcpChecksum(packet, old_checksum, new_checksum);
+#endif
     if (SslWriteAll(packet.data(), packet.size()) < 0) {
       if (running_.load()) {
         Fail("SSL write failed in tun-to-device loop");
@@ -503,9 +794,16 @@ void TunnelForwarder::TunToDeviceLoop() {
       return;
     }
     const uint64_t count = ++tun_writes_;
-    if (count == 1 || count % 200 == 0) {
-      tuntap::FwdDebug("forwarder-tun-write", "len=%zu packets=%llu", packet.size(),
-                       static_cast<unsigned long long>(count));
+    if (count <= 100 || count % 200 == 0) {
+      DebugIpv6Packet("forwarder-tun-write", packet.data(), packet.size(), count);
+#ifdef _WIN32
+      tuntap::FwdDebug("forwarder-tcp-checksum",
+                       "packets=%llu changed=%s old=0x%04x new=0x%04x",
+                       static_cast<unsigned long long>(count),
+                       checksum_changed ? "true" : "false",
+                       old_checksum,
+                       new_checksum);
+#endif
     }
   }
 }
@@ -561,7 +859,9 @@ public:
         DefineClass(env,
                     "TunnelForwarder",
                     {InstanceMethod("connect", &TunnelForwarderWrap::Connect),
+                     InstanceMethod("connectSocket", &TunnelForwarderWrap::ConnectSocket),
                      InstanceMethod("connectPsk", &TunnelForwarderWrap::ConnectPsk),
+                     InstanceMethod("connectPskSocket", &TunnelForwarderWrap::ConnectPskSocket),
                      InstanceMethod("handshake", &TunnelForwarderWrap::Handshake),
                      InstanceMethod("startForwarding", &TunnelForwarderWrap::StartForwarding),
                      InstanceMethod("stop", &TunnelForwarderWrap::Stop)});
@@ -572,12 +872,13 @@ public:
   TunnelForwarderWrap(const Napi::CallbackInfo& info) : Napi::ObjectWrap<TunnelForwarderWrap>(info) {}
 
   ~TunnelForwarderWrap() override {
-    ReleaseErrorTsfn();
     forwarder_.Stop();
+    ReleaseErrorTsfn();
   }
 
 private:
   void ReleaseErrorTsfn() {
+    std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
     if (error_tsfn_) {
       error_tsfn_.Release();
       error_tsfn_ = nullptr;
@@ -585,6 +886,7 @@ private:
   }
 
   void ReportError(std::string message) {
+    std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
     if (!error_tsfn_) {
       return;
     }
@@ -619,6 +921,30 @@ private:
     return env.Undefined();
   }
 
+  Napi::Value ConnectSocket(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 3 || !info[1].IsString() || !info[2].IsString()) {
+      Napi::TypeError::New(env, "Expected (tcpHandle, certPem, keyPem)")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+
+#ifdef _WIN32
+    int tcp_fd = -1;
+    std::string error;
+    if (!ExtractTcpFdFromNodeHandle(info[0], tcp_fd, error) ||
+        !forwarder_.Connect(tcp_fd,
+                            info[1].As<Napi::String>().Utf8Value(),
+                            info[2].As<Napi::String>().Utf8Value(),
+                            error)) {
+      Napi::Error::New(env, error).ThrowAsJavaScriptException();
+    }
+#else
+    Napi::Error::New(env, "connectSocket is only supported on Windows").ThrowAsJavaScriptException();
+#endif
+    return env.Undefined();
+  }
+
   Napi::Value ConnectPsk(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsBuffer()) {
@@ -641,6 +967,33 @@ private:
                                error)) {
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
+    return env.Undefined();
+  }
+
+  Napi::Value ConnectPskSocket(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[1].IsBuffer()) {
+      Napi::TypeError::New(env, "Expected (tcpHandle, pskBuffer[, identity])")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+
+    std::string identity;
+    if (info.Length() >= 3 && info[2].IsString()) {
+      identity = info[2].As<Napi::String>().Utf8Value();
+    }
+
+#ifdef _WIN32
+    int tcp_fd = -1;
+    std::string error;
+    Napi::Buffer<uint8_t> psk = info[1].As<Napi::Buffer<uint8_t>>();
+    if (!ExtractTcpFdFromNodeHandle(info[0], tcp_fd, error) ||
+        !forwarder_.ConnectPsk(tcp_fd, psk.Data(), psk.Length(), identity, error)) {
+      Napi::Error::New(env, error).ThrowAsJavaScriptException();
+    }
+#else
+    Napi::Error::New(env, "connectPskSocket is only supported on Windows").ThrowAsJavaScriptException();
+#endif
     return env.Undefined();
   }
 
@@ -671,8 +1024,8 @@ private:
 
   Napi::Value StartForwarding(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    if (info.Length() < 1 || !info[0].IsNumber()) {
-      Napi::TypeError::New(env, "Expected (tunFd[, onError])").ThrowAsJavaScriptException();
+    if (info.Length() < 1 || !info[0].IsExternal()) {
+      Napi::TypeError::New(env, "Expected (tunForwardingHandle[, onError])").ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
@@ -683,16 +1036,19 @@ private:
       on_error = info[1].As<Napi::Function>();
     }
 
-    error_tsfn_ = Napi::ThreadSafeFunction::New(env,
-                                                on_error,
-                                                "TunnelForwarderOnError",
-                                                0,
-                                                1);
+    {
+      std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
+      error_tsfn_ = Napi::ThreadSafeFunction::New(env,
+                                                  on_error,
+                                                  "TunnelForwarderOnError",
+                                                  0,
+                                                  1);
+    }
 
-    const int tun_fd = info[0].As<Napi::Number>().Int32Value();
+    TunPlatformBackend* tun_backend = info[0].As<Napi::External<TunPlatformBackend>>().Data();
     std::string error;
     ForwarderErrorCallback callback = [this](std::string msg) { ReportError(std::move(msg)); };
-    if (!forwarder_.StartForwarding(tun_fd, std::move(callback), error)) {
+    if (!forwarder_.StartForwarding(tun_backend, std::move(callback), error)) {
       ReleaseErrorTsfn();
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
@@ -706,11 +1062,10 @@ private:
   }
 
   TunnelForwarder forwarder_;
+  std::mutex error_tsfn_mutex_;
   Napi::ThreadSafeFunction error_tsfn_;
 };
 
 Napi::Object InitTunnelForwarder(Napi::Env env, Napi::Object exports) {
   return TunnelForwarderWrap::Init(env, exports);
 }
-
-#endif

@@ -3,6 +3,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import type {Socket} from 'node:net';
 
+import type {TunTap} from '../TunTap.js';
 import type {TunnelInfo} from './types.js';
 
 const require = createRequire(import.meta.url);
@@ -23,9 +24,11 @@ export interface TunnelPskTlsCredentials {
 
 interface NativeTunnelForwarder {
   connect(tcpFd: number, certPem: string, keyPem: string): void;
+  connectSocket(tcpHandle: unknown, certPem: string, keyPem: string): void;
   connectPsk(tcpFd: number, psk: Buffer, identity?: string): void;
+  connectPskSocket(tcpHandle: unknown, psk: Buffer, identity?: string): void;
   handshake(requestedMtu: number): TunnelInfo;
-  startForwarding(tunFd: number, onError?: (message: string) => void): void;
+  startForwarding(tunForwardingHandle: unknown, onError?: (message: string) => void): void;
   stop(): void;
 }
 
@@ -38,37 +41,44 @@ interface NativeTuntapModule {
  */
 export class TunnelForwarder {
   private forwarder: NativeTunnelForwarder | null = null;
+  private retainedSocket: Socket | null = null;
 
   connect(tcpSocket: Socket, credentials: TunnelLockdownTlsCredentials): void {
-    if (process.platform === 'win32') {
-      throw new Error('Native tunnel forwarder is not supported on Windows');
-    }
-
-    const tcpFd = getSocketFd(tcpSocket);
     tcpSocket.pause();
     tcpSocket.removeAllListeners();
 
     const native = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
     this.forwarder = new native.TunnelForwarder();
-    this.forwarder.connect(tcpFd, credentials.cert, credentials.key);
+    if (process.platform === 'win32') {
+      this.forwarder.connectSocket(getSocketHandle(tcpSocket), credentials.cert, credentials.key);
+    } else {
+      this.forwarder.connect(getSocketFd(tcpSocket), credentials.cert, credentials.key);
+    }
 
-    destroySocket(tcpSocket);
+    this.takeSocketOwnership(tcpSocket);
   }
 
   connectPsk(tcpSocket: Socket, credentials: TunnelPskTlsCredentials): void {
-    if (process.platform === 'win32') {
-      throw new Error('Native tunnel forwarder is not supported on Windows');
-    }
-
-    const tcpFd = getSocketFd(tcpSocket);
     tcpSocket.pause();
     tcpSocket.removeAllListeners();
 
     const native = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
     this.forwarder = new native.TunnelForwarder();
-    this.forwarder.connectPsk(tcpFd, credentials.psk, credentials.identity ?? '');
+    if (process.platform === 'win32') {
+      this.forwarder.connectPskSocket(
+        getSocketHandle(tcpSocket),
+        credentials.psk,
+        credentials.identity ?? '',
+      );
+    } else {
+      this.forwarder.connectPsk(
+        getSocketFd(tcpSocket),
+        credentials.psk,
+        credentials.identity ?? '',
+      );
+    }
 
-    destroySocket(tcpSocket);
+    this.takeSocketOwnership(tcpSocket);
   }
 
   handshake(requestedMtu: number): TunnelInfo {
@@ -78,23 +88,29 @@ export class TunnelForwarder {
     return this.forwarder.handshake(requestedMtu);
   }
 
-  startForwarding(tunFd: number, onError?: (message: string) => void): void {
+  startForwarding(tun: TunTap, onError?: (message: string) => void): void {
     if (!this.forwarder) {
       throw new Error('Tunnel forwarder is not connected');
     }
-    if (tunFd < 0) {
-      throw new Error('TUN file descriptor is not available');
-    }
+    const forwardingHandle = tun.forwardingHandle;
     if (onError) {
-      this.forwarder.startForwarding(tunFd, onError);
+      this.forwarder.startForwarding(forwardingHandle, onError);
     } else {
-      this.forwarder.startForwarding(tunFd);
+      this.forwarder.startForwarding(forwardingHandle);
     }
   }
 
   stop(): void {
     this.forwarder?.stop();
     this.forwarder = null;
+    if (this.retainedSocket) {
+      destroySocket(this.retainedSocket);
+      this.retainedSocket = null;
+    }
+  }
+
+  private takeSocketOwnership(socket: Socket): void {
+    destroySocket(socket);
   }
 }
 
@@ -104,6 +120,14 @@ function getSocketFd(socket: Socket): number {
     return handle.fd;
   }
   throw new Error('TCP socket file descriptor is not available');
+}
+
+function getSocketHandle(socket: Socket): unknown {
+  const handle = (socket as {_handle?: unknown})._handle;
+  if (handle) {
+    return handle;
+  }
+  throw new Error('TCP socket handle is not available');
 }
 
 function destroySocket(socket: Socket): void {

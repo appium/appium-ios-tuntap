@@ -1,26 +1,19 @@
 import assert from 'node:assert';
-import {afterEach, before, describe, it} from 'node:test';
+import {afterEach, describe, it} from 'node:test';
 
-import {TunTap} from '../../lib/index.js';
+import {TunTap, TunnelForwarder} from '../../lib/index.js';
 import {hasPrivileges} from '../utils.mjs';
 
 /**
  * NOTE: Most TunTap tests require elevated privileges (root on POSIX,
- * Administrator on Windows). They fail fast otherwise.
+ * Administrator on Windows), so privileged cases are skipped when needed.
  */
+
+const hasRequiredPrivileges = await hasPrivileges();
+const skipWithoutPrivileges = getPrivilegeSkipReason(hasRequiredPrivileges);
 
 describe('TunTap Unit Tests', {timeout: 10000}, () => {
   let tun;
-
-  before(async () => {
-    if (!(await hasPrivileges())) {
-      throw new Error(
-        process.platform === 'win32'
-          ? 'Must be run from an elevated PowerShell (Run as administrator)'
-          : 'Must be run as root',
-      );
-    }
-  });
 
   afterEach(() => {
     if (tun && tun.isOpen && !tun.isClosed) {
@@ -31,7 +24,16 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     tun = null;
   });
 
-  it('should open and close the TUN device', () => {
+  it('should expose the native tunnel forwarder', () => {
+    const forwarder = new TunnelForwarder();
+    assert.strictEqual(typeof forwarder.connect, 'function');
+    assert.strictEqual(typeof forwarder.connectPsk, 'function');
+    assert.strictEqual(typeof forwarder.handshake, 'function');
+    assert.strictEqual(typeof forwarder.startForwarding, 'function');
+    forwarder.stop();
+  });
+
+  it('should open and close the TUN device', {skip: skipWithoutPrivileges}, () => {
     tun = new TunTap();
     assert.strictEqual(tun.open(), true, 'TUN device should open');
     assert.strictEqual(typeof tun.name, 'string');
@@ -48,23 +50,23 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     assert.throws(() => tun.write(Buffer.alloc(10)), /Device not open/);
   });
 
-  it('should throw if reopening after close', () => {
+  it('should throw if reopening after close', {skip: skipWithoutPrivileges}, () => {
     tun = new TunTap();
     tun.open();
     tun.close();
     assert.throws(() => tun.open(), /Device has been closed/);
   });
 
-  it('should handle configure and add/remove route', async () => {
+  it('should handle configure and add/remove route', {skip: skipWithoutPrivileges}, async () => {
     tun = new TunTap();
     tun.open();
     await tun.configure('fd00::2', 1500);
-    await tun.addRoute('fd00::/64');
-    await tun.removeRoute('fd00::/64');
+    await tun.addRoute('fd01::/64');
+    await tun.removeRoute('fd01::/64');
     tun.close();
   });
 
-  it('should not leave open handles after close', async () => {
+  it('should not leave open handles after close', {skip: skipWithoutPrivileges}, async () => {
     tun = new TunTap();
     tun.open();
     tun.close();
@@ -81,7 +83,7 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     assert.ok(handles.length <= 2, 'No extra handles should remain after close');
   });
 
-  it('should handle errors gracefully', async () => {
+  it('should handle errors gracefully', {skip: skipWithoutPrivileges}, async () => {
     tun = new TunTap();
     tun.open();
     await assert.rejects(() => tun.configure('invalid', 1500), /Invalid IPv6 address/);
@@ -89,3 +91,12 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     tun.close();
   });
 });
+
+function getPrivilegeSkipReason(hasRequiredPrivileges) {
+  if (hasRequiredPrivileges) {
+    return false;
+  }
+  return process.platform === 'win32'
+    ? 'Requires Administrator privileges on Windows'
+    : 'Requires root privileges';
+}

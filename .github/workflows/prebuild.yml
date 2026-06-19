@@ -37,7 +37,7 @@ jobs:
             arch: arm64
             artifact: linux-arm64
             upload: true
-          - runs-on: windows-latest
+          - runs-on: windows-2022
             arch: x64
             artifact: win32-x64
             upload: true
@@ -60,7 +60,29 @@ jobs:
         if ! sudo apt-get install -y linux-headers-$(uname -r); then
           sudo apt-get install -y linux-headers-generic
         fi
-    - run: npm install --no-package-lock
+    - name: Configure Windows vcpkg cache
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $triplet = if ("${{ matrix.arch }}" -eq "arm64") { "arm64-windows-static" } else { "x64-windows-static" }
+        "VCPKG_OPENSSL_TRIPLET=$triplet" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_TEMP\vcpkg-binary-cache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\vcpkg-binary-cache" | Out-Null
+    - name: Restore Windows vcpkg binary cache
+      if: runner.os == 'Windows'
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}\vcpkg-binary-cache
+        key: ${{ runner.os }}-vcpkg-openssl-${{ matrix.arch }}-${{ hashFiles('.github/workflows/prebuild.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-openssl-${{ matrix.arch }}-
+    - name: Install Windows OpenSSL
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        vcpkg install "openssl:$env:VCPKG_OPENSSL_TRIPLET"
+        "OPENSSL_ROOT_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\$env:VCPKG_OPENSSL_TRIPLET" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+    - run: npm install --no-package-lock --ignore-scripts
       name: Install dependencies
     - name: Create N-API prebuild
       run: npm run build:prebuilds -- --arch ${{ matrix.arch }}

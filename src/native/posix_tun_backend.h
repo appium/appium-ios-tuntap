@@ -2,6 +2,10 @@
 
 #if defined(__APPLE__) || defined(__linux__)
 
+#include <cerrno>
+#include <poll.h>
+
+#include <chrono>
 #include <string>
 #include <utility>
 #include <vector>
@@ -53,10 +57,48 @@ public:
 
   int GetNativeFd() const override { return fd_.get(); }
 
+  bool WaitReadable(const std::atomic<bool>& running, std::string& error) override {
+    return WaitForEvents(POLLIN, running, error);
+  }
+
+  bool WaitWritable(const std::atomic<bool>& running, std::string& error) override {
+    return WaitForEvents(POLLOUT, running, error);
+  }
+
 protected:
   FileDescriptor fd_;
   std::string interface_name_;
   PosixUvPollLoop poll_loop_;
+
+private:
+  bool WaitForEvents(short events, const std::atomic<bool>& running, std::string& error) {
+    if (!fd_.is_valid()) {
+      error = "Device not open";
+      return false;
+    }
+
+    struct pollfd pfd {};
+    pfd.fd = fd_.get();
+    pfd.events = events;
+
+    while (running.load()) {
+      const int rc = poll(&pfd, 1, 200);
+      if (rc > 0) {
+        if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+          error = "TUN device poll failed";
+          return false;
+        }
+        return (pfd.revents & events) != 0;
+      }
+      if (rc == 0 || errno == EINTR) {
+        continue;
+      }
+      error = "TUN device poll failed";
+      return false;
+    }
+
+    return false;
+  }
 };
 
 #endif

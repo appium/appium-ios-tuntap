@@ -174,7 +174,7 @@ public:
       if (err == ERROR_HANDLE_EOF) {
         error = "WinTun adapter is terminating";
       } else if (err == ERROR_BUFFER_OVERFLOW) {
-        error = "WinTun send-ring is full";
+        return 0;
       } else {
         error = "WintunAllocateSendPacket failed: " + FormatLastError(err);
       }
@@ -258,6 +258,37 @@ public:
   // event `HANDLE`, not a numeric fd. Always -1 — the N-API layer treats -1
   // as "no pollable fd" and drives delivery through `StartReceiveLoop`.
   int GetNativeFd() const override { return -1; }
+
+  bool WaitReadable(const std::atomic<bool>& running, std::string& error) override {
+    if (!read_event_) {
+      error = "Device not open";
+      return false;
+    }
+
+    while (running.load()) {
+      DWORD wait = ::WaitForSingleObject(read_event_, 200);
+      if (wait == WAIT_OBJECT_0) {
+        return true;
+      }
+      if (wait == WAIT_TIMEOUT) {
+        continue;
+      }
+      error = "WaitForSingleObject failed: " + FormatLastError(::GetLastError());
+      return false;
+    }
+
+    return false;
+  }
+
+  bool WaitWritable(const std::atomic<bool>& running, std::string& /*error*/) override {
+    // WinTun exposes only a read-wait event. A short sleep prevents a busy spin
+    // when the send ring is temporarily full.
+    if (running.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      return running.load();
+    }
+    return false;
+  }
 
 private:
   static std::string Utf16ToUtf8(const std::wstring& utf16) {

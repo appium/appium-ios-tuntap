@@ -84,7 +84,7 @@ export class TunnelManager {
 
     tunDebug(`Starting OpenSSL tunnel forwarding for ${this.tun.name}`);
     this.forwarder = forwarder;
-    forwarder.startForwarding(this.tun.fd, (message) => {
+    forwarder.startForwarding(this.tun, (message) => {
       if (this.cancelled) {
         tunDebug(`Ignoring forwarder error during shutdown: ${message}`);
         return;
@@ -119,7 +119,13 @@ export class TunnelManager {
 
     this.cancelled = true;
 
-    // Close TUN first so native forwarder threads unblock on read/write.
+    // Stop the native forwarder before closing TUN: it holds a raw backend
+    // pointer while its worker threads are running.
+    if (this.forwarder) {
+      this.forwarder.stop();
+      this.forwarder = null;
+    }
+
     if (this.tun) {
       try {
         this.tun.close();
@@ -127,11 +133,6 @@ export class TunnelManager {
         log.error('Error closing TUN device:', err);
       }
       this.tun = null;
-    }
-
-    if (this.forwarder) {
-      this.forwarder.stop();
-      this.forwarder = null;
     }
 
     tunDebug(`Tunnel for ${tunName} closed successfully`);
@@ -182,10 +183,6 @@ async function connectTunnel(
   setupTls: (forwarder: TunnelForwarder) => void,
   onDead?: (reason: string) => void,
 ): Promise<TunnelConnection> {
-  if (process.platform === 'win32') {
-    throw new Error('Native OpenSSL tunnel forwarder is not supported on Windows');
-  }
-
   const tunnelManager = new TunnelManager();
   const forwarder = new TunnelForwarder();
 

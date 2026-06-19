@@ -55,12 +55,41 @@ jobs:
         # Load the TUN module
         sudo modprobe tun
 
+    - name: Configure Windows vcpkg cache
+      if: ${{ contains(inputs.image, 'windows') }}
+      shell: pwsh
+      run: |
+        "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_TEMP\vcpkg-binary-cache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\vcpkg-binary-cache" | Out-Null
+
+    - name: Restore Windows vcpkg binary cache
+      if: ${{ contains(inputs.image, 'windows') }}
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}\vcpkg-binary-cache
+        key: ${{ runner.os }}-vcpkg-openssl-x64-${{ hashFiles('.github/workflows/shared.yml') }}
+        restore-keys: |
+          ${{ runner.os }}-vcpkg-openssl-x64-
+
+    - name: Install Windows OpenSSL
+      if: ${{ contains(inputs.image, 'windows') }}
+      shell: pwsh
+      run: |
+        vcpkg install openssl:x64-windows-static
+        "OPENSSL_ROOT_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
     - uses: SocketDev/action@v1
+      if: ${{ !contains(inputs.image, 'windows') }}
       with:
         mode: firewall-free
 
     - name: Install npm dependencies
+      if: ${{ !contains(inputs.image, 'windows') }}
       run: sfw npm install
+
+    - name: Install npm dependencies
+      if: ${{ contains(inputs.image, 'windows') }}
+      run: npm install --no-package-lock
 
     - name: Run linter
       if: ${{ inputs.run-lint }}
@@ -86,6 +115,7 @@ jobs:
       run: sudo bash test/check-linux-prereqs.sh
 
     - name: Run ${{ inputs.test-name }}
+      if: ${{ !contains(inputs.image, 'windows') }}
       run: |
         # Run test command with sudo and gather diagnostics on failure.
         set +e
@@ -106,3 +136,7 @@ jobs:
         fi
 
         exit $TEST_EXIT_CODE
+
+    - name: Run ${{ inputs.test-name }}
+      if: ${{ contains(inputs.image, 'windows') }}
+      run: ${{ inputs.test-command }}
