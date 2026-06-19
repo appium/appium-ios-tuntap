@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/appium/appium-ios-tuntap/compare/v1.0.1...v1.1.0) (2026-06-19)
+
+### Features
+
+* enable Windows native tunnel forwarder ([#57](https://github.com/appium/appium-ios-tuntap/issues/57)) ([e1f8f9b](https://github.com/appium/appium-ios-tuntap/commit/e1f8f9b6814807ce682ec7a85553429179092030))
+
 ## [1.0.1](https://github.com/appium/appium-ios-tuntap/compare/v1.0.0...v1.0.1) (2026-06-17)
 
 ### Bug Fixes
