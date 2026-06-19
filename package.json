@@ -58,7 +58,7 @@
     "@appium/eslint-config-appium-ts": "^3.0.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
-    "@types/node": "^25.0.1",
+    "@types/node": "^26.0.0",
     "commander": "^14.0.3",
     "conventional-changelog-conventionalcommits": "^9.0.0",
     "prebuildify": "^6.0.1",
