@@ -119,7 +119,13 @@ export class TunnelManager {
 
     this.cancelled = true;
 
-    // Close TUN first so native forwarder threads unblock on read/write.
+    // Stop the native forwarder before closing TUN: it holds a raw backend
+    // pointer while its worker threads are running.
+    if (this.forwarder) {
+      this.forwarder.stop();
+      this.forwarder = null;
+    }
+
     if (this.tun) {
       try {
         this.tun.close();
@@ -127,11 +133,6 @@ export class TunnelManager {
         log.error('Error closing TUN device:', err);
       }
       this.tun = null;
-    }
-
-    if (this.forwarder) {
-      this.forwarder.stop();
-      this.forwarder = null;
     }
 
     tunDebug(`Tunnel for ${tunName} closed successfully`);
