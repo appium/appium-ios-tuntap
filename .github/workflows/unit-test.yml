@@ -29,7 +29,7 @@ jobs:
     with:
       image: ${{ matrix.image }}
       node-version: ${{ matrix.node-version }}
-      test-command: ${{ contains(matrix.image, 'windows') && 'npm run build:addon' || 'npm run test:unit' }}
-      test-name: ${{ contains(matrix.image, 'windows') && 'Windows native build' || 'Unit tests' }}
+      test-command: npm run test:unit
+      test-name: Unit tests
       run-lint: ${{ !contains(matrix.image, 'windows') }}
       run-format-check: ${{ !contains(matrix.image, 'windows') }}
