@@ -61,8 +61,8 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     tun = new TunTap();
     tun.open();
     await tun.configure('fd00::2', 1500);
-    await tun.addRoute('fd00::/64');
-    await tun.removeRoute('fd00::/64');
+    await tun.addRoute('fd01::/64');
+    await tun.removeRoute('fd01::/64');
     tun.close();
   });
 

@@ -60,9 +60,9 @@ describe('TunTap Integration Tests', {timeout: 15000}, () => {
     }
 
     await tun.configure('fd00::1', 1500);
-    await tun.addRoute('fd00::/64');
+    await tun.addRoute('fd01::/64');
 
-    await tun.removeRoute('fd00::/64');
+    await tun.removeRoute('fd01::/64');
     assert.strictEqual(tun.close(), true, 'TUN device should close');
   });
 
