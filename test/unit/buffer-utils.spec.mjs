@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import {describe, it} from 'node:test';
 
-import {appendBuffer} from '../../lib/tunnel/buffer-utils.js';
+import {appendBuffer} from '../../src/tunnel/buffer-utils.js';
 
 describe('appendBuffer', () => {
   it('returns existing when chunk is empty', () => {

@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import {afterEach, describe, it} from 'node:test';
 
-import {TunTap, TunnelForwarder} from '../../lib/index.js';
+import {TunTap, TunnelForwarder} from '../../src/index.js';
 import {hasPrivileges} from '../utils.mjs';
 
 /**
@@ -74,11 +74,7 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     const handles = process._getActiveHandles().filter(
       (h) =>
         // Filter out the process's own stdio handles
-        !(
-          h.constructor &&
-          h.constructor.name &&
-          h.constructor.name.match(/(Socket|WriteStream|ReadStream)/)
-        ),
+        !(h.constructor && h.constructor.name && h.constructor.name.match(/(Socket|WriteStream|ReadStream)/)),
     );
     assert.ok(handles.length <= 2, 'No extra handles should remain after close');
   });
@@ -96,7 +92,5 @@ function getPrivilegeSkipReason(hasRequiredPrivileges) {
   if (hasRequiredPrivileges) {
     return false;
   }
-  return process.platform === 'win32'
-    ? 'Requires Administrator privileges on Windows'
-    : 'Requires root privileges';
+  return process.platform === 'win32' ? 'Requires Administrator privileges on Windows' : 'Requires root privileges';
 }

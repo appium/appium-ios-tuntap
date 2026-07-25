@@ -279,9 +279,10 @@ Windows tunnel-forwarder end-to-end testing requires a real device tunnel source
 Automated tests cannot reliably verify process cleanup on SIGINT/SIGTERM due to test runner limitations.  
 To manually verify the fix for signal handling (introduced in v0.0.4):
 
-1. Run the CLI utility:
+1. Build the project, then run the compiled CLI utility:
    ```sh
-   sudo node test/test-tuntap.js
+   npm run build
+   sudo node lib/test/test-tuntap.mjs
    ```
 2. While it is running, press `Ctrl+C` to send SIGINT.
 3. Confirm that:

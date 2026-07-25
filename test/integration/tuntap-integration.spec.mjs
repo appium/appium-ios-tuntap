@@ -4,7 +4,7 @@ import path from 'node:path';
 import {afterEach, describe, it} from 'node:test';
 import {fileURLToPath} from 'node:url';
 
-import {TunTap} from '../../lib/index.js';
+import {TunTap} from '../../src/index.js';
 import {hasPrivileges} from '../utils.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -66,47 +66,36 @@ describe('TunTap Integration Tests', {timeout: 15000}, () => {
     assert.strictEqual(tun.close(), true, 'TUN device should close');
   });
 
-  it(
-    'should read and write data (simulate traffic)',
-    {timeout: 10000, skip: skipWithoutPrivileges},
-    async () => {
-      tun = new TunTap();
-      assert.strictEqual(tun.open(), true, 'TUN device should open');
-      await tun.configure('fd00::1', 1500);
-      await new Promise((resolve, reject) => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        let readCount = 0;
-        const timeout = setTimeout(() => {
-          tun.close();
-          resolve();
-        }, 3000);
+  it('should read and write data (simulate traffic)', {timeout: 10000, skip: skipWithoutPrivileges}, async () => {
+    tun = new TunTap();
+    assert.strictEqual(tun.open(), true, 'TUN device should open');
+    await tun.configure('fd00::1', 1500);
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        tun.close();
+        resolve();
+      }, 3000);
 
-        const interval = setInterval(() => {
-          try {
-            const data = tun.read(4096);
-            if (data && data.length > 0) {
-              readCount++;
-              const bytesWritten = tun.write(data);
-              assert.strictEqual(
-                bytesWritten,
-                data.length,
-                'Should echo back same number of bytes',
-              );
-              clearTimeout(timeout);
-              clearInterval(interval);
-              tun.close();
-              resolve();
-            }
-          } catch (err) {
+      const interval = setInterval(() => {
+        try {
+          const data = tun.read(4096);
+          if (data && data.length > 0) {
+            const bytesWritten = tun.write(data);
+            assert.strictEqual(bytesWritten, data.length, 'Should echo back same number of bytes');
             clearTimeout(timeout);
             clearInterval(interval);
             tun.close();
-            reject(err);
+            resolve();
           }
-        }, 100);
-      });
-    },
-  );
+        } catch (err) {
+          clearTimeout(timeout);
+          clearInterval(interval);
+          tun.close();
+          reject(err);
+        }
+      }, 100);
+    });
+  });
 
   it('should fail to open an already closed device', {skip: skipWithoutPrivileges}, () => {
     tun = new TunTap();
@@ -138,7 +127,5 @@ function getPrivilegeSkipReason(hasRequiredPrivileges) {
   if (hasRequiredPrivileges) {
     return false;
   }
-  return process.platform === 'win32'
-    ? 'Requires Administrator privileges on Windows'
-    : 'Requires root privileges';
+  return process.platform === 'win32' ? 'Requires Administrator privileges on Windows' : 'Requires root privileges';
 }

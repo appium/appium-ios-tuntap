@@ -1,8 +1,9 @@
 import type {ExecException} from 'node:child_process';
 
 import {fs} from '@appium/support';
-import {log} from '../logger.js';
+
 import {TunTapError} from '../errors.js';
+import {log} from '../logger.js';
 import {execFileAsync} from './exec.js';
 import {assertEffectiveRoot} from './require-root.js';
 import type {TunTapInterfaceStats, TunTapPlatform} from './types.js';

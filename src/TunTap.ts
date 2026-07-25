@@ -1,16 +1,13 @@
 import {createRequire} from 'node:module';
 import {isIPv6} from 'node:net';
-import path from 'node:path';
-import {fileURLToPath} from 'node:url';
 
 import {TunTapDeviceError, TunTapError, TunTapPermissionError} from './errors.js';
 import {log} from './logger.js';
+import {getPkgRoot} from './pkg-root.js';
 import {createTunTapPlatform} from './platform/create-platform.js';
 import type {TunTapInterfaceStats, TunTapPlatform} from './platform/types.js';
 
 const require = createRequire(import.meta.url);
-/** Package root (contains binding.gyp, prebuilds/, or build/ after compile). */
-const pkgRoot = path.join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const DEFAULT_READ_BUFFER_SIZE = 4096;
 const MAX_BUFFER_SIZE = 0xffff; // 65535
 const DEFAULT_MTU = 1500;
@@ -40,7 +37,7 @@ interface NativeTuntapModule {
   TunDevice: new (name?: string) => NativeTunDevice;
 }
 
-const nativeTuntap = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
+const nativeTuntap = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
 
 /**
  * High-level wrapper around the native TUN device with IPv6-only configuration helpers.
@@ -230,11 +227,7 @@ export class TunTap {
    * @throws {TypeError} if `callback` is not a function
    * @throws {RangeError} if `bufferSize` is out of range
    */
-  startPolling(
-    callback: PacketCallback,
-    bufferSize: number = MAX_BUFFER_SIZE,
-    queueDepth: number = 8,
-  ): void {
+  startPolling(callback: PacketCallback, bufferSize: number = MAX_BUFFER_SIZE, queueDepth: number = 8): void {
     this.assertReady();
     if (typeof callback !== 'function') {
       throw new TypeError('Callback must be a function');

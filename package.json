@@ -2,29 +2,21 @@
   "name": "appium-ios-tuntap",
   "version": "1.1.0",
   "description": "Native TUN/TAP interface module for Node.js",
-  "main": "lib/index.js",
-  "types": "lib/index.d.ts",
-  "type": "module",
-  "scripts": {
-    "clean": "rm -rf build node_modules lib",
-    "build": "npx tsc",
-    "build:addon": "node-gyp rebuild",
-    "build:prebuilds": "prebuildify --napi --strip",
-    "lint": "eslint .",
-    "lint:fix": "npm run lint -- --fix",
-    "format": "prettier -w ./src ./test",
-    "format:check": "prettier --check ./src ./test",
-    "install": "node-gyp-build",
-    "refresh:wintun": "node scripts/fetch-wintun.mjs",
-    "prepare": "npm run build",
-    "test": "npm run test:integration && npm run test:unit",
-    "test:unit": "node --test --test-force-exit --test-timeout=5000 \"test/unit/**/*.spec.mjs\"",
-    "test:integration": "node --test --test-force-exit --test-timeout=15000 \"test/integration/**/*.spec.mjs\""
+  "bugs": {
+    "url": "https://github.com/appium/appium-ios-tuntap/issues"
+  },
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Appium Contributors",
+    "url": "https://github.com/appium/appium-ios-tuntap"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/appium/appium-ios-tuntap.git"
   },
   "files": [
-    "src/tuntap.cc",
-    "src/native",
-    "lib",
+    "src",
+    "lib/src",
     "prebuilds",
     "scripts",
     "vendor",
@@ -35,19 +27,25 @@
     "CHANGELOG.md",
     "LICENSE"
   ],
-  "author": {
-    "name": "Appium Contributors",
-    "url": "https://github.com/appium/appium-ios-tuntap"
+  "type": "module",
+  "main": "lib/src/index.js",
+  "types": "lib/src/index.d.ts",
+  "scripts": {
+    "clean": "rm -rf build node_modules lib",
+    "build": "tsc -b",
+    "build:addon": "node-gyp rebuild",
+    "build:prebuilds": "prebuildify --napi --strip",
+    "lint": "oxlint -c oxlint.config.mjs .",
+    "lint:fix": "oxlint -c oxlint.config.mjs --fix .",
+    "format": "oxfmt -c oxfmt.config.mjs .",
+    "format:check": "oxfmt -c oxfmt.config.mjs --check .",
+    "install": "node-gyp-build",
+    "refresh:wintun": "node scripts/fetch-wintun.mjs",
+    "prepare": "npm run build",
+    "test": "npm run test:integration && npm run test:unit",
+    "test:unit": "node --test --test-force-exit --test-timeout=5000 \"lib/test/unit/**/*.spec.mjs\"",
+    "test:integration": "node --test --test-force-exit --test-timeout=15000 \"lib/test/integration/**/*.spec.mjs\""
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/appium/appium-ios-tuntap.git"
-  },
-  "bugs": {
-    "url": "https://github.com/appium/appium-ios-tuntap/issues"
-  },
-  "license": "Apache-2.0",
-  "gypfile": true,
   "dependencies": {
     "@appium/support": "^7.2.0",
     "node-addon-api": "^8.5.0",
@@ -55,23 +53,15 @@
     "typescript": "^6.0.2"
   },
   "devDependencies": {
-    "@appium/eslint-config-appium-ts": "^3.0.0",
-    "@semantic-release/changelog": "^6.0.3",
-    "@semantic-release/git": "^10.0.1",
+    "@appium/oxc-config": "^1.1.0",
+    "@appium/semantic-release-config": "^1.1.0",
     "@types/node": "^25.0.1",
     "commander": "^14.0.3",
-    "conventional-changelog-conventionalcommits": "^9.0.0",
-    "prebuildify": "^6.0.1",
-    "prettier": "^3.0.0",
-    "semantic-release": "^25.0.2"
-  },
-  "prettier": {
-    "bracketSpacing": false,
-    "printWidth": 100,
-    "singleQuote": true
+    "prebuildify": "^6.0.1"
   },
   "engines": {
     "node": "^20.19.0 || ^22.12.0 || >=24.0.0",
     "npm": ">=10"
-  }
+  },
+  "gypfile": true
 }

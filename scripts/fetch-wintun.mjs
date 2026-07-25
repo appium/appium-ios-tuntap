@@ -3,10 +3,11 @@
 // the package ships with the official signed DLLs already checked in. Run
 // `npm run refresh:wintun -- --version <semver>` to pull a different release.
 
-import {fs, logger, net, tempDir, zip} from '@appium/support';
-import {Command} from 'commander';
 import {join, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
+
+import {fs, logger, net, tempDir, zip} from '@appium/support';
+import {Command} from 'commander';
 
 const log = logger.getLogger('refresh-wintun');
 
@@ -45,10 +46,7 @@ async function refreshWintun(version) {
     await zip.extractAllTo(zipPath, extractDir);
 
     await fs.mkdir(vendorDir, {recursive: true});
-    await Promise.all([
-      ...BUNDLED_ARCHES.map((arch) => deployDll(arch, extractDir)),
-      deployLicense(extractDir),
-    ]);
+    await Promise.all([...BUNDLED_ARCHES.map((arch) => deployDll(arch, extractDir)), deployLicense(extractDir)]);
   } finally {
     await fs.rimraf(tmpDir);
   }
@@ -58,11 +56,7 @@ const program = new Command();
 program
   .name('refresh-wintun')
   .description('Refresh the bundled WinTun binaries under vendor/wintun/')
-  .option(
-    '-v, --version <semver>',
-    'WinTun release version to download',
-    DEFAULT_WINTUN_VERSION,
-  )
+  .option('-v, --version <semver>', 'WinTun release version to download', DEFAULT_WINTUN_VERSION)
   .action(async (options) => {
     await refreshWintun(options.version);
   });

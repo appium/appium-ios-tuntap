@@ -4,21 +4,15 @@ import {performance} from 'node:perf_hooks';
 import {TunTapError} from '../errors.js';
 import {log} from '../logger.js';
 import {tunDebug} from '../tunnel/debug-log.js';
-import {assertAdminOnWindows} from './require-admin.js';
 import {execFileAsync} from './exec.js';
+import {assertAdminOnWindows} from './require-admin.js';
 import type {TunTapInterfaceStats, TunTapPlatform} from './types.js';
 
 /** Tightly-restricted character set for adapter names passed into PowerShell. */
 const SAFE_NAME_RE = /^[A-Za-z0-9_\- ]+$/;
 
 /** Phrases that indicate `netsh` could not find the requested route/address. */
-const MISSING_TARGET_HINTS = [
-  'element not found',
-  'cannot find',
-  'no matching',
-  'does not exist',
-  'not found',
-];
+const MISSING_TARGET_HINTS = ['element not found', 'cannot find', 'no matching', 'does not exist', 'not found'];
 
 const ADDRESS_READY_TIMEOUT_MS = 5000;
 
@@ -107,9 +101,7 @@ export class WindowsTunTapPlatform implements TunTapPlatform {
 /** Validates an adapter name before embedding in a PowerShell expression. */
 function assertSafeAdapterName(interfaceName: string): void {
   if (!SAFE_NAME_RE.test(interfaceName)) {
-    throw new TunTapError(
-      `Refusing to use adapter name with unsupported characters: ${JSON.stringify(interfaceName)}`,
-    );
+    throw new TunTapError(`Refusing to use adapter name with unsupported characters: ${JSON.stringify(interfaceName)}`);
   }
 }
 
@@ -168,9 +160,7 @@ async function waitForIpv6AddressReady(interfaceName: string, address: string): 
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
-  throw new TunTapError(
-    `[win] address ${address} did not become Preferred (last state: ${lastState || 'not found'})`,
-  );
+  throw new TunTapError(`[win] address ${address} did not become Preferred (last state: ${lastState || 'not found'})`);
 }
 
 async function setIpv6Mtu(interfaceName: string, mtu: number): Promise<void> {
@@ -216,15 +206,7 @@ async function addIpv6Route(interfaceName: string, destination: string): Promise
 
 async function deleteIpv6Route(interfaceName: string, destination: string): Promise<void> {
   try {
-    await execFileAsync('netsh', [
-      'interface',
-      'ipv6',
-      'delete',
-      'route',
-      destination,
-      interfaceName,
-      'store=active',
-    ]);
+    await execFileAsync('netsh', ['interface', 'ipv6', 'delete', 'route', destination, interfaceName, 'store=active']);
   } catch (err: unknown) {
     if (isMissingTargetError(err)) {
       return;
