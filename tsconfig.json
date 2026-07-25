@@ -11,7 +11,7 @@
     "forceConsistentCasingInFileNames": true,
     "rootDir": ".",
     "outDir": "./lib",
-    "allowJs": true
+    "checkJs": true
   },
   "include": ["src", "scripts", "test"],
   "exclude": ["build", "lib"]

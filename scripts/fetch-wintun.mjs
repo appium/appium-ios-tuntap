@@ -17,6 +17,10 @@ const BUNDLED_ARCHES = ['amd64', 'arm64', 'x86', 'arm'];
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 const vendorDir = join(rootDir, 'vendor', 'wintun');
 
+/**
+ * @param {string} arch
+ * @param {string} extractDir
+ */
 async function deployDll(arch, extractDir) {
   const destDir = join(vendorDir, 'bin', arch);
   await fs.mkdir(destDir, {recursive: true});
@@ -26,6 +30,7 @@ async function deployDll(arch, extractDir) {
   log.info(`wintun.dll (${arch}) -> ${dest}`);
 }
 
+/** @param {string} extractDir */
 async function deployLicense(extractDir) {
   const src = join(extractDir, 'wintun', 'LICENSE.txt');
   const dest = join(vendorDir, 'LICENSE.txt');
@@ -33,6 +38,7 @@ async function deployLicense(extractDir) {
   log.info(`LICENSE.txt -> ${dest}`);
 }
 
+/** @param {string} version */
 async function refreshWintun(version) {
   const url = `https://www.wintun.net/builds/wintun-${version}.zip`;
   const tmpDir = await tempDir.openDir();

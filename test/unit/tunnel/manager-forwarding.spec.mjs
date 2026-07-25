@@ -4,7 +4,10 @@ import {describe, it} from 'node:test';
 
 import {IPV6_HEADER_SIZE, IPV6_VERSION} from '../../../src/tunnel/constants.js';
 
-/** Mirror of native ipv6_frame::FrameLength for unit tests. */
+/**
+ * Mirror of native ipv6_frame::FrameLength for unit tests.
+ * @param {Buffer} buffer
+ */
 function frameLength(buffer) {
   if (buffer.length < IPV6_HEADER_SIZE) {
     return 0;
