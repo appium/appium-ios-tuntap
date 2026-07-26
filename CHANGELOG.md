@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/appium/appium-ios-tuntap/compare/v1.1.0...v1.2.0) (2026-07-26)
+
+### Features
+
+* Integrate oxc and release configs ([#73](https://github.com/appium/appium-ios-tuntap/issues/73)) ([2929100](https://github.com/appium/appium-ios-tuntap/commit/292910002d59a3cc8159d12857281921e47521d3))
+
 ## [1.1.0](https://github.com/appium/appium-ios-tuntap/compare/v1.0.1...v1.1.0) (2026-06-19)
 
 ### Features
