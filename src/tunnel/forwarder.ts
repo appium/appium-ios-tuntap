@@ -1,13 +1,11 @@
 import {createRequire} from 'node:module';
-import path from 'node:path';
-import {fileURLToPath} from 'node:url';
 import type {Socket} from 'node:net';
 
+import {getPkgRoot} from '../pkg-root.js';
 import type {TunTap} from '../TunTap.js';
 import type {TunnelInfo} from './types.js';
 
 const require = createRequire(import.meta.url);
-const pkgRoot = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
 /** PEM host certificate + private key from the usbmux pair record (lockdown TLS). */
 export interface TunnelLockdownTlsCredentials {
@@ -47,7 +45,7 @@ export class TunnelForwarder {
     tcpSocket.pause();
     tcpSocket.removeAllListeners();
 
-    const native = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
+    const native = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
     this.forwarder = new native.TunnelForwarder();
     if (process.platform === 'win32') {
       this.forwarder.connectSocket(getSocketHandle(tcpSocket), credentials.cert, credentials.key);
@@ -62,20 +60,12 @@ export class TunnelForwarder {
     tcpSocket.pause();
     tcpSocket.removeAllListeners();
 
-    const native = require('node-gyp-build')(pkgRoot) as NativeTuntapModule;
+    const native = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
     this.forwarder = new native.TunnelForwarder();
     if (process.platform === 'win32') {
-      this.forwarder.connectPskSocket(
-        getSocketHandle(tcpSocket),
-        credentials.psk,
-        credentials.identity ?? '',
-      );
+      this.forwarder.connectPskSocket(getSocketHandle(tcpSocket), credentials.psk, credentials.identity ?? '');
     } else {
-      this.forwarder.connectPsk(
-        getSocketFd(tcpSocket),
-        credentials.psk,
-        credentials.identity ?? '',
-      );
+      this.forwarder.connectPsk(getSocketFd(tcpSocket), credentials.psk, credentials.identity ?? '');
     }
 
     this.takeSocketOwnership(tcpSocket);

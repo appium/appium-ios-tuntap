@@ -1,14 +1,10 @@
-import {log} from '../logger.js';
-import {TunTap} from '../TunTap.js';
 import type {Socket} from 'node:net';
 
+import {log} from '../logger.js';
+import {TunTap} from '../TunTap.js';
 import {CD_TUNNEL_MTU} from './constants.js';
 import {tunDebug} from './debug-log.js';
-import {
-  TunnelForwarder,
-  type TunnelLockdownTlsCredentials,
-  type TunnelPskTlsCredentials,
-} from './forwarder.js';
+import {TunnelForwarder, type TunnelLockdownTlsCredentials, type TunnelPskTlsCredentials} from './forwarder.js';
 import type {TunnelConnection, TunnelInfo} from './types.js';
 
 /**
@@ -26,9 +22,7 @@ export class TunnelManager {
    * @param tunnelInfo — handshake result (client address, MTU, server address)
    * @returns interface name, MTU, and the live {@link TunTap} instance
    */
-  async setupInterface(
-    tunnelInfo: TunnelInfo,
-  ): Promise<{name: string; mtu: number; interface: TunTap}> {
+  async setupInterface(tunnelInfo: TunnelInfo): Promise<{name: string; mtu: number; interface: TunTap}> {
     tunDebug(`Setting up tunnel with parameters:`, tunnelInfo);
 
     try {
@@ -40,10 +34,7 @@ export class TunnelManager {
 
       tunDebug(`Opened TUN device: ${this.tun.name}`);
 
-      await this.tun.configure(
-        tunnelInfo.clientParameters.address,
-        tunnelInfo.clientParameters.mtu,
-      );
+      await this.tun.configure(tunnelInfo.clientParameters.address, tunnelInfo.clientParameters.mtu);
 
       await this.tun.addRoute(`${tunnelInfo.serverAddress}/128`);
 

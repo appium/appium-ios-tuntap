@@ -4,7 +4,7 @@ import path from 'node:path';
 import {afterEach, describe, it} from 'node:test';
 import {fileURLToPath} from 'node:url';
 
-import {TunTap} from '../../lib/index.js';
+import {TunTap} from '../../src/index.js';
 import {hasPrivileges} from '../utils.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -13,6 +13,7 @@ const hasRequiredPrivileges = await hasPrivileges();
 const skipWithoutPrivileges = getPrivilegeSkipReason(hasRequiredPrivileges);
 
 describe('TunTap Integration Tests', {timeout: 15000}, () => {
+  /** @type {TunTap | null} */
   let tun;
 
   describe('TunTap CLI Utility Signal Handling', {skip: process.platform === 'win32'}, () => {
@@ -27,17 +28,19 @@ describe('TunTap Integration Tests', {timeout: 15000}, () => {
         child.kill('SIGINT');
       }, 500);
 
-      await new Promise((resolve, reject) => {
-        child.on('exit', (code, signal) => {
-          if (signal === 'SIGINT' || code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`Process exited with code ${code} and signal ${signal}`));
-          }
-        });
+      await /** @type {Promise<void>} */ (
+        new Promise((resolve, reject) => {
+          child.on('exit', (code, signal) => {
+            if (signal === 'SIGINT' || code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`Process exited with code ${code} and signal ${signal}`));
+            }
+          });
 
-        child.on('error', reject);
-      });
+          child.on('error', reject);
+        })
+      );
     });
   });
 
@@ -66,61 +69,55 @@ describe('TunTap Integration Tests', {timeout: 15000}, () => {
     assert.strictEqual(tun.close(), true, 'TUN device should close');
   });
 
-  it(
-    'should read and write data (simulate traffic)',
-    {timeout: 10000, skip: skipWithoutPrivileges},
-    async () => {
-      tun = new TunTap();
-      assert.strictEqual(tun.open(), true, 'TUN device should open');
-      await tun.configure('fd00::1', 1500);
-      await new Promise((resolve, reject) => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        let readCount = 0;
+  it('should read and write data (simulate traffic)', {timeout: 10000, skip: skipWithoutPrivileges}, async () => {
+    tun = new TunTap();
+    assert.strictEqual(tun.open(), true, 'TUN device should open');
+    await tun.configure('fd00::1', 1500);
+    const activeTun = tun;
+    await /** @type {Promise<void>} */ (
+      new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-          tun.close();
+          activeTun.close();
           resolve();
         }, 3000);
 
         const interval = setInterval(() => {
           try {
-            const data = tun.read(4096);
+            const data = activeTun.read(4096);
             if (data && data.length > 0) {
-              readCount++;
-              const bytesWritten = tun.write(data);
-              assert.strictEqual(
-                bytesWritten,
-                data.length,
-                'Should echo back same number of bytes',
-              );
+              const bytesWritten = activeTun.write(data);
+              assert.strictEqual(bytesWritten, data.length, 'Should echo back same number of bytes');
               clearTimeout(timeout);
               clearInterval(interval);
-              tun.close();
+              activeTun.close();
               resolve();
             }
           } catch (err) {
             clearTimeout(timeout);
             clearInterval(interval);
-            tun.close();
+            activeTun.close();
             reject(err);
           }
         }, 100);
-      });
-    },
-  );
+      })
+    );
+  });
 
   it('should fail to open an already closed device', {skip: skipWithoutPrivileges}, () => {
     tun = new TunTap();
-    tun.open();
-    tun.close();
-    assert.throws(() => tun.open(), /Device has been closed/);
+    const activeTun = tun;
+    activeTun.open();
+    activeTun.close();
+    assert.throws(() => activeTun.open(), /Device has been closed/);
   });
 
   it('should throw on invalid configuration', {skip: skipWithoutPrivileges}, async () => {
     tun = new TunTap();
-    tun.open();
-    await assert.rejects(() => tun.configure('not-an-ip', 1500), /Invalid IPv6 address/);
-    await assert.rejects(() => tun.configure('fd00::1', 50), /MTU must be between/);
-    tun.close();
+    const activeTun = tun;
+    activeTun.open();
+    await assert.rejects(() => activeTun.configure('not-an-ip', 1500), /Invalid IPv6 address/);
+    await assert.rejects(() => activeTun.configure('fd00::1', 50), /MTU must be between/);
+    activeTun.close();
   });
 
   it('should get interface statistics', {skip: skipWithoutPrivileges}, async () => {
@@ -134,11 +131,10 @@ describe('TunTap Integration Tests', {timeout: 15000}, () => {
   });
 });
 
+/** @param {boolean} hasRequiredPrivileges */
 function getPrivilegeSkipReason(hasRequiredPrivileges) {
   if (hasRequiredPrivileges) {
     return false;
   }
-  return process.platform === 'win32'
-    ? 'Requires Administrator privileges on Windows'
-    : 'Requires root privileges';
+  return process.platform === 'win32' ? 'Requires Administrator privileges on Windows' : 'Requires root privileges';
 }

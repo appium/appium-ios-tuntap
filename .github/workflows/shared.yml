@@ -25,7 +25,7 @@ on:
         default: false
         type: boolean
       run-format-check:
-        description: Run prettier check before tests
+        description: Run format check before tests
         required: false
         default: false
         type: boolean
@@ -95,7 +95,7 @@ jobs:
       if: ${{ inputs.run-lint }}
       run: npm run lint
 
-    - name: Run Prettier check
+    - name: Run format check
       if: ${{ inputs.run-format-check }}
       run: npm run format:check
 

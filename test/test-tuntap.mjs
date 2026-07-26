@@ -1,6 +1,7 @@
-import {TunTap} from '../lib/index.js';
-import {log} from '../lib/logger.js';
+import {TunTap} from '../src/index.js';
+import {log} from '../src/logger.js';
 
+/** @type {TunTap | null} */
 let tun;
 let shuttingDown = false;
 

@@ -1,4 +1,4 @@
-import {isAdministrator} from '../lib/platform/require-admin.js';
+import {isAdministrator} from '../src/platform/require-admin.js';
 
 /**
  * Returns true if the current process is running as root on POSIX systems.
