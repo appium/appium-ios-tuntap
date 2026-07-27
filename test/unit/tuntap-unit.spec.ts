@@ -73,13 +73,11 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     tun.open();
     tun.close();
     await new Promise((resolve) => setTimeout(resolve, 100));
-    const handles = (process as unknown as {_getActiveHandles(): object[]})
-      ._getActiveHandles()
-      .filter(
-        (h) =>
-          // Filter out the process's own stdio handles
-          !(h.constructor && h.constructor.name && h.constructor.name.match(/(Socket|WriteStream|ReadStream)/)),
-      );
+    const handles = (process as unknown as {_getActiveHandles(): object[]})._getActiveHandles().filter(
+      (h) =>
+        // Filter out the process's own stdio handles
+        !(h.constructor && h.constructor.name && h.constructor.name.match(/(Socket|WriteStream|ReadStream)/)),
+    );
     assert.ok(handles.length <= 2, 'No extra handles should remain after close');
   });
 
