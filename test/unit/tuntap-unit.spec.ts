@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import {afterEach, describe, it} from 'node:test';
 
 import {TunTap, TunnelForwarder} from '../../src/index.js';
-import {hasPrivileges} from '../utils.mjs';
+import {hasPrivileges} from '../utils.js';
 
 /**
  * NOTE: Most TunTap tests require elevated privileges (root on POSIX,
@@ -13,8 +13,7 @@ const hasRequiredPrivileges = await hasPrivileges();
 const skipWithoutPrivileges = getPrivilegeSkipReason(hasRequiredPrivileges);
 
 describe('TunTap Unit Tests', {timeout: 10000}, () => {
-  /** @type {TunTap | null} */
-  let tun;
+  let tun: TunTap | null;
 
   afterEach(() => {
     if (tun && tun.isOpen && !tun.isClosed) {
@@ -74,13 +73,11 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     tun.open();
     tun.close();
     await new Promise((resolve) => setTimeout(resolve, 100));
-    const handles = /** @type {{_getActiveHandles(): object[]}} */ (/** @type {unknown} */ (process))
-      ._getActiveHandles()
-      .filter(
-        (h) =>
-          // Filter out the process's own stdio handles
-          !(h.constructor && h.constructor.name && h.constructor.name.match(/(Socket|WriteStream|ReadStream)/)),
-      );
+    const handles = (process as unknown as {_getActiveHandles(): object[]})._getActiveHandles().filter(
+      (h) =>
+        // Filter out the process's own stdio handles
+        !(h.constructor && h.constructor.name && h.constructor.name.match(/(Socket|WriteStream|ReadStream)/)),
+    );
     assert.ok(handles.length <= 2, 'No extra handles should remain after close');
   });
 
@@ -94,8 +91,7 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
   });
 });
 
-/** @param {boolean} hasRequiredPrivileges */
-function getPrivilegeSkipReason(hasRequiredPrivileges) {
+function getPrivilegeSkipReason(hasRequiredPrivileges: boolean): boolean | string {
   if (hasRequiredPrivileges) {
     return false;
   }

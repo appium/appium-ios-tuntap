@@ -5,7 +5,7 @@ import {afterEach, describe, it} from 'node:test';
 import {fileURLToPath} from 'node:url';
 
 import {TunTap} from '../../src/index.js';
-import {hasPrivileges} from '../utils.mjs';
+import {hasPrivileges} from '../utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,34 +13,31 @@ const hasRequiredPrivileges = await hasPrivileges();
 const skipWithoutPrivileges = getPrivilegeSkipReason(hasRequiredPrivileges);
 
 describe('TunTap Integration Tests', {timeout: 15000}, () => {
-  /** @type {TunTap | null} */
-  let tun;
+  let tun: TunTap | null;
 
   describe('TunTap CLI Utility Signal Handling', {skip: process.platform === 'win32'}, () => {
     // Windows does not deliver POSIX signals to child processes the way Unix
     // does. `child.kill('SIGINT')` is a forced termination, so the cooperative
     // cleanup path this test exercises does not apply.
     it('should exit promptly and clean up on SIGINT', {timeout: 10_000}, async () => {
-      const cliPath = path.resolve(__dirname, '../test-tuntap.mjs');
+      const cliPath = path.resolve(__dirname, '../test-tuntap.js');
       const child = spawn('node', [cliPath], {stdio: ['ignore', 'pipe', 'pipe']});
 
       setTimeout(() => {
         child.kill('SIGINT');
       }, 500);
 
-      await /** @type {Promise<void>} */ (
-        new Promise((resolve, reject) => {
-          child.on('exit', (code, signal) => {
-            if (signal === 'SIGINT' || code === 0) {
-              resolve();
-            } else {
-              reject(new Error(`Process exited with code ${code} and signal ${signal}`));
-            }
-          });
+      await new Promise<void>((resolve, reject) => {
+        child.on('exit', (code, signal) => {
+          if (signal === 'SIGINT' || code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Process exited with code ${code} and signal ${signal}`));
+          }
+        });
 
-          child.on('error', reject);
-        })
-      );
+        child.on('error', reject);
+      });
     });
   });
 
@@ -74,33 +71,31 @@ describe('TunTap Integration Tests', {timeout: 15000}, () => {
     assert.strictEqual(tun.open(), true, 'TUN device should open');
     await tun.configure('fd00::1', 1500);
     const activeTun = tun;
-    await /** @type {Promise<void>} */ (
-      new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          activeTun.close();
-          resolve();
-        }, 3000);
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        activeTun.close();
+        resolve();
+      }, 3000);
 
-        const interval = setInterval(() => {
-          try {
-            const data = activeTun.read(4096);
-            if (data && data.length > 0) {
-              const bytesWritten = activeTun.write(data);
-              assert.strictEqual(bytesWritten, data.length, 'Should echo back same number of bytes');
-              clearTimeout(timeout);
-              clearInterval(interval);
-              activeTun.close();
-              resolve();
-            }
-          } catch (err) {
+      const interval = setInterval(() => {
+        try {
+          const data = activeTun.read(4096);
+          if (data && data.length > 0) {
+            const bytesWritten = activeTun.write(data);
+            assert.strictEqual(bytesWritten, data.length, 'Should echo back same number of bytes');
             clearTimeout(timeout);
             clearInterval(interval);
             activeTun.close();
-            reject(err);
+            resolve();
           }
-        }, 100);
-      })
-    );
+        } catch (err) {
+          clearTimeout(timeout);
+          clearInterval(interval);
+          activeTun.close();
+          reject(err);
+        }
+      }, 100);
+    });
   });
 
   it('should fail to open an already closed device', {skip: skipWithoutPrivileges}, () => {
@@ -131,8 +126,7 @@ describe('TunTap Integration Tests', {timeout: 15000}, () => {
   });
 });
 
-/** @param {boolean} hasRequiredPrivileges */
-function getPrivilegeSkipReason(hasRequiredPrivileges) {
+function getPrivilegeSkipReason(hasRequiredPrivileges: boolean): boolean | string {
   if (hasRequiredPrivileges) {
     return false;
   }

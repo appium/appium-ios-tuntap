@@ -4,7 +4,7 @@ import {isAdministrator} from '../src/platform/require-admin.js';
  * Returns true if the current process is running as root on POSIX systems.
  * Returns false on Windows (use {@link isAdministrator} instead).
  */
-export function isRoot() {
+export function isRoot(): boolean {
   return typeof process.getuid === 'function' ? process.getuid() === 0 : false;
 }
 
@@ -13,6 +13,6 @@ export function isRoot() {
  * and configure a TUN device on the host platform (root on POSIX,
  * Administrator on Windows).
  */
-export async function hasPrivileges() {
+export async function hasPrivileges(): Promise<boolean> {
   return process.platform === 'win32' ? await isAdministrator() : isRoot();
 }

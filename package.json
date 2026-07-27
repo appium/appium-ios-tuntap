@@ -43,8 +43,8 @@
     "refresh:wintun": "node scripts/fetch-wintun.mjs",
     "prepare": "npm run build",
     "test": "npm run test:integration && npm run test:unit",
-    "test:unit": "node --enable-source-maps --test --test-force-exit --test-timeout=15000 \"lib/test/unit/**/*.spec.mjs\"",
-    "test:integration": "node --enable-source-maps --test --test-force-exit --test-concurrency=1 --test-timeout=60000 \"lib/test/integration/**/*.spec.mjs\""
+    "test:unit": "node --enable-source-maps --test --test-force-exit --test-timeout=15000 \"lib/test/unit/**/*.spec.js\"",
+    "test:integration": "node --enable-source-maps --test --test-force-exit --test-concurrency=1 --test-timeout=60000 \"lib/test/integration/**/*.spec.js\""
   },
   "dependencies": {
     "@appium/support": "^7.2.0",

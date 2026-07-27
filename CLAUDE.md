@@ -36,7 +36,7 @@ npm run test:integration
 
 # Ad-hoc: run node:test on a single file (add sudo if the test needs root)
 # Test sources import from src/ (type-checked alongside it) and only run compiled from lib/ after `npm run build`
-sudo node --test --test-force-exit --test-timeout=120000 lib/test/unit/tuntap-unit.spec.mjs
+sudo node --test --test-force-exit --test-timeout=120000 lib/test/unit/tuntap-unit.spec.js
 
 # Windows elevated PowerShell (Administrator) for privileged native tests
 npm run build:addon; npm run test:unit
@@ -72,10 +72,10 @@ src/
     require-root.ts      # assertEffectiveRoot() — EUID 0 before privileged commands
 
 test/
-  unit/tuntap-unit.spec.mjs
-  integration/tuntap-integration.spec.mjs
-  test-tuntap.mjs
-  utils.mjs
+  unit/tuntap-unit.spec.ts
+  integration/tuntap-integration.spec.ts
+  test-tuntap.ts
+  utils.ts
   check-linux-prereqs.sh
 ```
 
@@ -111,7 +111,7 @@ Native implementation details are split into `src/native/*`:
 
 ### Tests
 
-**`node:test`** **`.mjs`** ES modules under **`test/`**. Test sources import from **`src/`** (e.g. `import {TunTap} from '../src/index.js'`) so they're type-checked alongside the rest of the project by the root **`tsconfig.json`** — but they are only ever **executed from `lib/test/`** after `npm run build` compiles them, since the `src/`-relative import specifiers only resolve correctly once mirrored into `lib/`. **`test/unit/tuntap-unit.spec.mjs`** and **`test/integration/tuntap-integration.spec.mjs`** (run as **`lib/test/unit/tuntap-unit.spec.mjs`** / **`lib/test/integration/tuntap-integration.spec.mjs`**) expect **root** on POSIX or an elevated PowerShell on Windows. Run test commands with `sudo` on POSIX when privileged cases are required; non-root/non-elevated runs may skip or fail depending on the case.
+**`node:test`** specs written as **`.ts`** ES modules under **`test/`**. Test sources import from **`src/`** (e.g. `import {TunTap} from '../src/index.js'`) so they're type-checked alongside the rest of the project by the root **`tsconfig.json`** — but they are only ever **executed from `lib/test/`** after `npm run build` compiles them to `.js`, since the `src/`-relative import specifiers only resolve correctly once mirrored into `lib/`. **`test/unit/tuntap-unit.spec.ts`** and **`test/integration/tuntap-integration.spec.ts`** (run as **`lib/test/unit/tuntap-unit.spec.js`** / **`lib/test/integration/tuntap-integration.spec.js`**) expect **root** on POSIX or an elevated PowerShell on Windows. Run test commands with `sudo` on POSIX when privileged cases are required; non-root/non-elevated runs may skip or fail depending on the case.
 
 ### Key constraints
 

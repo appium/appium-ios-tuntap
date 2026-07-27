@@ -282,7 +282,7 @@ To manually verify the fix for signal handling (introduced in v0.0.4):
 1. Build the project, then run the compiled CLI utility:
    ```sh
    npm run build
-   sudo node lib/test/test-tuntap.mjs
+   sudo node lib/test/test-tuntap.js
    ```
 2. While it is running, press `Ctrl+C` to send SIGINT.
 3. Confirm that:
