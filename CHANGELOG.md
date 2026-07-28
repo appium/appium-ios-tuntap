@@ -1,3 +1,9 @@
+## [1.2.1](https://github.com/appium/appium-ios-tuntap/compare/v1.2.0...v1.2.1) (2026-07-28)
+
+### Miscellaneous Chores
+
+* Update .editorconfig for JavaScript and JSON files ([c41c6a8](https://github.com/appium/appium-ios-tuntap/commit/c41c6a8de896065201de961a088ca7b4c185d635))
+
 ## [1.2.0](https://github.com/appium/appium-ios-tuntap/compare/v1.1.0...v1.2.0) (2026-07-26)
 
 ### Features
