@@ -49,12 +49,12 @@
   "dependencies": {
     "@appium/support": "^7.2.0",
     "node-addon-api": "^8.5.0",
-    "node-gyp-build": "^4.8.4",
-    "typescript": "^6.0.2"
+    "node-gyp-build": "^4.8.4"
   },
   "devDependencies": {
     "@appium/oxc-config": "^1.1.0",
     "@appium/semantic-release-config": "^1.1.0",
+    "@appium/tsconfig": "^1.2.0",
     "@types/node": "^26.1.2",
     "commander": "^14.0.3",
     "prebuildify": "^6.0.1"
