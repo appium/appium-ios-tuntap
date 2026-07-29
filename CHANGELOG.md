@@ -1,3 +1,9 @@
+## [1.2.2](https://github.com/appium/appium-ios-tuntap/compare/v1.2.1...v1.2.2) (2026-07-29)
+
+### Miscellaneous Chores
+
+* Align tsconfig with the shared one ([#76](https://github.com/appium/appium-ios-tuntap/issues/76)) ([1609578](https://github.com/appium/appium-ios-tuntap/commit/1609578d4e8f6c4528e9ed33db6ad5e35b1b554a))
+
 ## [1.2.1](https://github.com/appium/appium-ios-tuntap/compare/v1.2.0...v1.2.1) (2026-07-28)
 
 ### Miscellaneous Chores
