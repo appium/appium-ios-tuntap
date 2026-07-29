@@ -55,6 +55,7 @@
   "devDependencies": {
     "@appium/oxc-config": "^1.1.0",
     "@appium/semantic-release-config": "^1.1.0",
+    "@appium/tsconfig": "^1.2.0",
     "@types/node": "^25.0.1",
     "commander": "^14.0.3",
     "prebuildify": "^6.0.1"
