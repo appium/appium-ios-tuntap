@@ -1,5 +1,6 @@
+import {createServer} from 'node:net';
+import type {Server, Socket} from 'node:net';
 import {createRequire} from 'node:module';
-import type {Socket} from 'node:net';
 
 import {getPkgRoot} from '../pkg-root.js';
 import type {TunTap} from '../TunTap.js';
@@ -22,10 +23,10 @@ export interface TunnelPskTlsCredentials {
 
 interface NativeTunnelForwarder {
   connect(tcpFd: number, certPem: string, keyPem: string): void;
-  connectSocket(tcpHandle: unknown, certPem: string, keyPem: string): void;
+  connectHost(host: string, port: number, certPem: string, keyPem: string): Promise<void>;
   connectPsk(tcpFd: number, psk: Buffer, identity?: string): void;
-  connectPskSocket(tcpHandle: unknown, psk: Buffer, identity?: string): void;
-  handshake(requestedMtu: number): TunnelInfo;
+  connectPskHost(host: string, port: number, psk: Buffer, identity?: string): Promise<void>;
+  handshake(requestedMtu: number): Promise<TunnelInfo>;
   startForwarding(tunForwardingHandle: unknown, onError?: (message: string) => void): void;
   stop(): void;
 }
@@ -40,42 +41,43 @@ interface NativeTuntapModule {
 export class TunnelForwarder {
   private forwarder: NativeTunnelForwarder | null = null;
   private retainedSocket: Socket | null = null;
+  private loopbackBridge: Server | null = null;
 
-  connect(tcpSocket: Socket, credentials: TunnelLockdownTlsCredentials): void {
-    tcpSocket.pause();
-    tcpSocket.removeAllListeners();
-
+  async connect(tcpSocket: Socket, credentials: TunnelLockdownTlsCredentials): Promise<void> {
     const native = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
     this.forwarder = new native.TunnelForwarder();
+
     if (process.platform === 'win32') {
-      this.forwarder.connectSocket(getSocketHandle(tcpSocket), credentials.cert, credentials.key);
+      const {host, port} = await this.bridgeToNative(tcpSocket);
+      await this.forwarder.connectHost(host, port, credentials.cert, credentials.key);
     } else {
+      tcpSocket.pause();
+      tcpSocket.removeAllListeners();
       this.forwarder.connect(getSocketFd(tcpSocket), credentials.cert, credentials.key);
+      this.takeSocketOwnership(tcpSocket);
     }
-
-    this.takeSocketOwnership(tcpSocket);
   }
 
-  connectPsk(tcpSocket: Socket, credentials: TunnelPskTlsCredentials): void {
-    tcpSocket.pause();
-    tcpSocket.removeAllListeners();
-
+  async connectPsk(tcpSocket: Socket, credentials: TunnelPskTlsCredentials): Promise<void> {
     const native = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
     this.forwarder = new native.TunnelForwarder();
-    if (process.platform === 'win32') {
-      this.forwarder.connectPskSocket(getSocketHandle(tcpSocket), credentials.psk, credentials.identity ?? '');
-    } else {
-      this.forwarder.connectPsk(getSocketFd(tcpSocket), credentials.psk, credentials.identity ?? '');
-    }
 
-    this.takeSocketOwnership(tcpSocket);
+    if (process.platform === 'win32') {
+      const {host, port} = await this.bridgeToNative(tcpSocket);
+      await this.forwarder.connectPskHost(host, port, credentials.psk, credentials.identity ?? '');
+    } else {
+      tcpSocket.pause();
+      tcpSocket.removeAllListeners();
+      this.forwarder.connectPsk(getSocketFd(tcpSocket), credentials.psk, credentials.identity ?? '');
+      this.takeSocketOwnership(tcpSocket);
+    }
   }
 
-  handshake(requestedMtu: number): TunnelInfo {
+  async handshake(requestedMtu: number): Promise<TunnelInfo> {
     if (!this.forwarder) {
       throw new Error('Tunnel forwarder is not connected');
     }
-    return this.forwarder.handshake(requestedMtu);
+    return await this.forwarder.handshake(requestedMtu);
   }
 
   startForwarding(tun: TunTap, onError?: (message: string) => void): void {
@@ -93,6 +95,12 @@ export class TunnelForwarder {
   stop(): void {
     this.forwarder?.stop();
     this.forwarder = null;
+    if (this.loopbackBridge) {
+      // May already be closed (the listener shuts down after the first
+      // accept); the callback form swallows ERR_SERVER_NOT_RUNNING.
+      this.loopbackBridge.close(() => {});
+      this.loopbackBridge = null;
+    }
     if (this.retainedSocket) {
       destroySocket(this.retainedSocket);
       this.retainedSocket = null;
@@ -102,6 +110,63 @@ export class TunnelForwarder {
   private takeSocketOwnership(socket: Socket): void {
     destroySocket(socket);
   }
+
+  /**
+   * Windows has no stable way for native code to recover the OS socket from
+   * an already-connected net.Socket: `_handle.fd` is hard-coded to -1 there
+   * (libuv wraps an opaque SOCKET, not a POSIX fd), and reading V8's private
+   * internal-object layout to find it isn't ABI-stable across V8 versions
+   * (it broke a published build across a single Node upgrade).
+   *
+   * `tcpSocket` also can't simply be redialed by address: on Windows it's
+   * typically the product of a one-time, stateful usbmux handshake (send a
+   * "Connect" message, get an OK, then the *same* socket is repurposed in
+   * place) rather than a plain listener that accepts fresh connections --
+   * dialing its remoteAddress/remotePort again just opens a brand new,
+   * unnegotiated session.
+   *
+   * So instead of extracting or redialing anything, bridge the already-
+   * working `tcpSocket` through a local loopback TCP pair: pipe it into one
+   * end, and let native code dial the other end itself via plain WinSock.
+   * No Node/V8 internals are touched, and the already-negotiated session is
+   * left completely alone.
+   *
+   * Because these pipes are pumped by the JS event loop, the native
+   * connect/handshake calls that read through the bridge run on async
+   * workers (promises), never synchronously on the JS thread.
+   */
+  private bridgeToNative(tcpSocket: Socket): Promise<{host: string; port: number}> {
+    return new Promise((resolve, reject) => {
+      const server = createServer((localSocket) => {
+        // Only one bridge client (the native forwarder) is expected; stop
+        // listening as soon as it arrives so the ephemeral port closes.
+        server.close(() => {});
+        localSocket.setNoDelay(true);
+        tcpSocket.pipe(localSocket);
+        localSocket.pipe(tcpSocket);
+
+        const teardown = () => {
+          destroySocket(localSocket);
+          destroySocket(tcpSocket);
+        };
+        localSocket.on('error', teardown);
+        localSocket.on('close', teardown);
+        tcpSocket.on('error', teardown);
+      });
+
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        const address = server.address();
+        if (!address || typeof address !== 'object') {
+          reject(new Error('Failed to determine loopback bridge port'));
+          return;
+        }
+        this.loopbackBridge = server;
+        this.retainedSocket = tcpSocket;
+        resolve({host: '127.0.0.1', port: address.port});
+      });
+    });
+  }
 }
 
 function getSocketFd(socket: Socket): number {
@@ -110,14 +175,6 @@ function getSocketFd(socket: Socket): number {
     return handle.fd;
   }
   throw new Error('TCP socket file descriptor is not available');
-}
-
-function getSocketHandle(socket: Socket): unknown {
-  const handle = (socket as {_handle?: unknown})._handle;
-  if (handle) {
-    return handle;
-  }
-  throw new Error('TCP socket handle is not available');
 }
 
 function destroySocket(socket: Socket): void {

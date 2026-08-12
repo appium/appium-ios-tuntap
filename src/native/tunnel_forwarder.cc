@@ -12,9 +12,7 @@
 #include <arpa/inet.h>
 #else
 #include <winsock2.h>
-#include <uv.h>
-#include <v8.h>
-#include <v8-version.h>
+#include <ws2tcpip.h>
 #endif
 
 #include <openssl/err.h>
@@ -40,95 +38,73 @@ using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
 
 #ifdef _WIN32
-v8::Local<v8::Value> ToV8Local(napi_value value) {
-  return *reinterpret_cast<v8::Local<v8::Value>*>(&value);
-}
+// Opens a plain TCP connection directly via WinSock, given a host/port.
+//
+// This exists so Windows callers never need to hand a JS net.Socket to the
+// native addon and have it try to recover the underlying OS socket. That
+// used to be done by reading V8's private internal-object layout to find
+// the embedded uv_tcp_t (net.Socket's own `_handle.fd` is hard-coded to -1
+// on Windows, unlike POSIX, because libuv wraps an opaque SOCKET there
+// rather than a POSIX fd) -- but V8's internal-field/pointer-tagging
+// layout is undocumented and not ABI-stable across V8 versions, so a
+// prebuild compiled against one Node/V8 build could fail to resolve the
+// symbols it needs on another (observed as an unhandled delay-load
+// ERROR_PROC_NOT_FOUND crash, exit code 0xC06D007F).
+//
+// Instead, the JS layer bridges its already-negotiated socket through a
+// local loopback listener (see forwarder.ts bridgeToNative) and passes that
+// listener's (host, port) here; this dials it with plain WinSock, so no
+// Node/V8 internals are involved at all.
+bool ConnectRawTcp(const std::string& host, uint16_t port, int& fd, std::string& error) {
+  struct addrinfo hints {};
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_protocol = IPPROTO_TCP;
 
-bool TryReadUvHandle(void* wrapper, size_t offset, uv_tcp_t** out) {
-  bool matched = false;
-#ifdef _MSC_VER
-  __try {
-#endif
-    auto* handle = reinterpret_cast<uv_handle_t*>(
-        reinterpret_cast<uintptr_t>(wrapper) + offset);
-    if (handle->type == UV_TCP && handle->data == wrapper) {
-      *out = reinterpret_cast<uv_tcp_t*>(handle);
-      matched = true;
+  struct addrinfo* resolved = nullptr;
+  const std::string port_str = std::to_string(port);
+  const int gai_rc = getaddrinfo(host.c_str(), port_str.c_str(), &hints, &resolved);
+  if (gai_rc != 0 || resolved == nullptr) {
+    error = "Failed to resolve '" + host + "': getaddrinfo error " + std::to_string(gai_rc);
+    return false;
+  }
+
+  SOCKET sock = INVALID_SOCKET;
+  int last_wsa_error = 0;
+  for (const struct addrinfo* addr = resolved; addr != nullptr; addr = addr->ai_next) {
+    sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+    if (sock == INVALID_SOCKET) {
+      last_wsa_error = WSAGetLastError();
+      continue;
     }
-#ifdef _MSC_VER
-  } __except (EXCEPTION_EXECUTE_HANDLER) {
-    matched = false;
-  }
-#endif
-  return matched;
-}
-
-void* GetNodeBaseObjectWrapper(v8::Local<v8::Object> object) {
-#if V8_MAJOR_VERSION >= 14
-  return object->GetAlignedPointerFromInternalField(1, v8::kEmbedderDataTypeTagDefault);
-#else
-  return object->GetAlignedPointerFromInternalField(1);
-#endif
-}
-
-bool ExtractTcpFdFromNodeHandle(const Napi::Value& value, int& fd, std::string& error) {
-  if (!value.IsObject()) {
-    error = "Expected Node TCP handle object";
-    return false;
-  }
-
-  v8::Local<v8::Value> v8_value = ToV8Local(value);
-  if (!v8_value->IsObject()) {
-    error = "Expected V8 object for Node TCP handle";
-    return false;
-  }
-
-  v8::Local<v8::Object> handle_obj = v8_value.As<v8::Object>();
-  if (handle_obj->InternalFieldCount() <= 1) {
-    error = "Node TCP handle has no internal fields";
-    return false;
-  }
-
-  // Node BaseObject stores an embedder tag in field 0 and the C++ wrapper in
-  // BaseObject::kSlot (field 1). TCPWrap is private, so avoid including Node
-  // internals and only use this stable internal-field convention.
-  void* wrapper = GetNodeBaseObjectWrapper(handle_obj);
-  if (wrapper == nullptr) {
-    error = "Node TCP handle internal wrapper is null";
-    return false;
-  }
-
-  uv_tcp_t* tcp = nullptr;
-  // TCPWrap is private Node internals. Look for the embedded uv_tcp_t by
-  // scanning the wrapper object for a uv_handle_t whose data points back to it.
-  for (size_t offset = 0; offset < 2048; offset += sizeof(void*)) {
-    if (TryReadUvHandle(wrapper, offset, &tcp)) {
+    if (connect(sock, addr->ai_addr, static_cast<int>(addr->ai_addrlen)) == 0) {
       break;
     }
+    last_wsa_error = WSAGetLastError();
+    closesocket(sock);
+    sock = INVALID_SOCKET;
   }
-  if (tcp == nullptr) {
-    error = "Failed to locate uv_tcp_t in Node TCP handle";
+  freeaddrinfo(resolved);
+
+  if (sock == INVALID_SOCKET) {
+    error = "Failed to connect to " + host + ":" + port_str + " (WSA error " +
+            std::to_string(last_wsa_error) + ")";
     return false;
   }
 
-  uv_os_fd_t os_fd{};
-  const int rc = uv_fileno(reinterpret_cast<const uv_handle_t*>(tcp), &os_fd);
-  if (rc != 0) {
-    error = std::string("uv_fileno failed: ") + uv_strerror(rc);
-    return false;
-  }
+  // Handshake frames are small; don't let Nagle delay them (best effort).
+  const BOOL no_delay = TRUE;
+  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&no_delay),
+             sizeof(no_delay));
 
-  const uintptr_t raw_fd = reinterpret_cast<uintptr_t>(os_fd);
+  const uintptr_t raw_fd = static_cast<uintptr_t>(sock);
   if (raw_fd > static_cast<uintptr_t>(std::numeric_limits<int>::max())) {
-    error = "Extracted TCP socket handle is too large for OpenSSL fd API";
+    closesocket(sock);
+    error = "Connected socket handle is too large for OpenSSL fd API";
     return false;
   }
 
   fd = static_cast<int>(raw_fd);
-  if (fd < 0) {
-    error = "Extracted TCP socket handle is invalid";
-    return false;
-  }
   return true;
 }
 #endif
@@ -852,6 +828,154 @@ void TunnelForwarder::DeviceToTunLoop() {
 
 // --- N-API wrapper ---
 
+namespace {
+
+// The connect and CDTunnel-handshake phases block on socket I/O (SSL_connect
+// and friends run with a 15s deadline). On Windows the transport is a local
+// loopback bridge pumped by JS streams (see forwarder.ts bridgeToNative), so
+// these phases MUST run off the JS thread -- if they blocked the event loop,
+// the bridge could never deliver their bytes and every connect would time
+// out. Each worker holds a persistent reference to the wrap object so the
+// underlying TunnelForwarder outlives the async work.
+
+#ifdef _WIN32
+class ConnectHostWorker : public Napi::AsyncWorker {
+public:
+  ConnectHostWorker(Napi::Object receiver,
+                    TunnelForwarder& forwarder,
+                    std::string host,
+                    uint16_t port,
+                    std::string cert_pem,
+                    std::string key_pem,
+                    Napi::Promise::Deferred deferred)
+      : Napi::AsyncWorker(receiver.Env()),
+        receiver_(Napi::Persistent(receiver)),
+        forwarder_(forwarder),
+        host_(std::move(host)),
+        port_(port),
+        cert_pem_(std::move(cert_pem)),
+        key_pem_(std::move(key_pem)),
+        deferred_(deferred) {}
+
+  void Execute() override {
+    std::string error;
+    int fd = -1;
+    if (!ConnectRawTcp(host_, port_, fd, error)) {
+      SetError(error);
+      return;
+    }
+    const bool ok = forwarder_.Connect(fd, cert_pem_, key_pem_, error);
+    // TunnelSslClient duplicates the fd (WSADuplicateSocketW) and owns the
+    // duplicate, so the original is ours to close either way.
+    closesocket(static_cast<SOCKET>(fd));
+    if (!ok) {
+      SetError(error);
+    }
+  }
+
+  void OnOK() override { deferred_.Resolve(Env().Undefined()); }
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+private:
+  Napi::ObjectReference receiver_;
+  TunnelForwarder& forwarder_;
+  std::string host_;
+  uint16_t port_;
+  std::string cert_pem_;
+  std::string key_pem_;
+  Napi::Promise::Deferred deferred_;
+};
+
+class ConnectPskHostWorker : public Napi::AsyncWorker {
+public:
+  ConnectPskHostWorker(Napi::Object receiver,
+                       TunnelForwarder& forwarder,
+                       std::string host,
+                       uint16_t port,
+                       std::vector<uint8_t> psk,
+                       std::string identity,
+                       Napi::Promise::Deferred deferred)
+      : Napi::AsyncWorker(receiver.Env()),
+        receiver_(Napi::Persistent(receiver)),
+        forwarder_(forwarder),
+        host_(std::move(host)),
+        port_(port),
+        psk_(std::move(psk)),
+        identity_(std::move(identity)),
+        deferred_(deferred) {}
+
+  void Execute() override {
+    std::string error;
+    int fd = -1;
+    if (!ConnectRawTcp(host_, port_, fd, error)) {
+      SetError(error);
+      return;
+    }
+    const bool ok = forwarder_.ConnectPsk(fd, psk_.data(), psk_.size(), identity_, error);
+    closesocket(static_cast<SOCKET>(fd));
+    if (!ok) {
+      SetError(error);
+    }
+  }
+
+  void OnOK() override { deferred_.Resolve(Env().Undefined()); }
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+private:
+  Napi::ObjectReference receiver_;
+  TunnelForwarder& forwarder_;
+  std::string host_;
+  uint16_t port_;
+  std::vector<uint8_t> psk_;
+  std::string identity_;
+  Napi::Promise::Deferred deferred_;
+};
+#endif  // _WIN32
+
+class HandshakeWorker : public Napi::AsyncWorker {
+public:
+  HandshakeWorker(Napi::Object receiver,
+                  TunnelForwarder& forwarder,
+                  uint32_t requested_mtu,
+                  Napi::Promise::Deferred deferred)
+      : Napi::AsyncWorker(receiver.Env()),
+        receiver_(Napi::Persistent(receiver)),
+        forwarder_(forwarder),
+        requested_mtu_(requested_mtu),
+        deferred_(deferred) {}
+
+  void Execute() override {
+    std::string error;
+    if (!forwarder_.Handshake(requested_mtu_, handshake_, error)) {
+      SetError(error);
+    }
+  }
+
+  void OnOK() override {
+    Napi::Env env = Env();
+    Napi::Object client_params = Napi::Object::New(env);
+    client_params.Set("address", handshake_.client_address);
+    client_params.Set("mtu", handshake_.mtu);
+
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("clientParameters", client_params);
+    result.Set("serverAddress", handshake_.server_address);
+    result.Set("serverRSDPort", handshake_.server_rsd_port);
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+private:
+  Napi::ObjectReference receiver_;
+  TunnelForwarder& forwarder_;
+  uint32_t requested_mtu_;
+  TunnelHandshakeInfo handshake_{};
+  Napi::Promise::Deferred deferred_;
+};
+
+}  // namespace
+
 class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
 public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -859,9 +983,9 @@ public:
         DefineClass(env,
                     "TunnelForwarder",
                     {InstanceMethod("connect", &TunnelForwarderWrap::Connect),
-                     InstanceMethod("connectSocket", &TunnelForwarderWrap::ConnectSocket),
+                     InstanceMethod("connectHost", &TunnelForwarderWrap::ConnectHost),
                      InstanceMethod("connectPsk", &TunnelForwarderWrap::ConnectPsk),
-                     InstanceMethod("connectPskSocket", &TunnelForwarderWrap::ConnectPskSocket),
+                     InstanceMethod("connectPskHost", &TunnelForwarderWrap::ConnectPskHost),
                      InstanceMethod("handshake", &TunnelForwarderWrap::Handshake),
                      InstanceMethod("startForwarding", &TunnelForwarderWrap::StartForwarding),
                      InstanceMethod("stop", &TunnelForwarderWrap::Stop)});
@@ -921,28 +1045,31 @@ private:
     return env.Undefined();
   }
 
-  Napi::Value ConnectSocket(const Napi::CallbackInfo& info) {
+  Napi::Value ConnectHost(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    if (info.Length() < 3 || !info[1].IsString() || !info[2].IsString()) {
-      Napi::TypeError::New(env, "Expected (tcpHandle, certPem, keyPem)")
+    if (info.Length() < 4 || !info[0].IsString() || !info[1].IsNumber() || !info[2].IsString() ||
+        !info[3].IsString()) {
+      Napi::TypeError::New(env, "Expected (host, port, certPem, keyPem)")
           .ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
 #ifdef _WIN32
-    int tcp_fd = -1;
-    std::string error;
-    if (!ExtractTcpFdFromNodeHandle(info[0], tcp_fd, error) ||
-        !forwarder_.Connect(tcp_fd,
-                            info[1].As<Napi::String>().Utf8Value(),
-                            info[2].As<Napi::String>().Utf8Value(),
-                            error)) {
-      Napi::Error::New(env, error).ThrowAsJavaScriptException();
-    }
+    auto deferred = Napi::Promise::Deferred::New(env);
+    auto* worker =
+        new ConnectHostWorker(info.This().As<Napi::Object>(),
+                              forwarder_,
+                              info[0].As<Napi::String>().Utf8Value(),
+                              static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value()),
+                              info[2].As<Napi::String>().Utf8Value(),
+                              info[3].As<Napi::String>().Utf8Value(),
+                              deferred);
+    worker->Queue();
+    return deferred.Promise();
 #else
-    Napi::Error::New(env, "connectSocket is only supported on Windows").ThrowAsJavaScriptException();
-#endif
+    Napi::Error::New(env, "connectHost is only supported on Windows").ThrowAsJavaScriptException();
     return env.Undefined();
+#endif
   }
 
   Napi::Value ConnectPsk(const Napi::CallbackInfo& info) {
@@ -970,31 +1097,39 @@ private:
     return env.Undefined();
   }
 
-  Napi::Value ConnectPskSocket(const Napi::CallbackInfo& info) {
+  Napi::Value ConnectPskHost(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    if (info.Length() < 2 || !info[1].IsBuffer()) {
-      Napi::TypeError::New(env, "Expected (tcpHandle, pskBuffer[, identity])")
+    if (info.Length() < 3 || !info[0].IsString() || !info[1].IsNumber() || !info[2].IsBuffer()) {
+      Napi::TypeError::New(env, "Expected (host, port, pskBuffer[, identity])")
           .ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
     std::string identity;
-    if (info.Length() >= 3 && info[2].IsString()) {
-      identity = info[2].As<Napi::String>().Utf8Value();
+    if (info.Length() >= 4 && info[3].IsString()) {
+      identity = info[3].As<Napi::String>().Utf8Value();
     }
 
 #ifdef _WIN32
-    int tcp_fd = -1;
-    std::string error;
-    Napi::Buffer<uint8_t> psk = info[1].As<Napi::Buffer<uint8_t>>();
-    if (!ExtractTcpFdFromNodeHandle(info[0], tcp_fd, error) ||
-        !forwarder_.ConnectPsk(tcp_fd, psk.Data(), psk.Length(), identity, error)) {
-      Napi::Error::New(env, error).ThrowAsJavaScriptException();
-    }
+    // Copy the PSK on the JS thread; the buffer may be collected before the
+    // worker runs.
+    Napi::Buffer<uint8_t> psk = info[2].As<Napi::Buffer<uint8_t>>();
+    std::vector<uint8_t> psk_copy(psk.Data(), psk.Data() + psk.Length());
+    auto deferred = Napi::Promise::Deferred::New(env);
+    auto* worker =
+        new ConnectPskHostWorker(info.This().As<Napi::Object>(),
+                                 forwarder_,
+                                 info[0].As<Napi::String>().Utf8Value(),
+                                 static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value()),
+                                 std::move(psk_copy),
+                                 std::move(identity),
+                                 deferred);
+    worker->Queue();
+    return deferred.Promise();
 #else
-    Napi::Error::New(env, "connectPskSocket is only supported on Windows").ThrowAsJavaScriptException();
-#endif
+    Napi::Error::New(env, "connectPskHost is only supported on Windows").ThrowAsJavaScriptException();
     return env.Undefined();
+#endif
   }
 
   Napi::Value Handshake(const Napi::CallbackInfo& info) {
@@ -1004,22 +1139,15 @@ private:
       return env.Undefined();
     }
 
-    TunnelHandshakeInfo handshake{};
-    std::string error;
-    if (!forwarder_.Handshake(info[0].As<Napi::Number>().Uint32Value(), handshake, error)) {
-      Napi::Error::New(env, error).ThrowAsJavaScriptException();
-      return env.Undefined();
-    }
-
-    Napi::Object client_params = Napi::Object::New(env);
-    client_params.Set("address", handshake.client_address);
-    client_params.Set("mtu", handshake.mtu);
-
-    Napi::Object result = Napi::Object::New(env);
-    result.Set("clientParameters", client_params);
-    result.Set("serverAddress", handshake.server_address);
-    result.Set("serverRSDPort", handshake.server_rsd_port);
-    return result;
+    // Async on every platform: the CDTunnel exchange blocks on socket I/O,
+    // and on Windows that I/O flows through the JS-pumped loopback bridge.
+    auto deferred = Napi::Promise::Deferred::New(env);
+    auto* worker = new HandshakeWorker(info.This().As<Napi::Object>(),
+                                       forwarder_,
+                                       info[0].As<Napi::Number>().Uint32Value(),
+                                       deferred);
+    worker->Queue();
+    return deferred.Promise();
   }
 
   Napi::Value StartForwarding(const Napi::CallbackInfo& info) {

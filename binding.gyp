@@ -122,7 +122,8 @@
             "src/native/wintun_loader.cc",
             "src/native/tun_backend_windows.cc",
             "src/native/tunnel_ssl.cc",
-            "src/native/tunnel_forwarder.cc"
+            "src/native/tunnel_forwarder.cc",
+            "src/native/win_delay_load_failure_hook.cc"
           ],
           "include_dirs": [
             "<(openssl_root)/include"
