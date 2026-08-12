@@ -1,3 +1,9 @@
+## [1.2.3](https://github.com/appium/appium-ios-tuntap/compare/v1.2.2...v1.2.3) (2026-08-12)
+
+### Bug Fixes
+
+* replace V8-internals socket extraction with loopback bridge on Windows ([#77](https://github.com/appium/appium-ios-tuntap/issues/77)) ([0b11ab2](https://github.com/appium/appium-ios-tuntap/commit/0b11ab2750aaa9ca3e5ac36c0c318c326efb71d0))
+
 ## [1.2.2](https://github.com/appium/appium-ios-tuntap/compare/v1.2.1...v1.2.2) (2026-07-29)
 
 ### Miscellaneous Chores
