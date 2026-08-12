@@ -112,28 +112,23 @@ export class TunnelForwarder {
   }
 
   /**
-   * Windows has no stable way for native code to recover the OS socket from
-   * an already-connected net.Socket: `_handle.fd` is hard-coded to -1 there
-   * (libuv wraps an opaque SOCKET, not a POSIX fd), and reading V8's private
-   * internal-object layout to find it isn't ABI-stable across V8 versions
-   * (it broke a published build across a single Node upgrade).
+   * Bridges an already-connected `tcpSocket` to native code through a local
+   * loopback TCP pair, so native dials the bridge instead of touching the
+   * original socket.
    *
-   * `tcpSocket` also can't simply be redialed by address: on Windows it's
-   * typically the product of a one-time, stateful usbmux handshake (send a
-   * "Connect" message, get an OK, then the *same* socket is repurposed in
-   * place) rather than a plain listener that accepts fresh connections --
-   * dialing its remoteAddress/remotePort again just opens a brand new,
-   * unnegotiated session.
+   * Windows can't hand the OS socket to native (`_handle.fd` is -1, and
+   * reading V8 internals to find it broke a prebuild across a Node upgrade),
+   * and the socket can't be redialed either -- it's the product of a
+   * one-time usbmux handshake, so a fresh dial gets an unnegotiated session.
    *
-   * So instead of extracting or redialing anything, bridge the already-
-   * working `tcpSocket` through a local loopback TCP pair: pipe it into one
-   * end, and let native code dial the other end itself via plain WinSock.
-   * No Node/V8 internals are touched, and the already-negotiated session is
-   * left completely alone.
+   * Costs roughly half the throughput of a direct fd handoff, since every
+   * byte crosses two extra user/kernel boundaries with the JS event loop as
+   * the pump. Accepted deliberately: slower but stable.
    *
-   * Because these pipes are pumped by the JS event loop, the native
-   * connect/handshake calls that read through the bridge run on async
-   * workers (promises), never synchronously on the JS thread.
+   * Only a real device exercises this. To verify changes, link into
+   * appium-ios-remotexpc and run `test:afc-tunnel-stability` with
+   * AFC_STABILITY_ITERATIONS=20; what matters is flatness, not absolute
+   * speed -- degrading later rounds mean the bridge isn't draining.
    */
   private bridgeToNative(tcpSocket: Socket): Promise<{host: string; port: number}> {
     return new Promise((resolve, reject) => {
@@ -142,6 +137,9 @@ export class TunnelForwarder {
         // listening as soon as it arrives so the ephemeral port closes.
         server.close(() => {});
         localSocket.setNoDelay(true);
+        // Mirrors the device socket's settings; on loopback this is mostly
+        // defensive, since a dead peer already surfaces as close/error.
+        localSocket.setKeepAlive(true, 1000);
         tcpSocket.pipe(localSocket);
         localSocket.pipe(tcpSocket);
 

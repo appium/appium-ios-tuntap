@@ -1,20 +1,8 @@
-// MSVC's delay-load runtime (delayimp.h) raises an unhandled structured
-// exception -- VcppException(ERROR_SEVERITY_ERROR, ERROR_MOD_NOT_FOUND /
-// ERROR_PROC_NOT_FOUND), surfacing as process exit code 0xC06D007E /
-// 0xC06D007F -- when a delay-loaded DLL, or a specific exported function
-// inside it, can't be resolved at first use. Because this happens via SEH
-// rather than a C++ exception or a Node-API error, it terminates the whole
-// process silently: Node's own uncaughtException/unhandledRejection
-// handlers never see it, and nothing is written to stdout/stderr by
-// default.
-//
-// This installs a delay-load *failure* hook (distinct from node-gyp's own
-// __pfnDliNotifyHook2 in win_delay_load_hook.cc, which only redirects the
-// load target for the host executable) so that if this ever happens again
-// -- for example a published prebuild resolving a node.exe export that
-// isn't present on the Node.js build it's actually run against -- the
-// failure is reported with the exact DLL/symbol name before the process
-// dies, instead of surfacing only as an opaque exit code.
+// An unresolvable delay-loaded DLL or export kills the process via SEH (exit
+// code 0xC06D007E/F) before any JS handler sees it, with nothing logged. This
+// failure hook prints the offending DLL/symbol first, turning an opaque exit
+// code into a diagnosable one. Distinct from node-gyp's __pfnDliNotifyHook2
+// in win_delay_load_hook.cc, which only redirects the load target.
 
 #ifdef _MSC_VER
 
@@ -55,10 +43,7 @@ FARPROC WINAPI DelayLoadFailureHook(unsigned int event, DelayLoadInfo* info) {
     default:
       break;
   }
-  // Returning NULL preserves the default behavior -- the delay-load runtime
-  // still raises its structured exception afterward. This hook only adds a
-  // diagnostic message before that happens; it doesn't change outcomes on
-  // machines where resolution succeeds.
+  // NULL keeps the default behavior: the runtime still raises afterward.
   return NULL;
 }
 

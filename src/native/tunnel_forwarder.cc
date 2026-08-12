@@ -38,23 +38,11 @@ using Clock = std::chrono::steady_clock;
 using TimePoint = Clock::time_point;
 
 #ifdef _WIN32
-// Opens a plain TCP connection directly via WinSock, given a host/port.
-//
-// This exists so Windows callers never need to hand a JS net.Socket to the
-// native addon and have it try to recover the underlying OS socket. That
-// used to be done by reading V8's private internal-object layout to find
-// the embedded uv_tcp_t (net.Socket's own `_handle.fd` is hard-coded to -1
-// on Windows, unlike POSIX, because libuv wraps an opaque SOCKET there
-// rather than a POSIX fd) -- but V8's internal-field/pointer-tagging
-// layout is undocumented and not ABI-stable across V8 versions, so a
-// prebuild compiled against one Node/V8 build could fail to resolve the
-// symbols it needs on another (observed as an unhandled delay-load
-// ERROR_PROC_NOT_FOUND crash, exit code 0xC06D007F).
-//
-// Instead, the JS layer bridges its already-negotiated socket through a
-// local loopback listener (see forwarder.ts bridgeToNative) and passes that
-// listener's (host, port) here; this dials it with plain WinSock, so no
-// Node/V8 internals are involved at all.
+// Dials a host/port with plain WinSock. Windows can't recover the OS socket
+// from a JS net.Socket (`_handle.fd` is -1; reading V8 internals to find it
+// is not ABI-stable and broke a prebuild across a Node upgrade), so the JS
+// layer instead bridges its socket through a loopback listener and passes
+// that address here. See forwarder.ts bridgeToNative.
 bool ConnectRawTcp(const std::string& host, uint16_t port, int& fd, std::string& error) {
   struct addrinfo hints {};
   hints.ai_family = AF_UNSPEC;
@@ -830,13 +818,10 @@ void TunnelForwarder::DeviceToTunLoop() {
 
 namespace {
 
-// The connect and CDTunnel-handshake phases block on socket I/O (SSL_connect
-// and friends run with a 15s deadline). On Windows the transport is a local
-// loopback bridge pumped by JS streams (see forwarder.ts bridgeToNative), so
-// these phases MUST run off the JS thread -- if they blocked the event loop,
-// the bridge could never deliver their bytes and every connect would time
-// out. Each worker holds a persistent reference to the wrap object so the
-// underlying TunnelForwarder outlives the async work.
+// Connect and handshake block on socket I/O, so they must run off the JS
+// thread: on Windows their bytes flow through the JS-pumped loopback bridge,
+// which a blocked event loop could never deliver. Each worker keeps a
+// persistent ref to the wrap so the forwarder outlives the async work.
 
 #ifdef _WIN32
 class ConnectHostWorker : public Napi::AsyncWorker {
