@@ -141,13 +141,7 @@ export async function connectToTunnelLockdown(
   credentials: TunnelLockdownTlsCredentials,
   options?: {onDead?: (reason: string) => void},
 ): Promise<TunnelConnection> {
-  return connectTunnel(
-    tcpSocket,
-    (forwarder) => {
-      forwarder.connect(tcpSocket, credentials);
-    },
-    options?.onDead,
-  );
+  return connectTunnel(tcpSocket, (forwarder) => forwarder.connect(tcpSocket, credentials), options?.onDead);
 }
 
 /**
@@ -160,18 +154,12 @@ export async function connectToTunnelPsk(
   credentials: TunnelPskTlsCredentials,
   options?: {onDead?: (reason: string) => void},
 ): Promise<TunnelConnection> {
-  return connectTunnel(
-    tcpSocket,
-    (forwarder) => {
-      forwarder.connectPsk(tcpSocket, credentials);
-    },
-    options?.onDead,
-  );
+  return connectTunnel(tcpSocket, (forwarder) => forwarder.connectPsk(tcpSocket, credentials), options?.onDead);
 }
 
 async function connectTunnel(
   tcpSocket: Socket,
-  setupTls: (forwarder: TunnelForwarder) => void,
+  setupTls: (forwarder: TunnelForwarder) => Promise<void>,
   onDead?: (reason: string) => void,
 ): Promise<TunnelConnection> {
   const tunnelManager = new TunnelManager();
@@ -181,8 +169,8 @@ async function connectTunnel(
     tcpSocket.setNoDelay(true);
     tcpSocket.setKeepAlive(true, 1000);
 
-    setupTls(forwarder);
-    const tunnelInfo = forwarder.handshake(CD_TUNNEL_MTU);
+    await setupTls(forwarder);
+    const tunnelInfo = await forwarder.handshake(CD_TUNNEL_MTU);
     tunDebug('Tunnel parameters exchanged:', tunnelInfo);
 
     const tunInterfaceInfo = await tunnelManager.setupInterface(tunnelInfo);
