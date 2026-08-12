@@ -141,11 +141,7 @@ export async function connectToTunnelLockdown(
   credentials: TunnelLockdownTlsCredentials,
   options?: {onDead?: (reason: string) => void},
 ): Promise<TunnelConnection> {
-  return connectTunnel(
-    tcpSocket,
-    (forwarder) => forwarder.connect(tcpSocket, credentials),
-    options?.onDead,
-  );
+  return connectTunnel(tcpSocket, (forwarder) => forwarder.connect(tcpSocket, credentials), options?.onDead);
 }
 
 /**
@@ -158,11 +154,7 @@ export async function connectToTunnelPsk(
   credentials: TunnelPskTlsCredentials,
   options?: {onDead?: (reason: string) => void},
 ): Promise<TunnelConnection> {
-  return connectTunnel(
-    tcpSocket,
-    (forwarder) => forwarder.connectPsk(tcpSocket, credentials),
-    options?.onDead,
-  );
+  return connectTunnel(tcpSocket, (forwarder) => forwarder.connectPsk(tcpSocket, credentials), options?.onDead);
 }
 
 async function connectTunnel(

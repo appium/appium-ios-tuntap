@@ -1,6 +1,6 @@
+import {createRequire} from 'node:module';
 import {createServer} from 'node:net';
 import type {Server, Socket} from 'node:net';
-import {createRequire} from 'node:module';
 
 import {getPkgRoot} from '../pkg-root.js';
 import type {TunTap} from '../TunTap.js';
