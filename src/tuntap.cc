@@ -11,23 +11,31 @@
 #include "native/tun_backend.h"
 #include "native/tunnel_forwarder.h"
 
-struct TunPollDispatch {
+struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
   Napi::ThreadSafeFunction tsfn;
   std::mutex mutex;
   std::deque<std::vector<uint8_t>> pending;
   size_t max_pending_ = 1;
   class TunDevice* device_ = nullptr;
 
+  // Each queued job keeps the dispatch alive, so it outlives a close that
+  // happens while callbacks are still draining.
   struct PacketJob {
-    TunPollDispatch* dispatch;
+    std::shared_ptr<TunPollDispatch> dispatch;
     std::vector<uint8_t>* packet;
   };
 
   void OnJsConsumed();
 
+  // Drop the device back-pointer so a late callback cannot resume a closing device.
+  void Detach() {
+    std::lock_guard<std::mutex> lock(mutex);
+    device_ = nullptr;
+  }
+
   static void CallJs(Napi::Env env,
                      Napi::Function jsCallback,
-                     TunPollDispatch* self,
+                     const std::shared_ptr<TunPollDispatch>& self,
                      std::vector<uint8_t>* packet) {
     if (env == nullptr || jsCallback.IsEmpty() || packet == nullptr) {
       delete packet;
@@ -41,7 +49,7 @@ struct TunPollDispatch {
         [](Napi::Env, uint8_t*, std::vector<uint8_t>* vec) { delete vec; },
         backing);
     jsCallback.Call({buf});
-    if (self != nullptr) {
+    if (self) {
       self->OnJsConsumed();
     }
   }
@@ -50,7 +58,7 @@ struct TunPollDispatch {
     std::lock_guard<std::mutex> lock(mutex);
     while (!pending.empty()) {
       auto* packet = new std::vector<uint8_t>(std::move(pending.front()));
-      auto* job = new PacketJob{this, packet};
+      auto* job = new PacketJob{shared_from_this(), packet};
       napi_status status = tsfn.NonBlockingCall(
           job,
           [](Napi::Env env, Napi::Function jsCallback, PacketJob* job) {
@@ -111,7 +119,7 @@ private:
   std::mutex device_mutex_;
 
   Napi::ThreadSafeFunction tsfn_;
-  TunPollDispatch* poll_dispatch_ = nullptr;
+  std::shared_ptr<TunPollDispatch> poll_dispatch_;
   std::atomic<bool> polling_;
   static constexpr size_t MAX_POLL_BUFFER = 65535;
 
@@ -328,12 +336,17 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   }
 
   Napi::ThreadSafeFunction tsfn = tsfn_;
-  auto* dispatch = new TunPollDispatch();
+  auto dispatch = std::make_shared<TunPollDispatch>();
   dispatch->tsfn = tsfn;
   dispatch->max_pending_ = queue_depth;
   dispatch->device_ = this;
   poll_dispatch_ = dispatch;
-  auto packet_cb = [this, dispatch](std::vector<uint8_t> packet) mutable -> bool {
+  auto packet_cb = [this, weak_dispatch = std::weak_ptr<TunPollDispatch>(dispatch)](
+                       std::vector<uint8_t> packet) mutable -> bool {
+    const auto dispatch = weak_dispatch.lock();
+    if (!dispatch) {
+      return false;
+    }
     const bool accepted = dispatch->PostPacket(std::move(packet));
     if (polling_ && backend_) {
       // Pause until the JS callback runs (pmd3 reads one utun packet per iteration).
@@ -413,15 +426,15 @@ void TunDevice::StopPollingLocked() {
 }
 
 void TunDevice::ReleaseTsfnLocked() {
-  // Release TSFN first — it blocks until queued callbacks finish. Those callbacks
-  // may still dereference poll_dispatch_, so it must outlive the TSFN drain.
+  // Release() does not block: already-queued callbacks still run afterwards.
+  // They own the dispatch via shared_ptr, so dropping our reference here is safe.
+  if (poll_dispatch_) {
+    poll_dispatch_->Detach();
+    poll_dispatch_.reset();
+  }
   if (tsfn_) {
     tsfn_.Release();
     tsfn_ = nullptr;
-  }
-  if (poll_dispatch_ != nullptr) {
-    delete poll_dispatch_;
-    poll_dispatch_ = nullptr;
   }
 }
 
