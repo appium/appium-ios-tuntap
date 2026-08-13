@@ -448,7 +448,10 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
     error = "Invalid CDTunnel magic in handshake response";
     return false;
   }
-  const uint16_t payload_len = ntohs(*reinterpret_cast<uint16_t*>(header + 8));
+  // header is a byte array, so copy the length out rather than aliasing it as uint16_t.
+  uint16_t payload_len_be = 0;
+  std::memcpy(&payload_len_be, header + 8, sizeof(payload_len_be));
+  const uint16_t payload_len = ntohs(payload_len_be);
   std::vector<uint8_t> body(payload_len);
   if (payload_len > 0 && SslReadExact(body.data(), body.size()) < 0) {
     error = Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout"
