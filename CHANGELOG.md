@@ -1,3 +1,9 @@
+## [1.2.4](https://github.com/appium/appium-ios-tuntap/compare/v1.2.3...v1.2.4) (2026-08-13)
+
+### Bug Fixes
+
+* **native:** report TLS connect failures without dereferencing null ([#78](https://github.com/appium/appium-ios-tuntap/issues/78)) ([58a31bd](https://github.com/appium/appium-ios-tuntap/commit/58a31bdfa631d7c6d0f8bd9f0c90893256f54bc5))
+
 ## [1.2.3](https://github.com/appium/appium-ios-tuntap/compare/v1.2.2...v1.2.3) (2026-08-12)
 
 ### Bug Fixes
