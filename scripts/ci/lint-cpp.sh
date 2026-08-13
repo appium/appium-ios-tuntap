@@ -17,12 +17,6 @@ fi
 files=()
 while IFS= read -r file; do
   files+=("$file")
-done < <(node -e "
-const {readFileSync} = require('node:fs');
-const db = JSON.parse(readFileSync('build/Release/compile_commands.json', 'utf8'));
-for (const entry of db) {
-  if (!entry.file.includes('/node_modules/')) console.log(entry.file);
-}
-")
+done < <(jq -r '.[] | select(.file | contains("/node_modules/") | not) | .file' build/Release/compile_commands.json)
 
 clang-tidy -p build/Release "${extra_args[@]}" "${files[@]}"
