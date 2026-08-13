@@ -1,0 +1,7 @@
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++17
+ColumnLimit: 120
+# Preserve existing include order: Windows headers here are order-sensitive
+# (e.g. winsock2.h must precede windows.h), so don't let clang-format resort them.
+SortIncludes: false

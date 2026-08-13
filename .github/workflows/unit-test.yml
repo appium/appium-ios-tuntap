@@ -31,5 +31,7 @@ jobs:
       node-version: ${{ matrix.node-version }}
       test-command: npm run test:unit
       test-name: Unit tests
-      run-lint: ${{ !contains(matrix.image, 'windows') }}
-      run-format-check: ${{ !contains(matrix.image, 'windows') }}
+      run-lint: ${{ contains(matrix.image, 'ubuntu') }}
+      run-format-check: ${{ contains(matrix.image, 'ubuntu') }}
+      run-cpp-format-check: ${{ contains(matrix.image, 'ubuntu') }}
+      run-cpp-lint: ${{ contains(matrix.image, 'ubuntu') }}
