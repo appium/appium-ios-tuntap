@@ -109,6 +109,37 @@ int DuplicateSocketFd(int tcp_fd, std::string& error) {
 }
 #endif
 
+// Takes an owned copy of the caller's socket so the JS side can drop the
+// original as soon as Connect returns.
+int AcquireOwnedFd(int tcp_fd, std::string& error) {
+#ifdef _WIN32
+  return DuplicateSocketFd(tcp_fd, error);
+#else
+  const int fd = dup(tcp_fd);
+  if (fd < 0) {
+    error = std::string("dup of TCP socket failed: ") + strerror(errno);
+  }
+  return fd;
+#endif
+}
+
+// ERR_reason_error_string returns null when the queue is empty, which is the
+// normal case for SSL_ERROR_SYSCALL (peer reset, EOF mid-handshake).
+std::string DescribeConnectFailure(int ssl_error) {
+  const unsigned long queued = ERR_get_error();
+  const char* reason = queued == 0 ? nullptr : ERR_reason_error_string(queued);
+  if (reason != nullptr) {
+    return std::string("SSL_connect failed: ") + reason;
+  }
+#ifdef _WIN32
+  const int system_error = WSAGetLastError();
+#else
+  const int system_error = errno;
+#endif
+  return "SSL_connect failed: ssl_error=" + std::to_string(ssl_error) +
+         " system_error=" + std::to_string(system_error);
+}
+
 bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point deadline) {
 #ifdef _WIN32
   WSAPOLLFD pfd {};
@@ -218,7 +249,7 @@ bool TunnelSslClient::ConnectTls(int timeout_ms, std::string& error) {
       }
       continue;
     }
-    error = std::string("SSL_connect failed: ") + ERR_reason_error_string(ERR_get_error());
+    error = DescribeConnectFailure(err);
     return false;
   }
 }
@@ -245,13 +276,8 @@ bool TunnelSslClient::Connect(int tcp_fd,
 #endif
 
   close_owned_fd_ = true;
-#ifdef _WIN32
-  owned_fd_ = DuplicateSocketFd(tcp_fd, error);
-#else
-  owned_fd_ = dup(tcp_fd);
-#endif
+  owned_fd_ = AcquireOwnedFd(tcp_fd, error);
   if (owned_fd_ < 0) {
-    error = "Failed to acquire TCP socket handle";
     return false;
   }
   SetNonBlockingFd(owned_fd_);
@@ -321,13 +347,8 @@ bool TunnelSslClient::ConnectPsk(int tcp_fd,
 #endif
 
   close_owned_fd_ = true;
-#ifdef _WIN32
-  owned_fd_ = DuplicateSocketFd(tcp_fd, error);
-#else
-  owned_fd_ = dup(tcp_fd);
-#endif
+  owned_fd_ = AcquireOwnedFd(tcp_fd, error);
   if (owned_fd_ < 0) {
-    error = "Failed to acquire TCP socket handle";
     return false;
   }
   SetNonBlockingFd(owned_fd_);
