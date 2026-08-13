@@ -12,37 +12,25 @@ inline constexpr int kTunnelHandshakeTimeoutMs = 15000;
 
 /** TLS client for lockdown (PEM cert) or Apple TV Remote Pairing (TLS-PSK). */
 class TunnelSslClient {
-public:
+ public:
   TunnelSslClient() = default;
   ~TunnelSslClient();
 
   TunnelSslClient(const TunnelSslClient&) = delete;
   TunnelSslClient& operator=(const TunnelSslClient&) = delete;
 
-  bool Connect(int tcp_fd,
-               const std::string& cert_pem,
-               const std::string& key_pem,
-               int timeout_ms,
-               std::string& error);
+  bool Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem, int timeout_ms, std::string& error);
 
-  bool ConnectPsk(int tcp_fd,
-                  const uint8_t* psk,
-                  size_t psk_len,
-                  const std::string& identity,
-                  int timeout_ms,
+  bool ConnectPsk(int tcp_fd, const uint8_t* psk, size_t psk_len, const std::string& identity, int timeout_ms,
                   std::string& error);
 
   void Close();
 
   SSL* ssl() const { return ssl_; }
 
-private:
-  static unsigned int PskClientCallback(SSL* ssl,
-                                        const char* /*hint*/,
-                                        char* identity,
-                                        unsigned int max_identity_len,
-                                        unsigned char* psk,
-                                        unsigned int max_psk_len);
+ private:
+  static unsigned int PskClientCallback(SSL* ssl, const char* /*hint*/, char* identity, unsigned int max_identity_len,
+                                        unsigned char* psk, unsigned int max_psk_len);
 
   bool ConnectTls(int timeout_ms, std::string& error);
 

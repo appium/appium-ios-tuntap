@@ -30,17 +30,14 @@ std::wstring GetAddonDirectory() {
   HMODULE module = nullptr;
   // Pass the address of any function in this translation unit so the resolver
   // returns the addon's own module rather than the host process executable.
-  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                          reinterpret_cast<LPCWSTR>(&GetAddonDirectory),
-                          &module)) {
+  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          reinterpret_cast<LPCWSTR>(&GetAddonDirectory), &module)) {
     return std::wstring();
   }
 
   std::vector<wchar_t> buffer(MAX_PATH);
   for (;;) {
-    DWORD len = GetModuleFileNameW(module, buffer.data(),
-                                   static_cast<DWORD>(buffer.size()));
+    DWORD len = GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
     if (len == 0) {
       return std::wstring();
     }
@@ -70,7 +67,7 @@ bool Resolve(HMODULE module, const char* name, T& out, std::string& error) {
   return true;
 }
 
-} // namespace
+}  // namespace
 
 WintunApi& WintunApi::Instance() {
   static WintunApi instance;
@@ -96,8 +93,7 @@ bool WintunApi::Load(std::string& error) {
     // vendor/wintun/bin/<arch>/wintun.dll. Both build/Release and
     // prebuilds/<plat>-<arch> are two directories below the package root,
     // so the same relative path works in either install layout.
-    std::wstring vendored = addon_dir + L"\\..\\..\\vendor\\wintun\\bin\\" +
-                            kVendoredArch + L"\\" + kWintunDllName;
+    std::wstring vendored = addon_dir + L"\\..\\..\\vendor\\wintun\\bin\\" + kVendoredArch + L"\\" + kWintunDllName;
     if (TryLoadFrom(vendored.c_str())) {
       return ResolveEntryPoints(error);
     }
@@ -120,10 +116,8 @@ bool WintunApi::TryLoadFrom(LPCWSTR path) {
   // no third-party dependencies today, but this is the documented-safe
   // flag set for loading by absolute path and is free to include.
   module_ = ::LoadLibraryExW(path, nullptr,
-                             LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
-                                 LOAD_LIBRARY_SEARCH_SYSTEM32 |
-                                 LOAD_LIBRARY_SEARCH_USER_DIRS |
-                                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
+                             LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32 |
+                                 LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
   return module_ != nullptr;
 }
 
@@ -178,10 +172,8 @@ std::string FormatLastError(DWORD error_code) {
 
   LPSTR buffer = nullptr;
   DWORD len = ::FormatMessageA(
-      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-          FORMAT_MESSAGE_IGNORE_INSERTS,
-      nullptr, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-      reinterpret_cast<LPSTR>(&buffer), 0, nullptr);
+      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, error_code,
+      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reinterpret_cast<LPSTR>(&buffer), 0, nullptr);
 
   std::string message;
   if (len && buffer) {
@@ -203,15 +195,13 @@ std::wstring Utf8ToUtf16(const std::string& utf8) {
     return std::wstring();
   }
 
-  int len = ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
-                                  static_cast<int>(utf8.size()), nullptr, 0);
+  int len = ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), nullptr, 0);
   if (len <= 0) {
     return std::wstring();
   }
 
   std::wstring result(static_cast<size_t>(len), L'\0');
-  ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
-                        static_cast<int>(utf8.size()), result.data(), len);
+  ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), result.data(), len);
   return result;
 }
 

@@ -7,7 +7,7 @@
 // RAII wrapper for a Win32 `HANDLE`. Mirrors `FileDescriptor` so backends can
 // rely on the same lifetime semantics regardless of OS.
 class Handle {
-public:
+ public:
   Handle();
   explicit Handle(HANDLE handle);
   ~Handle();
@@ -23,7 +23,7 @@ public:
   bool is_valid() const;
   void reset(HANDLE handle = nullptr);
 
-private:
+ private:
   HANDLE handle_;
 };
 

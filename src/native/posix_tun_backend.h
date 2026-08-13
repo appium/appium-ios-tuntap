@@ -19,7 +19,7 @@
 // subclasses implement only the platform-specific OpenDevice, ReadPacket, and
 // WritePacket.
 class PosixTunBackend : public TunPlatformBackend {
-public:
+ public:
   void CloseDevice() override {
     poll_loop_.Stop();
     fd_.reset();
@@ -28,25 +28,16 @@ public:
 
   bool IsOpen() const override { return fd_.is_valid(); }
 
-  bool StartReceiveLoop(uv_loop_t* loop,
-                        size_t buffer_size,
-                        PacketCallback on_packet,
-                        ErrorCallback on_error,
+  bool StartReceiveLoop(uv_loop_t* loop, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
                         std::string& error) override {
     if (!fd_.is_valid()) {
       error = "Device not open";
       return false;
     }
     return poll_loop_.Start(
-        loop,
-        fd_.get(),
-        buffer_size,
-        [this](size_t size, std::vector<uint8_t>& out, std::string& err) {
-          return ReadPacket(size, out, err);
-        },
-        std::move(on_packet),
-        std::move(on_error),
-        error);
+        loop, fd_.get(), buffer_size,
+        [this](size_t size, std::vector<uint8_t>& out, std::string& err) { return ReadPacket(size, out, err); },
+        std::move(on_packet), std::move(on_error), error);
   }
 
   void StopReceiveLoop() override { poll_loop_.Stop(); }
@@ -65,19 +56,19 @@ public:
     return WaitForEvents(POLLOUT, running, error);
   }
 
-protected:
+ protected:
   FileDescriptor fd_;
   std::string interface_name_;
   PosixUvPollLoop poll_loop_;
 
-private:
+ private:
   bool WaitForEvents(short events, const std::atomic<bool>& running, std::string& error) {
     if (!fd_.is_valid()) {
       error = "Device not open";
       return false;
     }
 
-    struct pollfd pfd {};
+    struct pollfd pfd{};
     pfd.fd = fd_.get();
     pfd.events = events;
 

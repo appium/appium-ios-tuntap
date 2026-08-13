@@ -22,23 +22,20 @@ namespace {
 FARPROC WINAPI DelayLoadFailureHook(unsigned int event, DelayLoadInfo* info) {
   switch (event) {
     case dliFailLoadLib:
-      std::fprintf(
-          stderr,
-          "[tuntap] Failed to delay-load '%s' (Win32 error %lu). This native "
-          "addon build may be incompatible with the current Node.js "
-          "install; try reinstalling appium-ios-tuntap or building it from "
-          "source (npm install --build-from-source).\n",
-          info->szDll, info->dwLastError);
+      std::fprintf(stderr,
+                   "[tuntap] Failed to delay-load '%s' (Win32 error %lu). This native "
+                   "addon build may be incompatible with the current Node.js "
+                   "install; try reinstalling appium-ios-tuntap or building it from "
+                   "source (npm install --build-from-source).\n",
+                   info->szDll, info->dwLastError);
       break;
     case dliFailGetProc:
-      std::fprintf(
-          stderr,
-          "[tuntap] Failed to resolve '%s' in '%s' (Win32 error %lu). This "
-          "native addon build may be incompatible with the current Node.js "
-          "install; try reinstalling appium-ios-tuntap or building it from "
-          "source (npm install --build-from-source).\n",
-          info->dlp.fImportByName ? info->dlp.szProcName : "(ordinal import)",
-          info->szDll, info->dwLastError);
+      std::fprintf(stderr,
+                   "[tuntap] Failed to resolve '%s' in '%s' (Win32 error %lu). This "
+                   "native addon build may be incompatible with the current Node.js "
+                   "install; try reinstalling appium-ios-tuntap or building it from "
+                   "source (npm install --build-from-source).\n",
+                   info->dlp.fImportByName ? info->dlp.szProcName : "(ordinal import)", info->szDll, info->dwLastError);
       break;
     default:
       break;

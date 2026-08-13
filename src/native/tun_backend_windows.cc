@@ -18,7 +18,7 @@
 namespace {
 
 constexpr LPCWSTR kTunnelType = L"AppiumTunTap";
-constexpr DWORD kSessionCapacity = 0x400000; // 4 MiB; must be power of two.
+constexpr DWORD kSessionCapacity = 0x400000;  // 4 MiB; must be power of two.
 
 // WinTun adapter names are limited to MAX_ADAPTER_NAME-1 wide chars (~127).
 // We stay well under that.
@@ -29,7 +29,7 @@ std::wstring BuildDefaultAdapterName() {
 }
 
 class WindowsTunBackend : public TunPlatformBackend {
-public:
+ public:
   WindowsTunBackend() = default;
   ~WindowsTunBackend() override {
     StopReceiveLoop();
@@ -42,16 +42,13 @@ public:
   WindowsTunBackend(WindowsTunBackend&&) = delete;
   WindowsTunBackend& operator=(WindowsTunBackend&&) = delete;
 
-  bool OpenDevice(const std::string& requested_name,
-                  std::string& out_interface_name,
-                  std::string& error) override {
+  bool OpenDevice(const std::string& requested_name, std::string& out_interface_name, std::string& error) override {
     auto& api = WintunApi::Instance();
     if (!api.Load(error)) {
       return false;
     }
 
-    std::wstring adapter_name =
-        requested_name.empty() ? BuildDefaultAdapterName() : Utf8ToUtf16(requested_name);
+    std::wstring adapter_name = requested_name.empty() ? BuildDefaultAdapterName() : Utf8ToUtf16(requested_name);
     if (adapter_name.empty()) {
       error = "Failed to encode adapter name as UTF-16";
       return false;
@@ -74,9 +71,8 @@ public:
       adapter_ = api.OpenAdapter(adapter_name.c_str());
       if (!adapter_) {
         DWORD opened_err = ::GetLastError();
-        error = "Failed to create or open WinTun adapter: create failed with " +
-                FormatLastError(created_err) + "; open failed with " +
-                FormatLastError(opened_err);
+        error = "Failed to create or open WinTun adapter: create failed with " + FormatLastError(created_err) +
+                "; open failed with " + FormatLastError(opened_err);
         return false;
       }
     }
@@ -117,9 +113,7 @@ public:
 
   bool IsOpen() const override { return session_ != nullptr; }
 
-  ReadPacketStatus ReadPacket(size_t max_payload_size,
-                              std::vector<uint8_t>& out,
-                              std::string& error) override {
+  ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
     if (!session_) {
       error = "Device not open";
       return ReadPacketStatus::Error;
@@ -144,17 +138,14 @@ public:
       }
     }
 
-    const size_t copy_len = static_cast<size_t>(packet_size) > max_payload_size
-                                ? max_payload_size
-                                : static_cast<size_t>(packet_size);
+    const size_t copy_len =
+        static_cast<size_t>(packet_size) > max_payload_size ? max_payload_size : static_cast<size_t>(packet_size);
     out.assign(packet, packet + copy_len);
     api.ReleaseReceivePacket(session_, packet);
     return ReadPacketStatus::Data;
   }
 
-  ssize_t WritePacket(const uint8_t* data,
-                      size_t length,
-                      std::string& error) override {
+  ssize_t WritePacket(const uint8_t* data, size_t length, std::string& error) override {
     if (!session_) {
       error = "Device not open";
       return -1;
@@ -195,10 +186,7 @@ public:
   // `std::thread`'s constructor does not block on the worker reaching its
   // first instruction. There is no deadlock risk because the calling JS
   // thread releases the lock as soon as `StartPolling` returns.
-  bool StartReceiveLoop(uv_loop_t* /*loop*/,
-                        size_t buffer_size,
-                        PacketCallback on_packet,
-                        ErrorCallback on_error,
+  bool StartReceiveLoop(uv_loop_t* /*loop*/, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
                         std::string& error) override {
     if (!session_) {
       error = "Device not open";
@@ -222,8 +210,8 @@ public:
 
     worker_running_.store(true);
     try {
-      worker_ = std::thread(&WindowsTunBackend::WorkerMain, this, buffer_size,
-                            std::move(on_packet), std::move(on_error));
+      worker_ =
+          std::thread(&WindowsTunBackend::WorkerMain, this, buffer_size, std::move(on_packet), std::move(on_error));
     } catch (const std::system_error& sysErr) {
       worker_running_.store(false);
       quit_event_.reset();
@@ -290,21 +278,18 @@ public:
     return false;
   }
 
-private:
+ private:
   static std::string Utf16ToUtf8(const std::wstring& utf16) {
     if (utf16.empty()) {
       return std::string();
     }
-    int len = ::WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(),
-                                    static_cast<int>(utf16.size()), nullptr, 0,
-                                    nullptr, nullptr);
+    int len =
+        ::WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), static_cast<int>(utf16.size()), nullptr, 0, nullptr, nullptr);
     if (len <= 0) {
       return std::string();
     }
     std::string out(static_cast<size_t>(len), '\0');
-    ::WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(),
-                          static_cast<int>(utf16.size()), out.data(), len,
-                          nullptr, nullptr);
+    ::WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), static_cast<int>(utf16.size()), out.data(), len, nullptr, nullptr);
     return out;
   }
 
@@ -323,9 +308,7 @@ private:
     }
   }
 
-  void WorkerMain(size_t buffer_size,
-                  PacketCallback on_packet,
-                  ErrorCallback on_error) {
+  void WorkerMain(size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error) {
     auto& api = WintunApi::Instance();
     HANDLE wait_handles[2] = {read_event_, quit_event_.get()};
 
@@ -345,9 +328,8 @@ private:
         DWORD packet_size = 0;
         BYTE* packet = api.ReceivePacket(session_, &packet_size);
         if (packet) {
-          const size_t copy_len = static_cast<size_t>(packet_size) > buffer_size
-                                      ? buffer_size
-                                      : static_cast<size_t>(packet_size);
+          const size_t copy_len =
+              static_cast<size_t>(packet_size) > buffer_size ? buffer_size : static_cast<size_t>(packet_size);
           std::vector<uint8_t> data(packet, packet + copy_len);
           api.ReleaseReceivePacket(session_, packet);
           if (on_packet && !on_packet(std::move(data))) {
@@ -398,7 +380,7 @@ private:
 
   WINTUN_ADAPTER_HANDLE adapter_ = nullptr;
   WINTUN_SESSION_HANDLE session_ = nullptr;
-  HANDLE read_event_ = nullptr; // Owned by `session_`; do not CloseHandle.
+  HANDLE read_event_ = nullptr;  // Owned by `session_`; do not CloseHandle.
   Handle quit_event_;
   std::thread worker_;
   std::atomic<bool> worker_running_{false};
@@ -406,10 +388,8 @@ private:
   std::string interface_name_;
 };
 
-} // namespace
+}  // namespace
 
-std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
-  return std::make_unique<WindowsTunBackend>();
-}
+std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() { return std::make_unique<WindowsTunBackend>(); }
 
 #endif

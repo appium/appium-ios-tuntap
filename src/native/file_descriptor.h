@@ -1,7 +1,7 @@
 #pragma once
 
 class FileDescriptor {
-public:
+ public:
   FileDescriptor();
   explicit FileDescriptor(int fd);
   ~FileDescriptor();
@@ -17,6 +17,6 @@ public:
   bool is_valid() const;
   void reset(int fd = -1);
 
-private:
+ private:
   int fd_;
 };

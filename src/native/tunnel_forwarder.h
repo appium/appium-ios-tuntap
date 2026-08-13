@@ -34,33 +34,24 @@ enum class TunReadResult {
  * independent threads over an OpenSSL TLS session (lockdown cert or TLS-PSK).
  */
 class TunnelForwarder {
-public:
+ public:
   TunnelForwarder() = default;
   ~TunnelForwarder();
 
   TunnelForwarder(const TunnelForwarder&) = delete;
   TunnelForwarder& operator=(const TunnelForwarder&) = delete;
 
-  bool Connect(int tcp_fd,
-               const std::string& cert_pem,
-               const std::string& key_pem,
-               std::string& error);
+  bool Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem, std::string& error);
 
-  bool ConnectPsk(int tcp_fd,
-                  const uint8_t* psk,
-                  size_t psk_len,
-                  const std::string& identity,
-                  std::string& error);
+  bool ConnectPsk(int tcp_fd, const uint8_t* psk, size_t psk_len, const std::string& identity, std::string& error);
 
   bool Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error);
 
-  bool StartForwarding(TunPlatformBackend* tun_backend,
-                       ForwarderErrorCallback on_error,
-                       std::string& error);
+  bool StartForwarding(TunPlatformBackend* tun_backend, ForwarderErrorCallback on_error, std::string& error);
 
   void Stop();
 
-private:
+ private:
   ssize_t SslReadExact(uint8_t* buf, size_t len);
   ssize_t SslWriteAll(const uint8_t* data, size_t len, bool only_while_running = true);
   void TunToDeviceLoop();
