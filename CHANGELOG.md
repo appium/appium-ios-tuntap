@@ -1,3 +1,9 @@
+## [1.2.5](https://github.com/appium/appium-ios-tuntap/compare/v1.2.4...v1.2.5) (2026-08-13)
+
+### Bug Fixes
+
+* **native:** keep poll dispatch alive until queued callbacks drain ([#79](https://github.com/appium/appium-ios-tuntap/issues/79)) ([04e400e](https://github.com/appium/appium-ios-tuntap/commit/04e400ebc09d1dd0d4b26a170257627aad3d17f3))
+
 ## [1.2.4](https://github.com/appium/appium-ios-tuntap/compare/v1.2.3...v1.2.4) (2026-08-13)
 
 ### Bug Fixes
