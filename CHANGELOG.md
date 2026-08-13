@@ -1,3 +1,9 @@
+## [1.2.6](https://github.com/appium/appium-ios-tuntap/compare/v1.2.5...v1.2.6) (2026-08-13)
+
+### Bug Fixes
+
+* **native:** read CDTunnel header length via memcpy ([#80](https://github.com/appium/appium-ios-tuntap/issues/80)) ([9fe43fd](https://github.com/appium/appium-ios-tuntap/commit/9fe43fd544740c88a29bd52f4d08c6461236279c))
+
 ## [1.2.5](https://github.com/appium/appium-ios-tuntap/compare/v1.2.4...v1.2.5) (2026-08-13)
 
 ### Bug Fixes
