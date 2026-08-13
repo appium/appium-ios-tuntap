@@ -49,7 +49,6 @@ private:
   SSL_CTX* ctx_ = nullptr;
   SSL* ssl_ = nullptr;
   int owned_fd_ = -1;
-  bool close_owned_fd_ = true;
   std::vector<uint8_t> psk_key_;
   std::string psk_identity_;
 };
