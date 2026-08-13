@@ -138,7 +138,7 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
   WSAPOLLFD pfd{};
   pfd.fd = static_cast<SOCKET>(fd);
 #else
-  struct pollfd pfd{};
+  struct pollfd pfd {};
   pfd.fd = fd;
 #endif
   pfd.events = events;
