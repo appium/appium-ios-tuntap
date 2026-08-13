@@ -99,7 +99,6 @@ public:
 
 private:
   friend struct TunPollDispatch;
-  static Napi::FunctionReference constructor;
 
   Napi::Value Open(const Napi::CallbackInfo& info);
   Napi::Value Close(const Napi::CallbackInfo& info);
@@ -125,10 +124,7 @@ private:
 
   void StopPollingLocked();
   void ReleaseTsfnLocked();
-  void PauseReceiveFromDispatch();
 };
-
-Napi::FunctionReference TunDevice::constructor;
 
 Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
   Napi::HandleScope scope(env);
@@ -145,9 +141,6 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
     InstanceMethod("pausePolling", &TunDevice::PausePolling),
     InstanceMethod("resumePolling", &TunDevice::ResumePolling),
   });
-
-  constructor = Napi::Persistent(func);
-  constructor.SuppressDestruct();
 
   exports.Set("TunDevice", func);
   return exports;
@@ -449,13 +442,6 @@ void TunPollDispatch::OnJsConsumed() {
   }
   if (device != nullptr) {
     device->ResumeReceiveFromDispatch();
-  }
-}
-
-void TunDevice::PauseReceiveFromDispatch() {
-  std::lock_guard<std::mutex> lock(device_mutex_);
-  if (polling_ && backend_) {
-    backend_->PauseReceiveLoop();
   }
 }
 
