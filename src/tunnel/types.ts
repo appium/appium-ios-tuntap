@@ -18,8 +18,3 @@ export interface TunnelInfo {
   serverAddress: string;
   serverRSDPort?: number;
 }
-
-export type CdTunnelParseResult =
-  | {kind: 'incomplete'}
-  | {kind: 'ok'; value: TunnelInfo}
-  | {kind: 'error'; error: Error};
