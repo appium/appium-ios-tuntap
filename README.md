@@ -1,6 +1,6 @@
 # TunTap Bridge
 
-A native TUN/TAP interface module for Node.js that works on macOS, Linux, and Windows, with enhanced error handling, signal management, and thread safety.
+A native TUN/TAP interface module for Node.js that works on macOS, Linux, and Windows, with enhanced error handling and thread safety.
 
 ## Description
 
@@ -10,9 +10,8 @@ This module provides a Node.js interface to TUN/TAP virtual network devices, all
 
 - **Cross-platform**: Works on macOS (utun), Linux (TUN/TAP), and Windows (WinTun)
 - **TypeScript support**: Full TypeScript definitions included
-- **Signal handling**: Graceful shutdown on SIGINT/SIGTERM
 - **Thread safety**: Safe to use from multiple Node.js worker threads
-- **Resource management**: Automatic cleanup of file descriptors and network interfaces
+- **Resource management**: Devices are closed on normal process exit; the kernel releases the fd otherwise
 - **Enhanced error handling**: Custom error types for better debugging
 - **Input validation**: Validates IPv6 addresses, MTU ranges, and buffer sizes
 - **Performance optimized**: Built with C++17 and compiler optimizations
@@ -183,21 +182,26 @@ await tunnel.closer();
 ### TunTap Class
 
 #### Constructor
-- `new TunTap(name?: string)` - Create a new TUN/TAP device instance
+- `new TunTap(name?: string, platform?: NodeJS.Platform)` - Create a new TUN/TAP device instance. `platform`
+  selects the OS backend used for addressing and routing, and defaults to `process.platform`.
 
 #### Methods
 - `open(): boolean` - Open the TUN device
 - `close(): boolean` - Close the TUN device
 - `read(maxSize?: number): Buffer` - Read data from the device (default: 4096 bytes)
 - `write(data: Buffer): number` - Write data to the device
+- `startPolling(callback, bufferSize?, queueDepth?): void` - Deliver each packet to `callback` (defaults: 65535 bytes, queue depth 8). One-shot: stop by closing the device.
+- `pausePolling(): void` / `resumePolling(): void` - Suspend and resume delivery without tearing down the callback
 - `configure(address: string, mtu?: number): Promise<void>` - Configure IPv6 address and MTU
 - `addRoute(destination: string): Promise<void>` - Add a route to the device
 - `removeRoute(destination: string): Promise<void>` - Remove a route from the device
-- `getStats(): Promise<Stats>` - Get interface statistics
+- `getStats(): Promise<Stats>` - Get interface statistics (`rxBytes`, `txBytes`, `rxPackets`, `txPackets`, `rxErrors`, `txErrors`)
 
 #### Properties
 - `name: string` - The device name (e.g., 'utun0', 'tun0')
 - `fd: number` - The native file descriptor on POSIX (macOS/Linux). Returns `-1` on Windows; Wintun does not expose a numeric file descriptor.
+- `isOpen: boolean` - `open()` has succeeded and `close()` has not run
+- `isClosed: boolean` - `close()` has been called; the device cannot be reopened
 
 ### Error Types
 
@@ -207,7 +211,20 @@ await tunnel.closer();
 
 ### Signal Handling
 
-The module automatically handles SIGINT and SIGTERM signals for graceful shutdown. All open devices will be closed and network interfaces cleaned up when the process exits.
+The module does **not** install `SIGINT`/`SIGTERM` handlers — a library should not take over signals from the
+application that embeds it. It registers a `process.once('exit')` hook that closes any open device on a normal
+exit.
+
+`exit` handlers do not run when a process is terminated by a signal, so on Ctrl+C the device is not closed by
+this module; the kernel releases the file descriptor and tears down the interface when the process dies. If you
+need cleanup to run on a signal, install your own handler and call `close()`:
+
+```javascript
+process.once('SIGINT', () => {
+  tun.close();
+  process.exit(130);
+});
+```
 
 ## Troubleshooting
 
@@ -235,10 +252,11 @@ The module automatically handles SIGINT and SIGTERM signals for graceful shutdow
 
 ## Debug Mode
 
-Enable debug logging by running your application with the `--debug` flag:
+Set `APPIUM_TUNTAP_DEBUG=1` to enable tunnel debug logging. The TypeScript layer logs through
+`@appium/support`; the native forwarder writes `[fwd] #N event key=value` lines to stderr.
 
 ```bash
-node your-app.js --debug
+APPIUM_TUNTAP_DEBUG=1 node your-app.js
 ```
 
 ## Testing
@@ -274,22 +292,18 @@ If you are **not** running as root, you will see a message that tests are skippe
 
 Windows tunnel-forwarder end-to-end testing requires a real device tunnel source. From an elevated PowerShell, build the addon, run the unit tests, then establish a CoreDevice/RemoteXPC tunnel and verify the forwarded tunnel remains stable under AFC or similar traffic.
 
-### Manual Testing for Signal Handling (v0.0.4+)
-
-Automated tests cannot reliably verify process cleanup on SIGINT/SIGTERM due to test runner limitations.  
-To manually verify the fix for signal handling (introduced in v0.0.4):
+### Manual Testing for Device Cleanup
 
 1. Build the project, then run the compiled CLI utility:
    ```sh
    npm run build
    sudo node lib/test/test-tuntap.js
    ```
-2. While it is running, press `Ctrl+C` to send SIGINT.
-3. Confirm that:
-   - The process exits immediately.
-   - All TUN/TAP devices are closed and cleaned up.
+2. While it is running, press `Ctrl+C`.
+3. Confirm the process exits and the interface is gone (`ifconfig` on macOS, `ip link` on Linux).
 
-This ensures the signal handler works as intended.
+The interface disappears because the kernel closes the file descriptor when the process dies, not because
+the module handled the signal — see [Signal Handling](#signal-handling).
 
 ## License
 
