@@ -23,8 +23,7 @@
 
 namespace {
 
-constexpr char kAppleTvPskCiphers[] =
-    "PSK-AES256-CBC-SHA:PSK-AES128-CBC-SHA:PSK-3DES-EDE-CBC-SHA:PSK-RC4-SHA:PSK";
+constexpr char kAppleTvPskCiphers[] = "PSK-AES256-CBC-SHA:PSK-AES128-CBC-SHA:PSK-3DES-EDE-CBC-SHA:PSK-RC4-SHA:PSK";
 
 #ifdef _WIN32
 constexpr short kPollIn = POLLRDNORM;
@@ -87,19 +86,14 @@ int DuplicateSocketFd(int tcp_fd, std::string& error) {
     return -1;
   }
 
-  WSAPROTOCOL_INFOW protocol_info {};
-  if (WSADuplicateSocketW(static_cast<SOCKET>(tcp_fd), ::GetCurrentProcessId(), &protocol_info) !=
-      0) {
+  WSAPROTOCOL_INFOW protocol_info{};
+  if (WSADuplicateSocketW(static_cast<SOCKET>(tcp_fd), ::GetCurrentProcessId(), &protocol_info) != 0) {
     error = "WSADuplicateSocket failed: " + std::to_string(WSAGetLastError());
     return -1;
   }
 
-  SOCKET duplicated = WSASocketW(protocol_info.iAddressFamily,
-                                 protocol_info.iSocketType,
-                                 protocol_info.iProtocol,
-                                 &protocol_info,
-                                 0,
-                                 WSA_FLAG_OVERLAPPED);
+  SOCKET duplicated = WSASocketW(protocol_info.iAddressFamily, protocol_info.iSocketType, protocol_info.iProtocol,
+                                 &protocol_info, 0, WSA_FLAG_OVERLAPPED);
   if (duplicated == INVALID_SOCKET) {
     error = "WSASocket duplicate failed: " + std::to_string(WSAGetLastError());
     return -1;
@@ -136,13 +130,12 @@ std::string DescribeConnectFailure(int ssl_error) {
 #else
   const int system_error = errno;
 #endif
-  return "SSL_connect failed: ssl_error=" + std::to_string(ssl_error) +
-         " system_error=" + std::to_string(system_error);
+  return "SSL_connect failed: ssl_error=" + std::to_string(ssl_error) + " system_error=" + std::to_string(system_error);
 }
 
 bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point deadline) {
 #ifdef _WIN32
-  WSAPOLLFD pfd {};
+  WSAPOLLFD pfd{};
   pfd.fd = static_cast<SOCKET>(fd);
 #else
   struct pollfd pfd {};
@@ -155,8 +148,7 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
     if (now >= deadline) {
       return false;
     }
-    const auto remaining_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+    const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
     const int timeout_ms = remaining_ms > 5000 ? 5000 : static_cast<int>(remaining_ms);
 #ifdef _WIN32
     const int rc = WSAPoll(&pfd, 1, timeout_ms);
@@ -189,15 +181,10 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
 
 }  // namespace
 
-TunnelSslClient::~TunnelSslClient() {
-  Close();
-}
+TunnelSslClient::~TunnelSslClient() { Close(); }
 
-unsigned int TunnelSslClient::PskClientCallback(SSL* ssl,
-                                                const char* /*hint*/,
-                                                char* identity,
-                                                unsigned int max_identity_len,
-                                                unsigned char* psk,
+unsigned int TunnelSslClient::PskClientCallback(SSL* ssl, const char* /*hint*/, char* identity,
+                                                unsigned int max_identity_len, unsigned char* psk,
                                                 unsigned int max_psk_len) {
   auto* self = static_cast<TunnelSslClient*>(SSL_get_app_data(ssl));
   if (self == nullptr || self->psk_key_.empty()) {
@@ -226,8 +213,7 @@ bool TunnelSslClient::ConnectTls(int timeout_ms, std::string& error) {
     return false;
   }
 
-  const auto connect_deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  const auto connect_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
 
   for (;;) {
     const int rc = SSL_connect(ssl_);
@@ -254,10 +240,7 @@ bool TunnelSslClient::ConnectTls(int timeout_ms, std::string& error) {
   }
 }
 
-bool TunnelSslClient::Connect(int tcp_fd,
-                              const std::string& cert_pem,
-                              const std::string& key_pem,
-                              int timeout_ms,
+bool TunnelSslClient::Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem, int timeout_ms,
                               std::string& error) {
   Close();
   if (tcp_fd < 0) {
@@ -319,12 +302,8 @@ bool TunnelSslClient::Connect(int tcp_fd,
   return true;
 }
 
-bool TunnelSslClient::ConnectPsk(int tcp_fd,
-                                 const uint8_t* psk,
-                                 size_t psk_len,
-                                 const std::string& identity,
-                                 int timeout_ms,
-                                 std::string& error) {
+bool TunnelSslClient::ConnectPsk(int tcp_fd, const uint8_t* psk, size_t psk_len, const std::string& identity,
+                                 int timeout_ms, std::string& error) {
   Close();
   if (tcp_fd < 0) {
     error = "Invalid TCP file descriptor";

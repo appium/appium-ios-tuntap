@@ -13,10 +13,8 @@
 #include "tun_backend.h"
 
 class PosixUvPollLoop {
-public:
-  using ReadFn = std::function<ReadPacketStatus(size_t,
-                                                std::vector<uint8_t>&,
-                                                std::string&)>;
+ public:
+  using ReadFn = std::function<ReadPacketStatus(size_t, std::vector<uint8_t>&, std::string&)>;
 
   PosixUvPollLoop() = default;
   ~PosixUvPollLoop();
@@ -24,19 +22,14 @@ public:
   PosixUvPollLoop(const PosixUvPollLoop&) = delete;
   PosixUvPollLoop& operator=(const PosixUvPollLoop&) = delete;
 
-  bool Start(uv_loop_t* loop,
-             int fd,
-             size_t buffer_size,
-             ReadFn read_fn,
-             TunPlatformBackend::PacketCallback on_packet,
-             TunPlatformBackend::ErrorCallback on_error,
-             std::string& error);
+  bool Start(uv_loop_t* loop, int fd, size_t buffer_size, ReadFn read_fn, TunPlatformBackend::PacketCallback on_packet,
+             TunPlatformBackend::ErrorCallback on_error, std::string& error);
 
   void Stop();
   void Pause();
   void Resume();
 
-private:
+ private:
   bool paused_ = false;
   struct State {
     size_t buffer_size = 0;

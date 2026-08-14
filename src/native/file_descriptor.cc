@@ -12,9 +12,7 @@ FileDescriptor::~FileDescriptor() {
   }
 }
 
-FileDescriptor::FileDescriptor(FileDescriptor&& other) noexcept : fd_(other.fd_) {
-  other.fd_ = -1;
-}
+FileDescriptor::FileDescriptor(FileDescriptor&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
 
 FileDescriptor& FileDescriptor::operator=(FileDescriptor&& other) noexcept {
   if (this != &other) {
@@ -27,9 +25,7 @@ FileDescriptor& FileDescriptor::operator=(FileDescriptor&& other) noexcept {
   return *this;
 }
 
-int FileDescriptor::get() const {
-  return fd_;
-}
+int FileDescriptor::get() const { return fd_; }
 
 int FileDescriptor::release() {
   int temp = fd_;
@@ -37,9 +33,7 @@ int FileDescriptor::release() {
   return temp;
 }
 
-bool FileDescriptor::is_valid() const {
-  return fd_ >= 0;
-}
+bool FileDescriptor::is_valid() const { return fd_ >= 0; }
 
 void FileDescriptor::reset(int fd) {
   if (fd_ >= 0) {

@@ -8,16 +8,10 @@
 #include <string.h>
 #include <utility>
 
-PosixUvPollLoop::~PosixUvPollLoop() {
-  Stop();
-}
+PosixUvPollLoop::~PosixUvPollLoop() { Stop(); }
 
-bool PosixUvPollLoop::Start(uv_loop_t* loop,
-                            int fd,
-                            size_t buffer_size,
-                            ReadFn read_fn,
-                            TunPlatformBackend::PacketCallback on_packet,
-                            TunPlatformBackend::ErrorCallback on_error,
+bool PosixUvPollLoop::Start(uv_loop_t* loop, int fd, size_t buffer_size, ReadFn read_fn,
+                            TunPlatformBackend::PacketCallback on_packet, TunPlatformBackend::ErrorCallback on_error,
                             std::string& error) {
   if (handle_) {
     error = "Receive loop already started";
@@ -62,8 +56,7 @@ void PosixUvPollLoop::Stop() {
   paused_ = false;
   uv_poll_stop(handle_);
   handle_->data = nullptr;
-  uv_close(reinterpret_cast<uv_handle_t*>(handle_),
-           &PosixUvPollLoop::OnHandleClosed);
+  uv_close(reinterpret_cast<uv_handle_t*>(handle_), &PosixUvPollLoop::OnHandleClosed);
   handle_ = nullptr;
   state_.reset();
 }
@@ -135,9 +128,7 @@ void PosixUvPollLoop::OnPoll(uv_poll_t* handle, int status, int events) {
   }
 }
 
-void PosixUvPollLoop::OnHandleClosed(uv_handle_t* handle) {
-  delete reinterpret_cast<uv_poll_t*>(handle);
-}
+void PosixUvPollLoop::OnHandleClosed(uv_handle_t* handle) { delete reinterpret_cast<uv_poll_t*>(handle); }
 
 bool SetNonBlocking(int fd, std::string& error) {
   int flags = fcntl(fd, F_GETFL, 0);

@@ -23,10 +23,8 @@ namespace {
 constexpr const char* kTunDevicePath = "/dev/net/tun";
 
 class LinuxTunBackend : public PosixTunBackend {
-public:
-  bool OpenDevice(const std::string& requested_name,
-                  std::string& out_interface_name,
-                  std::string& error) override {
+ public:
+  bool OpenDevice(const std::string& requested_name, std::string& out_interface_name, std::string& error) override {
     struct stat statbuf;
     if (stat(kTunDevicePath, &statbuf) != 0) {
       error =
@@ -37,10 +35,9 @@ public:
 
     FileDescriptor temp_fd(open(kTunDevicePath, O_RDWR));
     if (!temp_fd.is_valid()) {
-      error =
-          std::string("Failed to open ") + kTunDevicePath + ": " + strerror(errno) +
-          ". This usually means you don't have sufficient permissions. "
-          "Try running with sudo or add your user to the 'tun' group.";
+      error = std::string("Failed to open ") + kTunDevicePath + ": " + strerror(errno) +
+              ". This usually means you don't have sufficient permissions. "
+              "Try running with sudo or add your user to the 'tun' group.";
       return false;
     }
 
@@ -68,9 +65,7 @@ public:
     return true;
   }
 
-  ReadPacketStatus ReadPacket(size_t max_payload_size,
-                              std::vector<uint8_t>& out,
-                              std::string& error) override {
+  ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
     if (!fd_.is_valid()) {
       error = "Device not open";
       return ReadPacketStatus::Error;
@@ -95,9 +90,7 @@ public:
     return ReadPacketStatus::Data;
   }
 
-  ssize_t WritePacket(const uint8_t* data,
-                      size_t length,
-                      std::string& error) override {
+  ssize_t WritePacket(const uint8_t* data, size_t length, std::string& error) override {
     if (!fd_.is_valid()) {
       error = "Device not open";
       return -1;
@@ -114,10 +107,8 @@ public:
   }
 };
 
-} // namespace
+}  // namespace
 
-std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
-  return std::make_unique<LinuxTunBackend>();
-}
+std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() { return std::make_unique<LinuxTunBackend>(); }
 
 #endif

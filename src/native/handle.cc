@@ -4,11 +4,9 @@
 
 namespace {
 
-bool IsRealHandle(HANDLE handle) {
-  return handle != nullptr && handle != INVALID_HANDLE_VALUE;
-}
+bool IsRealHandle(HANDLE handle) { return handle != nullptr && handle != INVALID_HANDLE_VALUE; }
 
-} // namespace
+}  // namespace
 
 Handle::Handle() : handle_(nullptr) {}
 
@@ -20,9 +18,7 @@ Handle::~Handle() {
   }
 }
 
-Handle::Handle(Handle&& other) noexcept : handle_(other.handle_) {
-  other.handle_ = nullptr;
-}
+Handle::Handle(Handle&& other) noexcept : handle_(other.handle_) { other.handle_ = nullptr; }
 
 Handle& Handle::operator=(Handle&& other) noexcept {
   if (this != &other) {
@@ -35,9 +31,7 @@ Handle& Handle::operator=(Handle&& other) noexcept {
   return *this;
 }
 
-HANDLE Handle::get() const {
-  return handle_;
-}
+HANDLE Handle::get() const { return handle_; }
 
 HANDLE Handle::release() {
   HANDLE temp = handle_;
@@ -45,9 +39,7 @@ HANDLE Handle::release() {
   return temp;
 }
 
-bool Handle::is_valid() const {
-  return IsRealHandle(handle_);
-}
+bool Handle::is_valid() const { return IsRealHandle(handle_); }
 
 void Handle::reset(HANDLE handle) {
   if (IsRealHandle(handle_)) {

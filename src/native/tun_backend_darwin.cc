@@ -25,12 +25,10 @@
 namespace {
 
 class DarwinTunBackend : public PosixTunBackend {
-public:
+ public:
   static constexpr size_t kUtunHeaderSize = 4;
 
-  bool OpenDevice(const std::string& requested_name,
-                  std::string& out_interface_name,
-                  std::string& error) override {
+  bool OpenDevice(const std::string& requested_name, std::string& out_interface_name, std::string& error) override {
     struct ctl_info ctl_info;
     struct sockaddr_ctl socket_addr;
 
@@ -83,9 +81,7 @@ public:
     return true;
   }
 
-  ReadPacketStatus ReadPacket(size_t max_payload_size,
-                              std::vector<uint8_t>& out,
-                              std::string& error) override {
+  ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
     if (!fd_.is_valid()) {
       error = "Device not open";
       return ReadPacketStatus::Error;
@@ -119,9 +115,7 @@ public:
     return ReadPacketStatus::Data;
   }
 
-  ssize_t WritePacket(const uint8_t* data,
-                      size_t length,
-                      std::string& error) override {
+  ssize_t WritePacket(const uint8_t* data, size_t length, std::string& error) override {
     if (!fd_.is_valid()) {
       error = "Device not open";
       return -1;
@@ -141,12 +135,11 @@ public:
       return -1;
     }
 
-    return bytes_written > static_cast<ssize_t>(kUtunHeaderSize)
-               ? bytes_written - static_cast<ssize_t>(kUtunHeaderSize)
-               : 0;
+    return bytes_written > static_cast<ssize_t>(kUtunHeaderSize) ? bytes_written - static_cast<ssize_t>(kUtunHeaderSize)
+                                                                 : 0;
   }
 
-private:
+ private:
   static int ParseRequestedUtunUnit(const std::string& requested_name) {
     if (requested_name.empty() || requested_name.find("utun") != 0) {
       return 0;
@@ -177,10 +170,8 @@ private:
   std::vector<uint8_t> write_frame_;
 };
 
-} // namespace
+}  // namespace
 
-std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() {
-  return std::make_unique<DarwinTunBackend>();
-}
+std::unique_ptr<TunPlatformBackend> CreatePlatformBackend() { return std::make_unique<DarwinTunBackend>(); }
 
 #endif

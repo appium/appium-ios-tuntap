@@ -38,7 +38,7 @@ enum class ReadPacketStatus {
  *   dedicated worker thread plus a Win32 event on Windows)
  */
 class TunPlatformBackend {
-public:
+ public:
   // Invoked once per packet read by the receive loop. Always called on a
   // background thread (libuv loop thread on POSIX, worker thread on Windows);
   // the caller in `tuntap.cc` is responsible for marshalling onto the JS
@@ -51,18 +51,12 @@ public:
 
   virtual ~TunPlatformBackend() = default;
 
-  virtual bool OpenDevice(const std::string& requested_name,
-                          std::string& out_interface_name,
-                          std::string& error) = 0;
+  virtual bool OpenDevice(const std::string& requested_name, std::string& out_interface_name, std::string& error) = 0;
   virtual void CloseDevice() = 0;
   virtual bool IsOpen() const = 0;
 
-  virtual ReadPacketStatus ReadPacket(size_t max_payload_size,
-                                      std::vector<uint8_t>& out,
-                                      std::string& error) = 0;
-  virtual ssize_t WritePacket(const uint8_t* data,
-                              size_t length,
-                              std::string& error) = 0;
+  virtual ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) = 0;
+  virtual ssize_t WritePacket(const uint8_t* data, size_t length, std::string& error) = 0;
 
   // Block until a packet can be read/written or `running` becomes false.
   // Implementations may use short timed waits when the platform does not expose
@@ -72,10 +66,7 @@ public:
 
   // Begin asynchronous packet delivery. `loop` is supplied by Node-API and is
   // used by POSIX backends for `uv_poll_init`; Windows ignores it.
-  virtual bool StartReceiveLoop(uv_loop_t* loop,
-                                size_t buffer_size,
-                                PacketCallback on_packet,
-                                ErrorCallback on_error,
+  virtual bool StartReceiveLoop(uv_loop_t* loop, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
                                 std::string& error) = 0;
   virtual void StopReceiveLoop() = 0;
 

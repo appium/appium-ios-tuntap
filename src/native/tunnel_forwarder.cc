@@ -75,15 +75,13 @@ bool ConnectRawTcp(const std::string& host, uint16_t port, int& fd, std::string&
   freeaddrinfo(resolved);
 
   if (sock == INVALID_SOCKET) {
-    error = "Failed to connect to " + host + ":" + port_str + " (WSA error " +
-            std::to_string(last_wsa_error) + ")";
+    error = "Failed to connect to " + host + ":" + port_str + " (WSA error " + std::to_string(last_wsa_error) + ")";
     return false;
   }
 
   // Handshake frames are small; don't let Nagle delay them (best effort).
   const BOOL no_delay = TRUE;
-  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&no_delay),
-             sizeof(no_delay));
+  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&no_delay), sizeof(no_delay));
 
   const uintptr_t raw_fd = static_cast<uintptr_t>(sock);
   if (raw_fd > static_cast<uintptr_t>(std::numeric_limits<int>::max())) {
@@ -147,8 +145,7 @@ bool ParseHandshakeJson(const std::string& json, TunnelHandshakeInfo& info, std:
   }
   const std::string client_params = json.substr(cp_start, cp_end - cp_start + 1);
 
-  if (!extract_string(client_params, "address", info.client_address) ||
-      !extract_uint(client_params, "mtu", info.mtu) ||
+  if (!extract_string(client_params, "address", info.client_address) || !extract_uint(client_params, "mtu", info.mtu) ||
       !extract_string(json, "serverAddress", info.server_address)) {
     error = "Failed to parse handshake response fields";
     return false;
@@ -181,9 +178,7 @@ bool IsIpv6Multicast(const uint8_t* data, size_t len) {
   return data != nullptr && len >= 40 && (data[0] >> 4) == 6 && data[24] == 0xff;
 }
 
-bool IsIpv6Packet(const uint8_t* data, size_t len) {
-  return data != nullptr && len >= 40 && (data[0] >> 4) == 6;
-}
+bool IsIpv6Packet(const uint8_t* data, size_t len) { return data != nullptr && len >= 40 && (data[0] >> 4) == 6; }
 
 uint32_t AddChecksumBytes(uint32_t sum, const uint8_t* data, size_t len) {
   size_t i = 0;
@@ -234,8 +229,7 @@ bool NormalizeTcpChecksum(std::vector<uint8_t>& packet, uint16_t& old_checksum, 
 
   constexpr size_t tcp_offset = 40;
   constexpr size_t checksum_offset = tcp_offset + 16;
-  old_checksum =
-      static_cast<uint16_t>((packet[checksum_offset] << 8) | packet[checksum_offset + 1]);
+  old_checksum = static_cast<uint16_t>((packet[checksum_offset] << 8) | packet[checksum_offset + 1]);
   packet[checksum_offset] = 0;
   packet[checksum_offset + 1] = 0;
   new_checksum = ComputeIpv6TransportChecksum(packet.data(), packet.size(), 6);
@@ -247,25 +241,9 @@ bool NormalizeTcpChecksum(std::vector<uint8_t>& packet, uint16_t& old_checksum, 
 
 std::string FormatIpv6Address(const uint8_t* addr) {
   char buf[40];
-  std::snprintf(buf,
-                sizeof(buf),
-                "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-                addr[0],
-                addr[1],
-                addr[2],
-                addr[3],
-                addr[4],
-                addr[5],
-                addr[6],
-                addr[7],
-                addr[8],
-                addr[9],
-                addr[10],
-                addr[11],
-                addr[12],
-                addr[13],
-                addr[14],
-                addr[15]);
+  std::snprintf(buf, sizeof(buf), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", addr[0],
+                addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7], addr[8], addr[9], addr[10], addr[11],
+                addr[12], addr[13], addr[14], addr[15]);
   return buf;
 }
 
@@ -274,8 +252,7 @@ void DebugIpv6Packet(const char* tag, const uint8_t* data, size_t len, uint64_t 
     return;
   }
   if (data == nullptr || len < 40 || (data[0] >> 4) != 6) {
-    tuntap::FwdDebug(tag, "len=%zu packets=%llu non-ipv6", len,
-                     static_cast<unsigned long long>(count));
+    tuntap::FwdDebug(tag, "len=%zu packets=%llu non-ipv6", len, static_cast<unsigned long long>(count));
     return;
   }
   const uint16_t payload_len = static_cast<uint16_t>((data[4] << 8) | data[5]);
@@ -285,31 +262,16 @@ void DebugIpv6Packet(const char* tag, const uint8_t* data, size_t len, uint64_t 
   if (data[6] == 6 && len >= 60) {
     const size_t tcp_offset = 40;
     const uint16_t src_port = static_cast<uint16_t>((data[tcp_offset] << 8) | data[tcp_offset + 1]);
-    const uint16_t dst_port =
-        static_cast<uint16_t>((data[tcp_offset + 2] << 8) | data[tcp_offset + 3]);
+    const uint16_t dst_port = static_cast<uint16_t>((data[tcp_offset + 2] << 8) | data[tcp_offset + 3]);
     const uint8_t flags = data[tcp_offset + 13];
-    tuntap::FwdDebug(tag,
-                     "len=%zu packets=%llu next=%u payload=%u %s:%u -> %s:%u flags=0x%02x",
-                     len,
-                     static_cast<unsigned long long>(count),
-                     data[6],
-                     payload_len,
-                     src.c_str(),
-                     src_port,
-                     dst.c_str(),
-                     dst_port,
-                     flags);
+    tuntap::FwdDebug(tag, "len=%zu packets=%llu next=%u payload=%u %s:%u -> %s:%u flags=0x%02x", len,
+                     static_cast<unsigned long long>(count), data[6], payload_len, src.c_str(), src_port, dst.c_str(),
+                     dst_port, flags);
     return;
   }
 
-  tuntap::FwdDebug(tag,
-                   "len=%zu packets=%llu next=%u payload=%u %s -> %s",
-                   len,
-                   static_cast<unsigned long long>(count),
-                   data[6],
-                   payload_len,
-                   src.c_str(),
-                   dst.c_str());
+  tuntap::FwdDebug(tag, "len=%zu packets=%llu next=%u payload=%u %s -> %s", len, static_cast<unsigned long long>(count),
+                   data[6], payload_len, src.c_str(), dst.c_str());
 }
 
 void DebugSslError(const char* tag, int ssl_error) {
@@ -320,12 +282,8 @@ void DebugSslError(const char* tag, int ssl_error) {
   const int socket_error = errno;
 #endif
   const char* reason = openssl_error == 0 ? nullptr : ERR_reason_error_string(openssl_error);
-  tuntap::FwdDebug(tag,
-                   "ssl_error=%d openssl=%lu reason=%s socket_error=%d",
-                   ssl_error,
-                   openssl_error,
-                   reason == nullptr ? "(none)" : reason,
-                   socket_error);
+  tuntap::FwdDebug(tag, "ssl_error=%d openssl=%lu reason=%s socket_error=%d", ssl_error, openssl_error,
+                   reason == nullptr ? "(none)" : reason, socket_error);
 }
 
 bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint deadline) {
@@ -333,7 +291,7 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint de
     return false;
   }
 #ifdef _WIN32
-  WSAPOLLFD pfd {};
+  WSAPOLLFD pfd{};
   pfd.fd = static_cast<SOCKET>(fd);
 #else
   struct pollfd pfd {};
@@ -348,8 +306,7 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint de
     if (now >= deadline) {
       return false;
     }
-    const auto remaining_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+    const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
     const int timeout_ms = remaining_ms > 200 ? 200 : static_cast<int>(remaining_ms);
 #ifdef _WIN32
     const int rc = WSAPoll(&pfd, 1, timeout_ms);
@@ -382,9 +339,7 @@ bool PollFd(int fd, short events, const std::atomic<bool>* running, TimePoint de
 
 }  // namespace
 
-TunnelForwarder::~TunnelForwarder() {
-  Stop();
-}
+TunnelForwarder::~TunnelForwarder() { Stop(); }
 
 void TunnelForwarder::Fail(const std::string& reason) {
   running_.store(false);
@@ -403,18 +358,12 @@ void TunnelForwarder::Fail(const std::string& reason) {
   }
 }
 
-bool TunnelForwarder::Connect(int tcp_fd,
-                              const std::string& cert_pem,
-                              const std::string& key_pem,
-                              std::string& error) {
+bool TunnelForwarder::Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem, std::string& error) {
   Stop();
   return ssl_.Connect(tcp_fd, cert_pem, key_pem, kTunnelHandshakeTimeoutMs, error);
 }
 
-bool TunnelForwarder::ConnectPsk(int tcp_fd,
-                                 const uint8_t* psk,
-                                 size_t psk_len,
-                                 const std::string& identity,
+bool TunnelForwarder::ConnectPsk(int tcp_fd, const uint8_t* psk, size_t psk_len, const std::string& identity,
                                  std::string& error) {
   Stop();
   return ssl_.ConnectPsk(tcp_fd, psk, psk_len, identity, kTunnelHandshakeTimeoutMs, error);
@@ -429,19 +378,18 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
 
   handshake_deadline_ = Clock::now() + std::chrono::milliseconds(kTunnelHandshakeTimeoutMs);
 
-  const std::string request =
-      "{\"type\":\"clientHandshakeRequest\",\"mtu\":" + std::to_string(requested_mtu) + "}";
+  const std::string request = "{\"type\":\"clientHandshakeRequest\",\"mtu\":" + std::to_string(requested_mtu) + "}";
   const std::string packet = EncodeCdTunnelMessage(request);
   if (SslWriteAll(reinterpret_cast<const uint8_t*>(packet.data()), packet.size(), false) < 0) {
-    error = Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout"
-                                                : "Failed to send CDTunnel handshake request";
+    error =
+        Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout" : "Failed to send CDTunnel handshake request";
     return false;
   }
 
   uint8_t header[kCdTunnelHeaderSize];
   if (SslReadExact(header, kCdTunnelHeaderSize) < 0) {
-    error = Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout"
-                                                : "Failed to read CDTunnel handshake header";
+    error =
+        Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout" : "Failed to read CDTunnel handshake header";
     return false;
   }
   if (std::memcmp(header, kCdTunnelMagic, 8) != 0) {
@@ -454,8 +402,7 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
   const uint16_t payload_len = ntohs(payload_len_be);
   std::vector<uint8_t> body(payload_len);
   if (payload_len > 0 && SslReadExact(body.data(), body.size()) < 0) {
-    error = Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout"
-                                                : "Failed to read CDTunnel handshake body";
+    error = Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout" : "Failed to read CDTunnel handshake body";
     return false;
   }
 
@@ -464,16 +411,12 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
     return false;
   }
   mtu_ = info.mtu;
-  tuntap::FwdDebug("forwarder-handshake",
-                   "mtu=%u server=%s rsdPort=%u",
-                   info.mtu,
-                   info.server_address.c_str(),
+  tuntap::FwdDebug("forwarder-handshake", "mtu=%u server=%s rsdPort=%u", info.mtu, info.server_address.c_str(),
                    info.server_rsd_port);
   return true;
 }
 
-bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend,
-                                      ForwarderErrorCallback on_error,
+bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend, ForwarderErrorCallback on_error,
                                       std::string& error) {
   if (running_.load()) {
     error = "Tunnel forwarder already running";
@@ -543,8 +486,7 @@ ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_wh
     return -1;
   }
 
-  const TimePoint deadline =
-      only_while_running ? TimePoint::max() : handshake_deadline_;
+  const TimePoint deadline = only_while_running ? TimePoint::max() : handshake_deadline_;
 
   for (;;) {
     if (only_while_running && !running_.load()) {
@@ -603,8 +545,7 @@ ssize_t TunnelForwarder::SslReadExact(uint8_t* buf, size_t len) {
 
 ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_while_running) {
   size_t sent = 0;
-  const TimePoint deadline =
-      only_while_running ? TimePoint::max() : handshake_deadline_;
+  const TimePoint deadline = only_while_running ? TimePoint::max() : handshake_deadline_;
 
   while (sent < len) {
     if (only_while_running && !running_.load()) {
@@ -764,11 +705,8 @@ void TunnelForwarder::TunToDeviceLoop() {
     if (count <= 100 || count % 200 == 0) {
       DebugIpv6Packet("forwarder-tun-write", packet.data(), packet.size(), count);
 #ifdef _WIN32
-      tuntap::FwdDebug("forwarder-tcp-checksum",
-                       "packets=%llu changed=%s old=0x%04x new=0x%04x",
-                       static_cast<unsigned long long>(count),
-                       checksum_changed ? "true" : "false",
-                       old_checksum,
+      tuntap::FwdDebug("forwarder-tcp-checksum", "packets=%llu changed=%s old=0x%04x new=0x%04x",
+                       static_cast<unsigned long long>(count), checksum_changed ? "true" : "false", old_checksum,
                        new_checksum);
 #endif
     }
@@ -793,8 +731,7 @@ void TunnelForwarder::DeviceToTunLoop() {
 
     const uint64_t count = ++ssl_reads_;
     if (count == 1 || count % 200 == 0) {
-      tuntap::FwdDebug("forwarder-ssl-read", "len=%zd chunks=%llu", n,
-                       static_cast<unsigned long long>(count));
+      tuntap::FwdDebug("forwarder-ssl-read", "len=%zd chunks=%llu", n, static_cast<unsigned long long>(count));
     }
 
     if (ingress.size() + static_cast<size_t>(n) > kMaxIngressBuffer) {
@@ -828,14 +765,9 @@ namespace {
 
 #ifdef _WIN32
 class ConnectHostWorker : public Napi::AsyncWorker {
-public:
-  ConnectHostWorker(Napi::Object receiver,
-                    TunnelForwarder& forwarder,
-                    std::string host,
-                    uint16_t port,
-                    std::string cert_pem,
-                    std::string key_pem,
-                    Napi::Promise::Deferred deferred)
+ public:
+  ConnectHostWorker(Napi::Object receiver, TunnelForwarder& forwarder, std::string host, uint16_t port,
+                    std::string cert_pem, std::string key_pem, Napi::Promise::Deferred deferred)
       : Napi::AsyncWorker(receiver.Env()),
         receiver_(Napi::Persistent(receiver)),
         forwarder_(forwarder),
@@ -864,7 +796,7 @@ public:
   void OnOK() override { deferred_.Resolve(Env().Undefined()); }
   void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
 
-private:
+ private:
   Napi::ObjectReference receiver_;
   TunnelForwarder& forwarder_;
   std::string host_;
@@ -875,14 +807,9 @@ private:
 };
 
 class ConnectPskHostWorker : public Napi::AsyncWorker {
-public:
-  ConnectPskHostWorker(Napi::Object receiver,
-                       TunnelForwarder& forwarder,
-                       std::string host,
-                       uint16_t port,
-                       std::vector<uint8_t> psk,
-                       std::string identity,
-                       Napi::Promise::Deferred deferred)
+ public:
+  ConnectPskHostWorker(Napi::Object receiver, TunnelForwarder& forwarder, std::string host, uint16_t port,
+                       std::vector<uint8_t> psk, std::string identity, Napi::Promise::Deferred deferred)
       : Napi::AsyncWorker(receiver.Env()),
         receiver_(Napi::Persistent(receiver)),
         forwarder_(forwarder),
@@ -909,7 +836,7 @@ public:
   void OnOK() override { deferred_.Resolve(Env().Undefined()); }
   void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
 
-private:
+ private:
   Napi::ObjectReference receiver_;
   TunnelForwarder& forwarder_;
   std::string host_;
@@ -921,10 +848,8 @@ private:
 #endif  // _WIN32
 
 class HandshakeWorker : public Napi::AsyncWorker {
-public:
-  HandshakeWorker(Napi::Object receiver,
-                  TunnelForwarder& forwarder,
-                  uint32_t requested_mtu,
+ public:
+  HandshakeWorker(Napi::Object receiver, TunnelForwarder& forwarder, uint32_t requested_mtu,
                   Napi::Promise::Deferred deferred)
       : Napi::AsyncWorker(receiver.Env()),
         receiver_(Napi::Persistent(receiver)),
@@ -954,7 +879,7 @@ public:
 
   void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
 
-private:
+ private:
   Napi::ObjectReference receiver_;
   TunnelForwarder& forwarder_;
   uint32_t requested_mtu_;
@@ -965,18 +890,16 @@ private:
 }  // namespace
 
 class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
-public:
+ public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports) {
-    Napi::Function func =
-        DefineClass(env,
-                    "TunnelForwarder",
-                    {InstanceMethod("connect", &TunnelForwarderWrap::Connect),
-                     InstanceMethod("connectHost", &TunnelForwarderWrap::ConnectHost),
-                     InstanceMethod("connectPsk", &TunnelForwarderWrap::ConnectPsk),
-                     InstanceMethod("connectPskHost", &TunnelForwarderWrap::ConnectPskHost),
-                     InstanceMethod("handshake", &TunnelForwarderWrap::Handshake),
-                     InstanceMethod("startForwarding", &TunnelForwarderWrap::StartForwarding),
-                     InstanceMethod("stop", &TunnelForwarderWrap::Stop)});
+    Napi::Function func = DefineClass(env, "TunnelForwarder",
+                                      {InstanceMethod("connect", &TunnelForwarderWrap::Connect),
+                                       InstanceMethod("connectHost", &TunnelForwarderWrap::ConnectHost),
+                                       InstanceMethod("connectPsk", &TunnelForwarderWrap::ConnectPsk),
+                                       InstanceMethod("connectPskHost", &TunnelForwarderWrap::ConnectPskHost),
+                                       InstanceMethod("handshake", &TunnelForwarderWrap::Handshake),
+                                       InstanceMethod("startForwarding", &TunnelForwarderWrap::StartForwarding),
+                                       InstanceMethod("stop", &TunnelForwarderWrap::Stop)});
     exports.Set("TunnelForwarder", func);
     return exports;
   }
@@ -988,7 +911,7 @@ public:
     ReleaseErrorTsfn();
   }
 
-private:
+ private:
   void ReleaseErrorTsfn() {
     std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
     if (error_tsfn_) {
@@ -1003,9 +926,8 @@ private:
       return;
     }
     auto* copy = new std::string(std::move(message));
-    const napi_status status = error_tsfn_.NonBlockingCall(
-        copy,
-        [](Napi::Env env, Napi::Function js_callback, std::string* msg) {
+    const napi_status status =
+        error_tsfn_.NonBlockingCall(copy, [](Napi::Env env, Napi::Function js_callback, std::string* msg) {
           js_callback.Call({Napi::String::New(env, *msg)});
           delete msg;
         });
@@ -1018,16 +940,13 @@ private:
   Napi::Value Connect(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsString() || !info[2].IsString()) {
-      Napi::TypeError::New(env, "Expected (tcpFd, certPem, keyPem)")
-          .ThrowAsJavaScriptException();
+      Napi::TypeError::New(env, "Expected (tcpFd, certPem, keyPem)").ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
     std::string error;
-    if (!forwarder_.Connect(info[0].As<Napi::Number>().Int32Value(),
-                            info[1].As<Napi::String>().Utf8Value(),
-                            info[2].As<Napi::String>().Utf8Value(),
-                            error)) {
+    if (!forwarder_.Connect(info[0].As<Napi::Number>().Int32Value(), info[1].As<Napi::String>().Utf8Value(),
+                            info[2].As<Napi::String>().Utf8Value(), error)) {
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
     return env.Undefined();
@@ -1035,23 +954,17 @@ private:
 
   Napi::Value ConnectHost(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
-    if (info.Length() < 4 || !info[0].IsString() || !info[1].IsNumber() || !info[2].IsString() ||
-        !info[3].IsString()) {
-      Napi::TypeError::New(env, "Expected (host, port, certPem, keyPem)")
-          .ThrowAsJavaScriptException();
+    if (info.Length() < 4 || !info[0].IsString() || !info[1].IsNumber() || !info[2].IsString() || !info[3].IsString()) {
+      Napi::TypeError::New(env, "Expected (host, port, certPem, keyPem)").ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
 #ifdef _WIN32
     auto deferred = Napi::Promise::Deferred::New(env);
     auto* worker =
-        new ConnectHostWorker(info.This().As<Napi::Object>(),
-                              forwarder_,
-                              info[0].As<Napi::String>().Utf8Value(),
+        new ConnectHostWorker(info.This().As<Napi::Object>(), forwarder_, info[0].As<Napi::String>().Utf8Value(),
                               static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value()),
-                              info[2].As<Napi::String>().Utf8Value(),
-                              info[3].As<Napi::String>().Utf8Value(),
-                              deferred);
+                              info[2].As<Napi::String>().Utf8Value(), info[3].As<Napi::String>().Utf8Value(), deferred);
     worker->Queue();
     return deferred.Promise();
 #else
@@ -1063,8 +976,7 @@ private:
   Napi::Value ConnectPsk(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsBuffer()) {
-      Napi::TypeError::New(env, "Expected (tcpFd, pskBuffer[, identity])")
-          .ThrowAsJavaScriptException();
+      Napi::TypeError::New(env, "Expected (tcpFd, pskBuffer[, identity])").ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
@@ -1075,11 +987,7 @@ private:
 
     Napi::Buffer<uint8_t> psk = info[1].As<Napi::Buffer<uint8_t>>();
     std::string error;
-    if (!forwarder_.ConnectPsk(info[0].As<Napi::Number>().Int32Value(),
-                               psk.Data(),
-                               psk.Length(),
-                               identity,
-                               error)) {
+    if (!forwarder_.ConnectPsk(info[0].As<Napi::Number>().Int32Value(), psk.Data(), psk.Length(), identity, error)) {
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
     return env.Undefined();
@@ -1088,8 +996,7 @@ private:
   Napi::Value ConnectPskHost(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 3 || !info[0].IsString() || !info[1].IsNumber() || !info[2].IsBuffer()) {
-      Napi::TypeError::New(env, "Expected (host, port, pskBuffer[, identity])")
-          .ThrowAsJavaScriptException();
+      Napi::TypeError::New(env, "Expected (host, port, pskBuffer[, identity])").ThrowAsJavaScriptException();
       return env.Undefined();
     }
 
@@ -1105,13 +1012,9 @@ private:
     std::vector<uint8_t> psk_copy(psk.Data(), psk.Data() + psk.Length());
     auto deferred = Napi::Promise::Deferred::New(env);
     auto* worker =
-        new ConnectPskHostWorker(info.This().As<Napi::Object>(),
-                                 forwarder_,
-                                 info[0].As<Napi::String>().Utf8Value(),
-                                 static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value()),
-                                 std::move(psk_copy),
-                                 std::move(identity),
-                                 deferred);
+        new ConnectPskHostWorker(info.This().As<Napi::Object>(), forwarder_, info[0].As<Napi::String>().Utf8Value(),
+                                 static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value()), std::move(psk_copy),
+                                 std::move(identity), deferred);
     worker->Queue();
     return deferred.Promise();
 #else
@@ -1130,10 +1033,8 @@ private:
     // Async on every platform: the CDTunnel exchange blocks on socket I/O,
     // and on Windows that I/O flows through the JS-pumped loopback bridge.
     auto deferred = Napi::Promise::Deferred::New(env);
-    auto* worker = new HandshakeWorker(info.This().As<Napi::Object>(),
-                                       forwarder_,
-                                       info[0].As<Napi::Number>().Uint32Value(),
-                                       deferred);
+    auto* worker = new HandshakeWorker(info.This().As<Napi::Object>(), forwarder_,
+                                       info[0].As<Napi::Number>().Uint32Value(), deferred);
     worker->Queue();
     return deferred.Promise();
   }
@@ -1154,11 +1055,7 @@ private:
 
     {
       std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
-      error_tsfn_ = Napi::ThreadSafeFunction::New(env,
-                                                  on_error,
-                                                  "TunnelForwarderOnError",
-                                                  0,
-                                                  1);
+      error_tsfn_ = Napi::ThreadSafeFunction::New(env, on_error, "TunnelForwarderOnError", 0, 1);
     }
 
     TunPlatformBackend* tun_backend = info[0].As<Napi::External<TunPlatformBackend>>().Data();

@@ -33,9 +33,7 @@ struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
     device_ = nullptr;
   }
 
-  static void CallJs(Napi::Env env,
-                     Napi::Function jsCallback,
-                     const std::shared_ptr<TunPollDispatch>& self,
+  static void CallJs(Napi::Env env, Napi::Function jsCallback, const std::shared_ptr<TunPollDispatch>& self,
                      std::vector<uint8_t>* packet) {
     if (env == nullptr || jsCallback.IsEmpty() || packet == nullptr) {
       delete packet;
@@ -43,10 +41,7 @@ struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
     }
     auto* backing = packet;
     Napi::Buffer<uint8_t> buf = Napi::Buffer<uint8_t>::New(
-        env,
-        backing->data(),
-        backing->size(),
-        [](Napi::Env, uint8_t*, std::vector<uint8_t>* vec) { delete vec; },
+        env, backing->data(), backing->size(), [](Napi::Env, uint8_t*, std::vector<uint8_t>* vec) { delete vec; },
         backing);
     jsCallback.Call({buf});
     if (self) {
@@ -59,12 +54,10 @@ struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
     while (!pending.empty()) {
       auto* packet = new std::vector<uint8_t>(std::move(pending.front()));
       auto* job = new PacketJob{shared_from_this(), packet};
-      napi_status status = tsfn.NonBlockingCall(
-          job,
-          [](Napi::Env env, Napi::Function jsCallback, PacketJob* job) {
-            CallJs(env, jsCallback, job->dispatch, job->packet);
-            delete job;
-          });
+      napi_status status = tsfn.NonBlockingCall(job, [](Napi::Env env, Napi::Function jsCallback, PacketJob* job) {
+        CallJs(env, jsCallback, job->dispatch, job->packet);
+        delete job;
+      });
       if (status != napi_ok) {
         delete packet;
         delete job;
@@ -89,7 +82,7 @@ struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
 };
 
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
-public:
+ public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports);
   TunDevice(const Napi::CallbackInfo& info);
   ~TunDevice();
@@ -97,7 +90,7 @@ public:
   void CloseInternal();
   void ResumeReceiveFromDispatch();
 
-private:
+ private:
   friend struct TunPollDispatch;
 
   Napi::Value Open(const Napi::CallbackInfo& info);
@@ -129,28 +122,26 @@ private:
 Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
   Napi::HandleScope scope(env);
 
-  Napi::Function func = DefineClass(env, "TunDevice", {
-    InstanceMethod("open", &TunDevice::Open),
-    InstanceMethod("close", &TunDevice::Close),
-    InstanceMethod("read", &TunDevice::Read),
-    InstanceMethod("write", &TunDevice::Write),
-    InstanceMethod("getName", &TunDevice::GetName),
-    InstanceMethod("getFd", &TunDevice::GetFd),
-    InstanceMethod("getForwardingHandle", &TunDevice::GetForwardingHandle),
-    InstanceMethod("startPolling", &TunDevice::StartPolling),
-    InstanceMethod("pausePolling", &TunDevice::PausePolling),
-    InstanceMethod("resumePolling", &TunDevice::ResumePolling),
-  });
+  Napi::Function func = DefineClass(env, "TunDevice",
+                                    {
+                                        InstanceMethod("open", &TunDevice::Open),
+                                        InstanceMethod("close", &TunDevice::Close),
+                                        InstanceMethod("read", &TunDevice::Read),
+                                        InstanceMethod("write", &TunDevice::Write),
+                                        InstanceMethod("getName", &TunDevice::GetName),
+                                        InstanceMethod("getFd", &TunDevice::GetFd),
+                                        InstanceMethod("getForwardingHandle", &TunDevice::GetForwardingHandle),
+                                        InstanceMethod("startPolling", &TunDevice::StartPolling),
+                                        InstanceMethod("pausePolling", &TunDevice::PausePolling),
+                                        InstanceMethod("resumePolling", &TunDevice::ResumePolling),
+                                    });
 
   exports.Set("TunDevice", func);
   return exports;
 }
 
 TunDevice::TunDevice(const Napi::CallbackInfo& info)
-    : Napi::ObjectWrap<TunDevice>(info),
-      backend_(CreatePlatformBackend()),
-      is_open_(false),
-      polling_(false) {
+    : Napi::ObjectWrap<TunDevice>(info), backend_(CreatePlatformBackend()), is_open_(false), polling_(false) {
   Napi::Env env = info.Env();
   Napi::HandleScope scope(env);
 
@@ -172,8 +163,7 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
     return Napi::Boolean::New(env, true);
   }
   if (!backend_) {
-    Napi::Error::New(env, "Unsupported platform: no native TUN backend available")
-      .ThrowAsJavaScriptException();
+    Napi::Error::New(env, "Unsupported platform: no native TUN backend available").ThrowAsJavaScriptException();
     return Napi::Boolean::New(env, false);
   }
 
@@ -209,7 +199,8 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   if (info.Length() > 0 && info[0].IsNumber()) {
     buffer_size = info[0].As<Napi::Number>().Uint32Value();
     if (buffer_size == 0 || buffer_size > MAX_POLL_BUFFER) {
-      Napi::RangeError::New(env, "Read buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER)).ThrowAsJavaScriptException();
+      Napi::RangeError::New(env, "Read buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER))
+          .ThrowAsJavaScriptException();
       return env.Null();
     }
   }
@@ -296,7 +287,8 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   if (info.Length() > 1 && info[1].IsNumber()) {
     auto size = info[1].As<Napi::Number>().Uint32Value();
     if (size == 0 || size > MAX_POLL_BUFFER) {
-      Napi::RangeError::New(env, "Buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER)).ThrowAsJavaScriptException();
+      Napi::RangeError::New(env, "Buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER))
+          .ThrowAsJavaScriptException();
       return env.Null();
     }
     buffer_size = size;
@@ -313,12 +305,7 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
 
   // Queue depth > 1 lets the poll thread post the next packet while JS is still
   // handling the previous callback (still serialized on the main thread).
-  tsfn_ = Napi::ThreadSafeFunction::New(
-      env,
-      info[0].As<Napi::Function>(),
-      "TunDeviceDataCallback",
-      0,
-      queue_depth);
+  tsfn_ = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(), "TunDeviceDataCallback", 0, queue_depth);
 
   uv_loop_t* loop = nullptr;
   napi_status napi_st = napi_get_uv_event_loop(env, &loop);
@@ -334,8 +321,8 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   dispatch->max_pending_ = queue_depth;
   dispatch->device_ = this;
   poll_dispatch_ = dispatch;
-  auto packet_cb = [this, weak_dispatch = std::weak_ptr<TunPollDispatch>(dispatch)](
-                       std::vector<uint8_t> packet) mutable -> bool {
+  auto packet_cb = [this, weak_dispatch =
+                              std::weak_ptr<TunPollDispatch>(dispatch)](std::vector<uint8_t> packet) mutable -> bool {
     const auto dispatch = weak_dispatch.lock();
     if (!dispatch) {
       return false;

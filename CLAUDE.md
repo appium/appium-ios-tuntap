@@ -23,9 +23,18 @@ npm run build:prebuilds
 # Build only TypeScript
 npm run build
 
-# Lint
+# Lint (TypeScript/JS via oxlint)
 npm run lint
 npm run lint:fix
+
+# Format/lint C++ (clang-format/clang-tidy; kept separate from `npm run
+# format`/`format:check`/`lint` since those tools aren't installed by `npm
+# install` — CI installs them via apt and runs them only on the ubuntu-latest
+# job, not macos/windows). lint:cpp regenerates build/Release/compile_commands.json
+# via node-gyp first, so it only covers sources compiled for the host OS.
+npm run format:cpp
+npm run format:cpp:check
+npm run lint:cpp
 
 # Tests (unit + integration; privileged cases need sudo on macOS/Linux)
 npm test

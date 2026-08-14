@@ -29,6 +29,16 @@ on:
         required: false
         default: false
         type: boolean
+      run-cpp-format-check:
+        description: Run C++ format check (clang-format) before tests
+        required: false
+        default: false
+        type: boolean
+      run-cpp-lint:
+        description: Run C++ lint (clang-tidy) before tests
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   test:
@@ -98,6 +108,22 @@ jobs:
     - name: Run format check
       if: ${{ inputs.run-format-check }}
       run: npm run format:check
+
+    - name: Install clang-format
+      if: ${{ contains(inputs.image, 'ubuntu') && inputs.run-cpp-format-check }}
+      run: sudo apt-get install -y clang-format
+
+    - name: Install clang-tidy
+      if: ${{ contains(inputs.image, 'ubuntu') && inputs.run-cpp-lint }}
+      run: sudo apt-get install -y clang-tidy
+
+    - name: Run C++ format check
+      if: ${{ inputs.run-cpp-format-check }}
+      run: npm run format:cpp:check
+
+    - name: Run C++ lint
+      if: ${{ inputs.run-cpp-lint }}
+      run: npm run lint:cpp
 
     - name: Check IPv6 configuration on Linux
       if: ${{ contains(inputs.image, 'ubuntu') }}
