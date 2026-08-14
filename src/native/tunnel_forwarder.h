@@ -23,7 +23,7 @@ struct TunnelHandshakeInfo {
 
 using ForwarderErrorCallback = std::function<void(std::string)>;
 
-enum class TunReadResult {
+enum class TunReadResult : std::uint8_t {
   kOk,
   kWouldBlock,
   kFatal,
@@ -72,7 +72,7 @@ class TunnelForwarder {
   std::atomic<uint64_t> tun_writes_{0};
   std::atomic<uint64_t> tun_drops_{0};
   std::atomic<uint64_t> ssl_reads_{0};
-  std::chrono::steady_clock::time_point handshake_deadline_{};
+  std::chrono::steady_clock::time_point handshake_deadline_;
   std::thread tun_thread_;
   std::thread sock_thread_;
 };

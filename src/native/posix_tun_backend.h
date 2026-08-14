@@ -26,7 +26,7 @@ class PosixTunBackend : public TunPlatformBackend {
     interface_name_.clear();
   }
 
-  bool IsOpen() const override { return fd_.is_valid(); }
+  [[nodiscard]] bool IsOpen() const override { return fd_.is_valid(); }
 
   bool StartReceiveLoop(uv_loop_t* loop, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
                         std::string& error) override {
@@ -46,7 +46,7 @@ class PosixTunBackend : public TunPlatformBackend {
 
   void ResumeReceiveLoop() override { poll_loop_.Resume(); }
 
-  int GetNativeFd() const override { return fd_.get(); }
+  [[nodiscard]] int GetNativeFd() const override { return fd_.get(); }
 
   bool WaitReadable(const std::atomic<bool>& running, std::string& error) override {
     return WaitForEvents(POLLIN, running, error);

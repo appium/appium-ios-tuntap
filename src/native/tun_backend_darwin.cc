@@ -2,8 +2,8 @@
 
 #include "tun_backend.h"
 
-#include <errno.h>
-#include <string.h>
+#include <cerrno>
+#include <cstring>
 #include <sys/ioctl.h>
 #include <sys/kern_control.h>
 #include <sys/socket.h>
@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 #include <netinet6/in6_var.h>
 
+#include <array>
 #include <utility>
 
 #include "file_descriptor.h"
@@ -29,8 +30,8 @@ class DarwinTunBackend : public PosixTunBackend {
   static constexpr size_t kUtunHeaderSize = 4;
 
   bool OpenDevice(const std::string& requested_name, std::string& out_interface_name, std::string& error) override {
-    struct ctl_info ctl_info;
-    struct sockaddr_ctl socket_addr;
+    struct ctl_info ctl_info {};
+    struct sockaddr_ctl socket_addr {};
 
     FileDescriptor temp_fd(socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL));
     if (!temp_fd.is_valid()) {
@@ -64,9 +65,9 @@ class DarwinTunBackend : public PosixTunBackend {
       return false;
     }
 
-    char interface_name[20];
-    socklen_t interface_name_len = sizeof(interface_name);
-    if (getsockopt(temp_fd.get(), SYSPROTO_CONTROL, UTUN_OPT_IFNAME, interface_name, &interface_name_len) < 0) {
+    std::array<char, 20> interface_name{};
+    socklen_t interface_name_len = interface_name.size();
+    if (getsockopt(temp_fd.get(), SYSPROTO_CONTROL, UTUN_OPT_IFNAME, interface_name.data(), &interface_name_len) < 0) {
       error = std::string("Failed to get utun interface name: ") + strerror(errno);
       return false;
     }
@@ -76,7 +77,7 @@ class DarwinTunBackend : public PosixTunBackend {
     }
 
     fd_ = std::move(temp_fd);
-    interface_name_ = std::string(interface_name);
+    interface_name_ = std::string(interface_name.data());
     out_interface_name = interface_name_;
     return true;
   }

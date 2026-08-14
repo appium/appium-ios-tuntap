@@ -2,10 +2,10 @@
 
 #include "posix_uv_poll_loop.h"
 
+#include <cerrno>
 #include <cstdio>
-#include <errno.h>
+#include <cstring>
 #include <fcntl.h>
-#include <string.h>
 #include <utility>
 
 PosixUvPollLoop::~PosixUvPollLoop() { Stop(); }
@@ -13,11 +13,11 @@ PosixUvPollLoop::~PosixUvPollLoop() { Stop(); }
 bool PosixUvPollLoop::Start(uv_loop_t* loop, int fd, size_t buffer_size, ReadFn read_fn,
                             TunPlatformBackend::PacketCallback on_packet, TunPlatformBackend::ErrorCallback on_error,
                             std::string& error) {
-  if (handle_) {
+  if (handle_ != nullptr) {
     error = "Receive loop already started";
     return false;
   }
-  if (!loop || fd < 0 || buffer_size == 0) {
+  if (loop == nullptr || fd < 0 || buffer_size == 0) {
     error = "Invalid receive-loop parameters";
     return false;
   }
@@ -49,7 +49,7 @@ bool PosixUvPollLoop::Start(uv_loop_t* loop, int fd, size_t buffer_size, ReadFn 
 }
 
 void PosixUvPollLoop::Stop() {
-  if (!handle_) {
+  if (handle_ == nullptr) {
     return;
   }
 
@@ -62,7 +62,7 @@ void PosixUvPollLoop::Stop() {
 }
 
 void PosixUvPollLoop::Pause() {
-  if (!handle_ || paused_) {
+  if (handle_ == nullptr || paused_) {
     return;
   }
   paused_ = true;
@@ -70,7 +70,7 @@ void PosixUvPollLoop::Pause() {
 }
 
 void PosixUvPollLoop::Resume() {
-  if (!handle_ || !paused_) {
+  if (handle_ == nullptr || !paused_) {
     return;
   }
   paused_ = false;
@@ -79,7 +79,7 @@ void PosixUvPollLoop::Resume() {
 
 void PosixUvPollLoop::OnPoll(uv_poll_t* handle, int status, int events) {
   auto* state = static_cast<State*>(handle->data);
-  if (!state) {
+  if (state == nullptr) {
     return;
   }
 
@@ -102,7 +102,7 @@ void PosixUvPollLoop::OnPoll(uv_poll_t* handle, int status, int events) {
     return;
   }
 
-  if (!(events & UV_READABLE) || !state->read_fn) {
+  if ((events & UV_READABLE) == 0 || !state->read_fn) {
     return;
   }
 

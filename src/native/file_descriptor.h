@@ -12,9 +12,9 @@ class FileDescriptor {
   FileDescriptor(FileDescriptor&& other) noexcept;
   FileDescriptor& operator=(FileDescriptor&& other) noexcept;
 
-  int get() const;
+  [[nodiscard]] int get() const;
   int release();
-  bool is_valid() const;
+  [[nodiscard]] bool is_valid() const;
   void reset(int fd = -1);
 
  private:

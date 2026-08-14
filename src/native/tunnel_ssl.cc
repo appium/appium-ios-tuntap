@@ -23,7 +23,7 @@
 
 namespace {
 
-constexpr char kAppleTvPskCiphers[] = "PSK-AES256-CBC-SHA:PSK-AES128-CBC-SHA:PSK-3DES-EDE-CBC-SHA:PSK-RC4-SHA:PSK";
+constexpr const char* kAppleTvPskCiphers = "PSK-AES256-CBC-SHA:PSK-AES128-CBC-SHA:PSK-3DES-EDE-CBC-SHA:PSK-RC4-SHA:PSK";
 
 #ifdef _WIN32
 constexpr short kPollIn = POLLRDNORM;

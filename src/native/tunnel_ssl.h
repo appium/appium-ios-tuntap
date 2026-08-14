@@ -26,7 +26,7 @@ class TunnelSslClient {
 
   void Close();
 
-  SSL* ssl() const { return ssl_; }
+  [[nodiscard]] SSL* ssl() const { return ssl_; }
 
  private:
   static unsigned int PskClientCallback(SSL* ssl, const char* /*hint*/, char* identity, unsigned int max_identity_len,

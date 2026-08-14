@@ -31,17 +31,22 @@ void FwdDebug(const char* event) {
     return;
   }
 
-  std::lock_guard<std::mutex> lock(g_log_mutex);
+  std::scoped_lock lock(g_log_mutex);
   fprintf(stderr, "[fwd] #%llu %s\n", static_cast<unsigned long long>(++g_seq), event);
   fflush(stderr);
 }
 
+// Kept as a C-style variadic printf-style logger (rather than a variadic
+// template) so the 17 call sites across tunnel_forwarder.cc/tunnel_ssl.cc can
+// keep using plain printf format strings, compiler-checked via the
+// __attribute__((format(printf, ...))) on the declaration in debug_log.h.
+// NOLINTNEXTLINE(modernize-avoid-variadic-functions)
 void FwdDebug(const char* event, const char* fmt, ...) {
   if (!DebugEnabled()) {
     return;
   }
 
-  std::lock_guard<std::mutex> lock(g_log_mutex);
+  std::scoped_lock lock(g_log_mutex);
   fprintf(stderr, "[fwd] #%llu %s ", static_cast<unsigned long long>(++g_seq), event);
 
   va_list args;
