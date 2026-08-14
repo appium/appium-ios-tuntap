@@ -1,3 +1,9 @@
+## [1.2.7](https://github.com/appium/appium-ios-tuntap/compare/v1.2.6...v1.2.7) (2026-08-13)
+
+### Miscellaneous Chores
+
+* **native:** drop unused members ([#81](https://github.com/appium/appium-ios-tuntap/issues/81)) ([e9e7441](https://github.com/appium/appium-ios-tuntap/commit/e9e744103aa97271f2c861f69ee9af7bc74265d3))
+
 ## [1.2.6](https://github.com/appium/appium-ios-tuntap/compare/v1.2.5...v1.2.6) (2026-08-13)
 
 ### Bug Fixes

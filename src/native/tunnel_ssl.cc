@@ -258,7 +258,6 @@ bool TunnelSslClient::Connect(int tcp_fd, const std::string& cert_pem, const std
   }
 #endif
 
-  close_owned_fd_ = true;
   owned_fd_ = AcquireOwnedFd(tcp_fd, error);
   if (owned_fd_ < 0) {
     return false;
@@ -325,7 +324,6 @@ bool TunnelSslClient::ConnectPsk(int tcp_fd, const uint8_t* psk, size_t psk_len,
   }
 #endif
 
-  close_owned_fd_ = true;
   owned_fd_ = AcquireOwnedFd(tcp_fd, error);
   if (owned_fd_ < 0) {
     return false;
@@ -377,17 +375,14 @@ void TunnelSslClient::Close() {
     SSL_CTX_free(ctx_);
     ctx_ = nullptr;
   }
-  if (owned_fd_ >= 0 && close_owned_fd_) {
+  if (owned_fd_ >= 0) {
 #ifdef _WIN32
     closesocket(static_cast<SOCKET>(owned_fd_));
 #else
     ::close(owned_fd_);
 #endif
-  }
-  if (owned_fd_ >= 0) {
     owned_fd_ = -1;
   }
-  close_owned_fd_ = true;
   psk_key_.clear();
   psk_identity_.clear();
 }
