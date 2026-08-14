@@ -57,17 +57,28 @@ npm run build:addon; npm run test:unit
 src/
   tuntap.cc              # C++ Node-API surface (TunDevice class + module exports)
   native/
-    file_descriptor.h    # RAII file descriptor abstraction used by native backends
-    file_descriptor.cc   # FileDescriptor implementation
-    tun_backend.h        # TunPlatformBackend interface + OpenResult + shared declarations
-    tun_backend_common.cc# Backend factory + non-blocking fd helper
-    tun_backend_darwin.cc# macOS utun backend implementation
-    tun_backend_linux.cc # Linux /dev/net/tun backend implementation
+    file_descriptor.*    # RAII POSIX file descriptor wrapper
+    handle.*             # RAII Win32 HANDLE wrapper (mirrors FileDescriptor)
+    tun_backend.h        # TunPlatformBackend interface + shared declarations
+    posix_tun_backend.h  # Shared POSIX base (fd, interface name, poll loop)
+    posix_uv_poll_loop.* # uv_poll receive loop used by the POSIX backends
+    tun_backend_darwin.cc# macOS utun backend + CreatePlatformBackend()
+    tun_backend_linux.cc # Linux /dev/net/tun backend + CreatePlatformBackend()
+    tun_backend_windows.cc# WinTun backend + CreatePlatformBackend()
+    wintun_loader.*      # Resolves wintun.dll entry points at runtime
+    tunnel_forwarder.*   # TLS <-> TUN forwarding loops + N-API TunnelForwarder
+    tunnel_ssl.*         # OpenSSL client (lockdown cert or TLS-PSK)
+    ipv6_frame.h         # IPv6 frame length/reassembly helpers
+    debug_log.*          # APPIUM_TUNTAP_DEBUG `[fwd]` logging to stderr
+    win_delay_load_failure_hook.cc # Names the failing DLL/symbol on Windows delay-load errors
   index.ts               # Package entry: TunTap, PacketCallback, errors, tunnel/*
   TunTap.ts              # Wraps native TunDevice; validation; delegates OS networking to platform layer
+  pkg-root.ts            # Memoized package root for node-gyp-build
   tunnel/
-    manager.ts           # TunnelManager, connectToTunnelLockdown (native OpenSSL)
-    forwarder.ts         # TunnelForwarder TS wrapper
+    manager.ts           # TunnelManager, connectToTunnelLockdown, connectToTunnelPsk
+    forwarder.ts         # TunnelForwarder TS wrapper (+ Windows loopback bridge)
+    constants.ts         # CD_TUNNEL_MTU, IPv6 header constants
+    debug-log.ts         # APPIUM_TUNTAP_DEBUG + tunDebug
     types.ts             # TunnelConnection, TunnelInfo
   logger.ts              # @appium/support logger
   errors.ts              # TunTapError, TunTapPermissionError, TunTapDeviceError
@@ -76,12 +87,21 @@ src/
     create-platform.ts   # Internal: maps NodeJS.Platform → platform implementation (not public API)
     darwin.ts            # ifconfig, route, netstat (macOS)
     linux.ts             # iproute2 `ip` (Linux)
+    windows.ts           # netsh + PowerShell Get-NetAdapterStatistics
     unsupported.ts       # Stub that throws for unknown platforms
-    exec.ts              # promisify(execFile)
+    exec.ts              # execFile wrapper with a 30s timeout
     require-root.ts      # assertEffectiveRoot() — EUID 0 before privileged commands
+    require-admin.ts     # assertAdminOnWindows() — Administrator before privileged commands
+
+scripts/
+  fetch-wintun.mjs       # Maintainer-only: refresh vendor/wintun binaries
+  ci/lint-cpp.sh         # clang-tidy over host-OS native sources (npm run lint:cpp)
+
+vendor/wintun/           # Bundled signed wintun.dll per arch + upstream LICENSE
 
 test/
   unit/tuntap-unit.spec.ts
+  unit/tunnel/manager-forwarding.spec.ts
   integration/tuntap-integration.spec.ts
   test-tuntap.ts
   utils.ts
@@ -97,17 +117,18 @@ This is a Node.js native addon package that provides TUN/TAP virtual network dev
 A C++17 Node-API (NAPI) addon built via `node-gyp`. `src/tuntap.cc` is intentionally kept as the N-API interface/glue: it exposes `TunDevice` (`open()`, `close()`, `read()`, `write()`, `startPolling()`, `getName()`, `getFd()`), validates JS arguments, manages libuv polling (`uv_poll_t`), and bridges callbacks via `Napi::ThreadSafeFunction`.
 
 Native implementation details are split into `src/native/*`:
-- `TunPlatformBackend` interface in `tun_backend.h`
-- platform-specific backends in `tun_backend_darwin.cc` (utun) and `tun_backend_linux.cc` (`/dev/net/tun`)
-- shared utilities/factory in `tun_backend_common.cc`
-- `FileDescriptor` RAII abstraction in `file_descriptor.*`
+- `TunPlatformBackend` interface in `tun_backend.h`; each backend `.cc` defines its own `CreatePlatformBackend()`
+- platform-specific backends in `tun_backend_darwin.cc` (utun), `tun_backend_linux.cc` (`/dev/net/tun`), and `tun_backend_windows.cc` (WinTun via `wintun_loader.*`)
+- shared POSIX base + libuv receive loop in `posix_tun_backend.h` / `posix_uv_poll_loop.*`
+- RAII handles: `FileDescriptor` (POSIX) in `file_descriptor.*`, `Handle` (Win32) in `handle.*`
+- tunnel forwarding in `tunnel_forwarder.*` (TLS↔TUN loops, N-API `TunnelForwarder`) and `tunnel_ssl.*` (OpenSSL client for lockdown cert or TLS-PSK)
 
 ### TypeScript layer (`src/`)
 
 - **`errors.ts`** — shared error classes used by `TunTap` and `platform/*`.
 - **`TunTap.ts`** — loads the native addon via **`node-gyp-build`** (prebuilds or `build/Release`), validates IPv6/MTU/buffers, and calls a **`TunTapPlatform`** instance chosen by **`new TunTap(name?, platform?)`** where `platform` is a **`NodeJS.Platform`** string (default `process.platform`). No custom platform object is accepted at runtime; new OS support is wired in **`platform/create-platform.ts`**.
-- **`platform/*`** — OS-specific **`execFile`** usage for address, MTU, routes, and stats. Built-in Darwin/Linux paths require **effective UID 0** (**`assertEffectiveRoot`**); commands are run **without** embedding `sudo` in argv. **`getStats`** uses read-only tooling where possible without an extra root check.
-- **`tunnel/manager.ts`** — **`TunnelManager`**, native OpenSSL **`TunnelForwarder`**, and **`connectToTunnelLockdown`** (raw TCP + pair-record PEM).
+- **`platform/*`** — OS-specific **`execFile`** usage for address, MTU, routes, and stats, each call bounded by a **30s timeout** (`exec.ts`). Darwin/Linux require **effective UID 0** (**`assertEffectiveRoot`**) and Windows requires **Administrator** (**`assertAdminOnWindows`**); commands are run **without** embedding `sudo` in argv. **`getStats`** uses read-only tooling where possible without an extra privilege check.
+- **`tunnel/manager.ts`** — **`TunnelManager`**, native OpenSSL **`TunnelForwarder`**, **`connectToTunnelLockdown`** (raw TCP + pair-record PEM), and **`connectToTunnelPsk`** (TLS-PSK for Apple TV pairing).
 - **`logger.ts`** — thin wrapper around `@appium/support` logger.
 - **`index.ts`** — re-exports **`TunTap`**, **`PacketCallback`**, errors from **`errors.ts`**, and **`export *`** from **`tunnel/`**. Does **not** export the platform factory or concrete platform classes.
 
