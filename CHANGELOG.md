@@ -1,3 +1,9 @@
+## [1.2.9](https://github.com/appium/appium-ios-tuntap/compare/v1.2.8...v1.2.9) (2026-08-14)
+
+### Miscellaneous Chores
+
+* **tunnel:** remove stale forwarder helpers ([#83](https://github.com/appium/appium-ios-tuntap/issues/83)) ([6c460cd](https://github.com/appium/appium-ios-tuntap/commit/6c460cd0bbac447a89da09a29cf5bb183cc53a1f))
+
 ## [1.2.8](https://github.com/appium/appium-ios-tuntap/compare/v1.2.7...v1.2.8) (2026-08-14)
 
 ### Miscellaneous Chores
