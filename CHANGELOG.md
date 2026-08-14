@@ -1,3 +1,9 @@
+## [1.2.10](https://github.com/appium/appium-ios-tuntap/compare/v1.2.9...v1.2.10) (2026-08-14)
+
+### Bug Fixes
+
+* **platform:** time out OS commands after 30s ([#84](https://github.com/appium/appium-ios-tuntap/issues/84)) ([d185ff2](https://github.com/appium/appium-ios-tuntap/commit/d185ff2c84f401e70154c362b9e7bf32fb86b027))
+
 ## [1.2.9](https://github.com/appium/appium-ios-tuntap/compare/v1.2.8...v1.2.9) (2026-08-14)
 
 ### Miscellaneous Chores
