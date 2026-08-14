@@ -1,3 +1,9 @@
+## [1.2.8](https://github.com/appium/appium-ios-tuntap/compare/v1.2.7...v1.2.8) (2026-08-14)
+
+### Miscellaneous Chores
+
+* add clang-format/clang-tidy tooling for C++ sources ([#82](https://github.com/appium/appium-ios-tuntap/issues/82)) ([aee92d6](https://github.com/appium/appium-ios-tuntap/commit/aee92d677dc432708d163a17e76cea6288be6dcd))
+
 ## [1.2.7](https://github.com/appium/appium-ios-tuntap/compare/v1.2.6...v1.2.7) (2026-08-13)
 
 ### Miscellaneous Chores
