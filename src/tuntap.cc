@@ -11,12 +11,16 @@
 #include "native/tun_backend.h"
 #include "native/tunnel_forwarder.h"
 
+class TunDevice;
+
+namespace {
+
 struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
   Napi::ThreadSafeFunction tsfn;
   std::mutex mutex;
   std::deque<std::vector<uint8_t>> pending;
   size_t max_pending_ = 1;
-  class TunDevice* device_ = nullptr;
+  TunDevice* device_ = nullptr;
 
   // Each queued job keeps the dispatch alive, so it outlives a close that
   // happens while callbacks are still draining.
@@ -29,7 +33,7 @@ struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
 
   // Drop the device back-pointer so a late callback cannot resume a closing device.
   void Detach() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     device_ = nullptr;
   }
 
@@ -50,7 +54,7 @@ struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
   }
 
   void FlushPending() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     while (!pending.empty()) {
       auto* packet = new std::vector<uint8_t>(std::move(pending.front()));
       auto* job = new PacketJob{shared_from_this(), packet};
@@ -69,23 +73,25 @@ struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
 
   bool PostPacket(std::vector<uint8_t> packet) {
     {
-      std::lock_guard<std::mutex> lock(mutex);
+      std::scoped_lock lock(mutex);
       if (pending.size() >= max_pending_) {
         return false;
       }
       pending.push_back(std::move(packet));
     }
     FlushPending();
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     return pending.size() < max_pending_;
   }
 };
+
+}  // namespace
 
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
  public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports);
   TunDevice(const Napi::CallbackInfo& info);
-  ~TunDevice();
+  ~TunDevice() override;
 
   void CloseInternal();
   void ResumeReceiveFromDispatch();
@@ -151,13 +157,13 @@ TunDevice::TunDevice(const Napi::CallbackInfo& info)
 }
 
 TunDevice::~TunDevice() {
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
   CloseInternal();
 }
 
 Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
 
   if (is_open_) {
     return Napi::Boolean::New(env, true);
@@ -181,14 +187,14 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
 
 Napi::Value TunDevice::Close(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
   CloseInternal();
   return Napi::Boolean::New(env, true);
 }
 
 Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
 
   if (!is_open_ || !backend_ || !backend_->IsOpen()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
@@ -213,14 +219,14 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
     return env.Null();
   }
   if (rs == ReadPacketStatus::NoData || rs == ReadPacketStatus::Closed) {
-    return Napi::Buffer<uint8_t>::New(env, 0);
+    return {env, Napi::Buffer<uint8_t>::New(env, 0)};
   }
-  return Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size());
+  return {env, Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size())};
 }
 
 Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
 
   if (!is_open_ || !backend_ || !backend_->IsOpen()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
@@ -232,7 +238,7 @@ Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
     return Napi::Number::New(env, -1);
   }
 
-  Napi::Buffer<uint8_t> buffer = info[0].As<Napi::Buffer<uint8_t>>();
+  auto buffer = info[0].As<Napi::Buffer<uint8_t>>();
   uint8_t* data = buffer.Data();
   size_t length = buffer.Length();
 
@@ -246,18 +252,18 @@ Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
 }
 
 Napi::Value TunDevice::GetName(const Napi::CallbackInfo& info) {
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
   return Napi::String::New(info.Env(), interface_name_);
 }
 
 Napi::Value TunDevice::GetFd(const Napi::CallbackInfo& info) {
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
   return Napi::Number::New(info.Env(), backend_ ? backend_->GetNativeFd() : -1);
 }
 
 Napi::Value TunDevice::GetForwardingHandle(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
 
   if (!is_open_ || !backend_ || !backend_->IsOpen()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
@@ -269,7 +275,7 @@ Napi::Value TunDevice::GetForwardingHandle(const Napi::CallbackInfo& info) {
 
 Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
 
   if (!is_open_ || !backend_ || !backend_->IsOpen()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
@@ -340,7 +346,7 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
   // ticks, so acquiring `device_mutex_` is safe.
   auto error_cb = [this](const std::string& message) {
     fprintf(stderr, "tuntap receive loop error: %s\n", message.c_str());
-    std::lock_guard<std::mutex> lock(device_mutex_);
+    std::scoped_lock lock(device_mutex_);
     polling_ = false;
     ReleaseTsfnLocked();
   };
@@ -358,7 +364,7 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
 
 Napi::Value TunDevice::PausePolling(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
 
   if (!polling_ || !backend_ || !backend_->IsOpen()) {
     return env.Undefined();
@@ -370,7 +376,7 @@ Napi::Value TunDevice::PausePolling(const Napi::CallbackInfo& info) {
 
 Napi::Value TunDevice::ResumePolling(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
 
   if (!polling_ || !backend_ || !backend_->IsOpen()) {
     return env.Undefined();
@@ -380,12 +386,20 @@ Napi::Value TunDevice::ResumePolling(const Napi::CallbackInfo& info) {
   return env.Undefined();
 }
 
+namespace {
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   TunDevice::Init(env, exports);
   InitTunnelForwarder(env, exports);
   return exports;
 }
 
+}  // namespace
+
+// __napi_Init, generated below by the macro, keeps 'static' linkage rather than
+// an anonymous namespace: it must stay reachable by name for NAPI_MODULE's
+// module-registration constructor in the same translation unit.
+// NOLINTNEXTLINE(misc-use-anonymous-namespace)
 NODE_API_MODULE(tuntap, Init)
 
 void TunDevice::CloseInternal() {
@@ -412,7 +426,7 @@ void TunDevice::ReleaseTsfnLocked() {
     poll_dispatch_->Detach();
     poll_dispatch_.reset();
   }
-  if (tsfn_) {
+  if (tsfn_ != nullptr) {
     tsfn_.Release();
     tsfn_ = nullptr;
   }
@@ -422,7 +436,7 @@ void TunPollDispatch::OnJsConsumed() {
   FlushPending();
   TunDevice* device = nullptr;
   {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     if (pending.empty() && device_ != nullptr) {
       device = device_;
     }
@@ -433,7 +447,7 @@ void TunPollDispatch::OnJsConsumed() {
 }
 
 void TunDevice::ResumeReceiveFromDispatch() {
-  std::lock_guard<std::mutex> lock(device_mutex_);
+  std::scoped_lock lock(device_mutex_);
   if (polling_ && backend_) {
     backend_->ResumeReceiveLoop();
   }

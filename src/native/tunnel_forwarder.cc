@@ -1,5 +1,6 @@
 #include "tunnel_forwarder.h"
 
+#include <array>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -22,9 +23,9 @@
 
 namespace {
 
-constexpr char kCdTunnelMagic[] = "CDTunnel";
+constexpr const char* kCdTunnelMagic = "CDTunnel";
 constexpr size_t kCdTunnelHeaderSize = 10;
-constexpr size_t kMaxIngressBuffer = 256 * 1024;
+constexpr size_t kMaxIngressBuffer = size_t{256} * 1024;
 
 #ifdef _WIN32
 constexpr short kPollIn = POLLRDNORM;
@@ -240,11 +241,11 @@ bool NormalizeTcpChecksum(std::vector<uint8_t>& packet, uint16_t& old_checksum, 
 #endif
 
 std::string FormatIpv6Address(const uint8_t* addr) {
-  char buf[40];
-  std::snprintf(buf, sizeof(buf), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", addr[0],
-                addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7], addr[8], addr[9], addr[10], addr[11],
-                addr[12], addr[13], addr[14], addr[15]);
-  return buf;
+  std::array<char, 40> buf{};
+  std::snprintf(buf.data(), buf.size(), "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+                addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7], addr[8], addr[9], addr[10],
+                addr[11], addr[12], addr[13], addr[14], addr[15]);
+  return buf.data();
 }
 
 void DebugIpv6Packet(const char* tag, const uint8_t* data, size_t len, uint64_t count) {
@@ -255,14 +256,14 @@ void DebugIpv6Packet(const char* tag, const uint8_t* data, size_t len, uint64_t 
     tuntap::FwdDebug(tag, "len=%zu packets=%llu non-ipv6", len, static_cast<unsigned long long>(count));
     return;
   }
-  const uint16_t payload_len = static_cast<uint16_t>((data[4] << 8) | data[5]);
+  const auto payload_len = static_cast<uint16_t>((data[4] << 8) | data[5]);
   const std::string src = FormatIpv6Address(data + 8);
   const std::string dst = FormatIpv6Address(data + 24);
 
   if (data[6] == 6 && len >= 60) {
     const size_t tcp_offset = 40;
-    const uint16_t src_port = static_cast<uint16_t>((data[tcp_offset] << 8) | data[tcp_offset + 1]);
-    const uint16_t dst_port = static_cast<uint16_t>((data[tcp_offset + 2] << 8) | data[tcp_offset + 3]);
+    const auto src_port = static_cast<uint16_t>((data[tcp_offset] << 8) | data[tcp_offset + 1]);
+    const auto dst_port = static_cast<uint16_t>((data[tcp_offset + 2] << 8) | data[tcp_offset + 3]);
     const uint8_t flags = data[tcp_offset + 13];
     tuntap::FwdDebug(tag, "len=%zu packets=%llu next=%u payload=%u %s:%u -> %s:%u flags=0x%02x", len,
                      static_cast<unsigned long long>(count), data[6], payload_len, src.c_str(), src_port, dst.c_str(),
@@ -349,7 +350,7 @@ void TunnelForwarder::Fail(const std::string& reason) {
 
   ForwarderErrorCallback cb;
   {
-    std::lock_guard<std::mutex> lock(error_mutex_);
+    std::scoped_lock lock(error_mutex_);
     cb = std::move(on_error_);
     on_error_ = nullptr;
   }
@@ -378,7 +379,7 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
 
   handshake_deadline_ = Clock::now() + std::chrono::milliseconds(kTunnelHandshakeTimeoutMs);
 
-  const std::string request = "{\"type\":\"clientHandshakeRequest\",\"mtu\":" + std::to_string(requested_mtu) + "}";
+  const std::string request = R"({"type":"clientHandshakeRequest","mtu":)" + std::to_string(requested_mtu) + "}";
   const std::string packet = EncodeCdTunnelMessage(request);
   if (SslWriteAll(reinterpret_cast<const uint8_t*>(packet.data()), packet.size(), false) < 0) {
     error =
@@ -386,19 +387,19 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
     return false;
   }
 
-  uint8_t header[kCdTunnelHeaderSize];
-  if (SslReadExact(header, kCdTunnelHeaderSize) < 0) {
+  std::array<uint8_t, kCdTunnelHeaderSize> header{};
+  if (SslReadExact(header.data(), header.size()) < 0) {
     error =
         Clock::now() >= handshake_deadline_ ? "Tunnel handshake timeout" : "Failed to read CDTunnel handshake header";
     return false;
   }
-  if (std::memcmp(header, kCdTunnelMagic, 8) != 0) {
+  if (std::memcmp(header.data(), kCdTunnelMagic, 8) != 0) {
     error = "Invalid CDTunnel magic in handshake response";
     return false;
   }
   // header is a byte array, so copy the length out rather than aliasing it as uint16_t.
   uint16_t payload_len_be = 0;
-  std::memcpy(&payload_len_be, header + 8, sizeof(payload_len_be));
+  std::memcpy(&payload_len_be, header.data() + 8, sizeof(payload_len_be));
   const uint16_t payload_len = ntohs(payload_len_be);
   std::vector<uint8_t> body(payload_len);
   if (payload_len > 0 && SslReadExact(body.data(), body.size()) < 0) {
@@ -440,7 +441,7 @@ bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend, Forwarder
 
   error_reported_.store(false);
   {
-    std::lock_guard<std::mutex> lock(error_mutex_);
+    std::scoped_lock lock(error_mutex_);
     on_error_ = std::move(on_error);
   }
 
@@ -459,7 +460,7 @@ void TunnelForwarder::Stop() {
   running_.store(false);
 
   {
-    std::lock_guard<std::mutex> lock(ssl_mutex_);
+    std::scoped_lock lock(ssl_mutex_);
     if (ssl_.ssl() != nullptr) {
       SSL_shutdown(ssl_.ssl());
     }
@@ -473,7 +474,7 @@ void TunnelForwarder::Stop() {
   }
 
   {
-    std::lock_guard<std::mutex> lock(error_mutex_);
+    std::scoped_lock lock(error_mutex_);
     on_error_ = nullptr;
   }
 
@@ -502,7 +503,7 @@ ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_wh
     short poll_events = 0;
 
     {
-      std::lock_guard<std::mutex> lock(ssl_mutex_);
+      std::scoped_lock lock(ssl_mutex_);
       SSL* ssl = ssl_.ssl();
       if (ssl == nullptr) {
         return -1;
@@ -561,7 +562,7 @@ ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_
     short poll_events = 0;
 
     {
-      std::lock_guard<std::mutex> lock(ssl_mutex_);
+      std::scoped_lock lock(ssl_mutex_);
       SSL* ssl = ssl_.ssl();
       if (ssl == nullptr) {
         return -1;
@@ -715,10 +716,10 @@ void TunnelForwarder::TunToDeviceLoop() {
 
 void TunnelForwarder::DeviceToTunLoop() {
   std::vector<uint8_t> ingress;
-  uint8_t chunk[16384];
+  std::array<uint8_t, 16384> chunk{};
 
   while (running_.load()) {
-    const ssize_t n = SslReadChunk(chunk, sizeof(chunk));
+    const ssize_t n = SslReadChunk(chunk.data(), chunk.size());
     if (n < 0) {
       if (running_.load()) {
         Fail("SSL read failed in device-to-tun loop");
@@ -738,7 +739,7 @@ void TunnelForwarder::DeviceToTunLoop() {
       Fail("SSL ingress buffer overflow");
       return;
     }
-    ingress.insert(ingress.end(), chunk, chunk + n);
+    ingress.insert(ingress.end(), chunk.begin(), chunk.begin() + n);
 
     std::vector<std::vector<uint8_t>> frames;
     ipv6_frame::DrainFrames(ingress, frames);
@@ -777,6 +778,7 @@ class ConnectHostWorker : public Napi::AsyncWorker {
         key_pem_(std::move(key_pem)),
         deferred_(deferred) {}
 
+ protected:
   void Execute() override {
     std::string error;
     int fd = -1;
@@ -819,6 +821,7 @@ class ConnectPskHostWorker : public Napi::AsyncWorker {
         identity_(std::move(identity)),
         deferred_(deferred) {}
 
+ protected:
   void Execute() override {
     std::string error;
     int fd = -1;
@@ -857,6 +860,7 @@ class HandshakeWorker : public Napi::AsyncWorker {
         requested_mtu_(requested_mtu),
         deferred_(deferred) {}
 
+ protected:
   void Execute() override {
     std::string error;
     if (!forwarder_.Handshake(requested_mtu_, handshake_, error)) {
@@ -889,6 +893,8 @@ class HandshakeWorker : public Napi::AsyncWorker {
 
 }  // namespace
 
+namespace {
+
 class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
  public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -913,16 +919,16 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
 
  private:
   void ReleaseErrorTsfn() {
-    std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
-    if (error_tsfn_) {
+    std::scoped_lock lock(error_tsfn_mutex_);
+    if (error_tsfn_ != nullptr) {
       error_tsfn_.Release();
       error_tsfn_ = nullptr;
     }
   }
 
   void ReportError(std::string message) {
-    std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
-    if (!error_tsfn_) {
+    std::scoped_lock lock(error_tsfn_mutex_);
+    if (error_tsfn_ == nullptr) {
       return;
     }
     auto* copy = new std::string(std::move(message));
@@ -952,6 +958,10 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
     return env.Undefined();
   }
 
+  // Only touches `forwarder_` inside the #ifdef _WIN32 branch below, so on
+  // non-Windows builds clang-tidy sees no instance-state use and suggests
+  // static; that would break the Windows build, which does use `forwarder_`.
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
   Napi::Value ConnectHost(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 4 || !info[0].IsString() || !info[1].IsNumber() || !info[2].IsString() || !info[3].IsString()) {
@@ -985,7 +995,7 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
       identity = info[2].As<Napi::String>().Utf8Value();
     }
 
-    Napi::Buffer<uint8_t> psk = info[1].As<Napi::Buffer<uint8_t>>();
+    auto psk = info[1].As<Napi::Buffer<uint8_t>>();
     std::string error;
     if (!forwarder_.ConnectPsk(info[0].As<Napi::Number>().Int32Value(), psk.Data(), psk.Length(), identity, error)) {
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
@@ -993,6 +1003,9 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
     return env.Undefined();
   }
 
+  // Only touches `forwarder_` inside the #ifdef _WIN32 branch below; see the
+  // NOLINT rationale on ConnectHost above.
+  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
   Napi::Value ConnectPskHost(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 3 || !info[0].IsString() || !info[1].IsNumber() || !info[2].IsBuffer()) {
@@ -1054,7 +1067,7 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
     }
 
     {
-      std::lock_guard<std::mutex> lock(error_tsfn_mutex_);
+      std::scoped_lock lock(error_tsfn_mutex_);
       error_tsfn_ = Napi::ThreadSafeFunction::New(env, on_error, "TunnelForwarderOnError", 0, 1);
     }
 
@@ -1078,6 +1091,8 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
   std::mutex error_tsfn_mutex_;
   Napi::ThreadSafeFunction error_tsfn_;
 };
+
+}  // namespace
 
 Napi::Object InitTunnelForwarder(Napi::Env env, Napi::Object exports) {
   return TunnelForwarderWrap::Init(env, exports);

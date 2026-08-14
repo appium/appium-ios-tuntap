@@ -21,7 +21,7 @@ using ssize_t = SSIZE_T;
 
 #include <uv.h>
 
-enum class ReadPacketStatus {
+enum class ReadPacketStatus : std::uint8_t {
   Data,
   NoData,
   Closed,
@@ -53,7 +53,7 @@ class TunPlatformBackend {
 
   virtual bool OpenDevice(const std::string& requested_name, std::string& out_interface_name, std::string& error) = 0;
   virtual void CloseDevice() = 0;
-  virtual bool IsOpen() const = 0;
+  [[nodiscard]] virtual bool IsOpen() const = 0;
 
   virtual ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) = 0;
   virtual ssize_t WritePacket(const uint8_t* data, size_t length, std::string& error) = 0;
@@ -76,7 +76,7 @@ class TunPlatformBackend {
 
   // Returns the underlying POSIX file descriptor when one exists. Backends
   // without a numeric fd (e.g. Wintun on Windows) return `-1`.
-  virtual int GetNativeFd() const { return -1; }
+  [[nodiscard]] virtual int GetNativeFd() const { return -1; }
 };
 
 std::unique_ptr<TunPlatformBackend> CreatePlatformBackend();

@@ -117,6 +117,12 @@ jobs:
       if: ${{ contains(inputs.image, 'ubuntu') && inputs.run-cpp-lint }}
       run: sudo apt-get install -y clang-tidy
 
+    - name: Install clang-tidy (macOS)
+      if: ${{ contains(inputs.image, 'macos') && inputs.run-cpp-lint }}
+      run: |
+        brew install llvm
+        echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+
     - name: Run C++ format check
       if: ${{ inputs.run-cpp-format-check }}
       run: npm run format:cpp:check
