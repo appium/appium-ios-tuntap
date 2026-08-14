@@ -1,3 +1,9 @@
+## [1.2.11](https://github.com/appium/appium-ios-tuntap/compare/v1.2.10...v1.2.11) (2026-08-14)
+
+### Bug Fixes
+
+* **native:** address clang-tidy warnings across native sources ([#85](https://github.com/appium/appium-ios-tuntap/issues/85)) ([7105dc2](https://github.com/appium/appium-ios-tuntap/commit/7105dc2c1d01558fcd8c6dc4224c42f6877d1868))
+
 ## [1.2.10](https://github.com/appium/appium-ios-tuntap/compare/v1.2.9...v1.2.10) (2026-08-14)
 
 ### Bug Fixes
