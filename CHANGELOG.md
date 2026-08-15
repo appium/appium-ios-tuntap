@@ -1,3 +1,9 @@
+## [1.2.13](https://github.com/appium/appium-ios-tuntap/compare/v1.2.12...v1.2.13) (2026-08-15)
+
+### Bug Fixes
+
+* release TSFN after polling and stop caching admin check failures ([#88](https://github.com/appium/appium-ios-tuntap/issues/88)) ([add05d9](https://github.com/appium/appium-ios-tuntap/commit/add05d96d8d9d81b82f745511b7a27019297f0b1))
+
 ## [1.2.12](https://github.com/appium/appium-ios-tuntap/compare/v1.2.11...v1.2.12) (2026-08-15)
 
 ### Miscellaneous Chores
