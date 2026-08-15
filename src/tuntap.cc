@@ -57,17 +57,19 @@ struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
     std::scoped_lock lock(mutex);
     while (!pending.empty()) {
       auto* packet = new std::vector<uint8_t>(std::move(pending.front()));
+      pending.pop_front();
       auto* job = new PacketJob{shared_from_this(), packet};
       napi_status status = tsfn.NonBlockingCall(job, [](Napi::Env env, Napi::Function jsCallback, PacketJob* job) {
         CallJs(env, jsCallback, job->dispatch, job->packet);
         delete job;
       });
       if (status != napi_ok) {
+        // Queue full or TSFN closing: requeue so data and order survive.
+        pending.push_front(std::move(*packet));
         delete packet;
         delete job;
         break;
       }
-      pending.pop_front();
     }
   }
 
@@ -311,7 +313,9 @@ Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
 
   // Queue depth > 1 lets the poll thread post the next packet while JS is still
   // handling the previous callback (still serialized on the main thread).
-  tsfn_ = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(), "TunDeviceDataCallback", 0, queue_depth);
+  // Bounded queue (queue_depth) + one thread ref so the single Release() in
+  // ReleaseTsfnLocked finalizes the TSFN and unpins the event loop.
+  tsfn_ = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(), "TunDeviceDataCallback", queue_depth, 1);
 
   uv_loop_t* loop = nullptr;
   napi_status napi_st = napi_get_uv_event_loop(env, &loop);
