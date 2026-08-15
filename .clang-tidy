@@ -18,6 +18,6 @@ Checks: >
   -readability-identifier-length,
   -readability-magic-numbers,
   -readability-uppercase-literal-suffix
-WarningsAsErrors: ''
+WarningsAsErrors: '*'
 HeaderFilterRegex: 'src/(tuntap\.cc|native/)'
 FormatStyle: file
