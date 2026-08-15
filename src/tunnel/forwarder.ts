@@ -7,6 +7,7 @@ import type {TunTap} from '../TunTap.js';
 import type {TunnelInfo} from './types.js';
 
 const require = createRequire(import.meta.url);
+const nativeTuntap = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
 
 /** PEM host certificate + private key from the usbmux pair record (lockdown TLS). */
 export interface TunnelLockdownTlsCredentials {
@@ -44,8 +45,7 @@ export class TunnelForwarder {
   private loopbackBridge: Server | null = null;
 
   async connect(tcpSocket: Socket, credentials: TunnelLockdownTlsCredentials): Promise<void> {
-    const native = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
-    this.forwarder = new native.TunnelForwarder();
+    this.forwarder = new nativeTuntap.TunnelForwarder();
 
     if (process.platform === 'win32') {
       const {host, port} = await this.bridgeToNative(tcpSocket);
@@ -54,13 +54,13 @@ export class TunnelForwarder {
       tcpSocket.pause();
       tcpSocket.removeAllListeners();
       this.forwarder.connect(getSocketFd(tcpSocket), credentials.cert, credentials.key);
-      this.takeSocketOwnership(tcpSocket);
+      // Native holds its own dup() of the fd, so drop the JS socket.
+      destroySocket(tcpSocket);
     }
   }
 
   async connectPsk(tcpSocket: Socket, credentials: TunnelPskTlsCredentials): Promise<void> {
-    const native = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
-    this.forwarder = new native.TunnelForwarder();
+    this.forwarder = new nativeTuntap.TunnelForwarder();
 
     if (process.platform === 'win32') {
       const {host, port} = await this.bridgeToNative(tcpSocket);
@@ -69,7 +69,8 @@ export class TunnelForwarder {
       tcpSocket.pause();
       tcpSocket.removeAllListeners();
       this.forwarder.connectPsk(getSocketFd(tcpSocket), credentials.psk, credentials.identity ?? '');
-      this.takeSocketOwnership(tcpSocket);
+      // Native holds its own dup() of the fd, so drop the JS socket.
+      destroySocket(tcpSocket);
     }
   }
 
@@ -105,10 +106,6 @@ export class TunnelForwarder {
       destroySocket(this.retainedSocket);
       this.retainedSocket = null;
     }
-  }
-
-  private takeSocketOwnership(socket: Socket): void {
-    destroySocket(socket);
   }
 
   /**

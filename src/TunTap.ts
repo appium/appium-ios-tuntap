@@ -45,7 +45,7 @@ const nativeTuntap = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModu
  * Routing and addressing use a built-in OS backend chosen from the `platform` argument (requires root, EUID 0 on Darwin/Linux).
  */
 export class TunTap {
-  private device: NativeTunDevice;
+  private readonly device: NativeTunDevice;
   private readonly platformBackend: TunTapPlatform;
   private _isOpen: boolean;
   private _isClosed: boolean;
@@ -208,11 +208,7 @@ export class TunTap {
     }
 
     try {
-      const result = this.device.write(data);
-      if (result < 0) {
-        throw new TunTapError('Write operation failed');
-      }
-      return result;
+      return this.device.write(data);
     } catch (err: unknown) {
       throw new TunTapError(`Write failed: ${(err as Error).message}`);
     }
@@ -223,6 +219,7 @@ export class TunTap {
    *
    * @param callback — invoked with each packet read from the device
    * @param bufferSize — max read size per poll (default 65535)
+   * @param queueDepth — packets the native layer may queue ahead of the callback (1–64, default 8)
    * @throws {TunTapError} if not open or closed
    * @throws {TypeError} if `callback` is not a function
    * @throws {RangeError} if `bufferSize` is out of range
