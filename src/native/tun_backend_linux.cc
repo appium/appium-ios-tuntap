@@ -2,9 +2,9 @@
 
 #include "tun_backend.h"
 
-#include <errno.h>
+#include <cerrno>
+#include <cstring>
 #include <fcntl.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -25,7 +25,7 @@ constexpr const char* kTunDevicePath = "/dev/net/tun";
 class LinuxTunBackend : public PosixTunBackend {
  public:
   bool OpenDevice(const std::string& requested_name, std::string& out_interface_name, std::string& error) override {
-    struct stat statbuf;
+    struct stat statbuf {};
     if (stat(kTunDevicePath, &statbuf) != 0) {
       error =
           "TUN/TAP device not available: /dev/net/tun does not exist. "
@@ -41,7 +41,7 @@ class LinuxTunBackend : public PosixTunBackend {
       return false;
     }
 
-    struct ifreq ifr;
+    struct ifreq ifr {};
     memset(&ifr, 0, sizeof(ifr));
     ifr.ifr_flags = IFF_TUN | IFF_NO_PI;
 

@@ -51,7 +51,8 @@ void FwdDebug(const char* event, const char* fmt, ...) {
 
   va_list args;
   va_start(args, fmt);
-  vfprintf(stderr, fmt, args);
+  // False positive: args is initialized by va_start immediately above.
+  vfprintf(stderr, fmt, args);  // NOLINT(clang-analyzer-valist.Uninitialized)
   va_end(args);
 
   fputc('\n', stderr);
