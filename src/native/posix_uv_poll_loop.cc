@@ -89,7 +89,7 @@ void PosixUvPollLoop::OnPoll(uv_poll_t* handle, int status, int events) {
   auto handle_terminal = [&](const std::string& msg) {
     auto cb = state->on_error;
     PosixUvPollLoop* owner = state->owner;
-    if (owner) {
+    if (owner != nullptr) {
       owner->Stop();
     }
     if (cb) {

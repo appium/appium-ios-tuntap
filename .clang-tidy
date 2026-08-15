@@ -9,6 +9,7 @@ Checks: >
   -misc-non-private-member-variables-in-classes,
   -misc-include-cleaner,
   -misc-const-correctness,
+  -misc-header-include-cycle,
   modernize-*,
   -modernize-use-trailing-return-type,
   performance-*,
