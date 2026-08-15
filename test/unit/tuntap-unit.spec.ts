@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import {spawn} from 'node:child_process';
 import {afterEach, describe, it} from 'node:test';
 
 import {TunTap, TunnelForwarder} from '../../src/index.js';
@@ -80,6 +81,41 @@ describe('TunTap Unit Tests', {timeout: 10000}, () => {
     );
     assert.ok(handles.length <= 2, 'No extra handles should remain after close');
   });
+
+  // Regression: a leaked TSFN thread ref after startPolling() kept the uv loop
+  // pinned, so a process that opened, polled, and closed never exited.
+  it(
+    'should exit naturally after startPolling then close',
+    {skip: process.platform === 'win32' ? 'POSIX-only regression check' : skipWithoutPrivileges},
+    async () => {
+      const indexUrl = new URL('../../src/index.js', import.meta.url).href;
+      const script = [
+        `const {TunTap} = await import(${JSON.stringify(indexUrl)});`,
+        'const tun = new TunTap();',
+        'tun.open();',
+        'tun.startPolling(() => {});',
+        'tun.close();',
+      ].join('\n');
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+        stdio: ['ignore', 'ignore', 'inherit'],
+      });
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          child.kill('SIGKILL');
+          reject(new Error('Child did not exit within 5s: event loop still pinned after startPolling/close'));
+        }, 5000);
+        child.once('exit', (code) => {
+          clearTimeout(timer);
+          resolve(code);
+        });
+        child.once('error', (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
+      assert.strictEqual(exitCode, 0, 'child should exit cleanly');
+    },
+  );
 
   it('should handle errors gracefully', {skip: skipWithoutPrivileges}, async () => {
     tun = new TunTap();
