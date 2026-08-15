@@ -47,8 +47,8 @@ export class TunnelManager {
         mtu: tunnelInfo.clientParameters.mtu,
         interface: this.tun,
       };
-    } catch (err: any) {
-      log.error(`Error setting up TUN interface: ${err.message}`);
+    } catch (err: unknown) {
+      log.error(`Error setting up TUN interface: ${(err as Error).message}`);
       if (this.tun) {
         try {
           this.tun.close();
@@ -189,7 +189,7 @@ async function connectTunnel(
       tunnelManager,
       closer: closeFunc,
     };
-  } catch (err: any) {
+  } catch (err: unknown) {
     log.error('Failed to connect to tunnel:', err);
     forwarder.stop();
     await tunnelManager.stop();
