@@ -1,3 +1,9 @@
+## [1.2.12](https://github.com/appium/appium-ios-tuntap/compare/v1.2.11...v1.2.12) (2026-08-15)
+
+### Miscellaneous Chores
+
+* clean up forwarder and typing nits ([#87](https://github.com/appium/appium-ios-tuntap/issues/87)) ([f06229f](https://github.com/appium/appium-ios-tuntap/commit/f06229f135b05d9c618efb3923343b1ddeeb7af5))
+
 ## [1.2.11](https://github.com/appium/appium-ios-tuntap/compare/v1.2.10...v1.2.11) (2026-08-14)
 
 ### Bug Fixes
