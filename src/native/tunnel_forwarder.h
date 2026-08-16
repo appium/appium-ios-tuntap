@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -47,7 +48,8 @@ class TunnelForwarder {
 
   bool Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error);
 
-  bool StartForwarding(TunPlatformBackend* tun_backend, ForwarderErrorCallback on_error, std::string& error);
+  bool StartForwarding(std::shared_ptr<TunPlatformBackend> tun_backend, ForwarderErrorCallback on_error,
+                       std::string& error);
 
   void Stop();
 
@@ -66,7 +68,7 @@ class TunnelForwarder {
   std::mutex error_mutex_;
   ForwarderErrorCallback on_error_;
   std::atomic<bool> error_reported_{false};
-  TunPlatformBackend* tun_backend_ = nullptr;
+  std::shared_ptr<TunPlatformBackend> tun_backend_;
   size_t mtu_ = 1280;
   std::atomic<bool> running_{false};
   std::atomic<uint64_t> tun_writes_{0};

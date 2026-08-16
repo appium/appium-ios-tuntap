@@ -112,7 +112,7 @@ class TunDevice : public Napi::ObjectWrap<TunDevice> {
   Napi::Value PausePolling(const Napi::CallbackInfo& info);
   Napi::Value ResumePolling(const Napi::CallbackInfo& info);
 
-  std::unique_ptr<TunPlatformBackend> backend_;
+  std::shared_ptr<TunPlatformBackend> backend_;
   std::string requested_name_;
   std::string interface_name_;
   std::atomic<bool> is_open_;
@@ -272,7 +272,11 @@ Napi::Value TunDevice::GetForwardingHandle(const Napi::CallbackInfo& info) {
     return env.Null();
   }
 
-  return Napi::External<TunPlatformBackend>::New(env, backend_.get());
+  // The External owns a strong ref: the backend stays alive for forwarding
+  // threads even if this TunDevice is GC'd first.
+  auto* shared = new std::shared_ptr<TunPlatformBackend>(backend_);
+  return Napi::External<std::shared_ptr<TunPlatformBackend>>::New(
+      env, shared, [](Napi::Env, std::shared_ptr<TunPlatformBackend>* data) { delete data; });
 }
 
 Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
