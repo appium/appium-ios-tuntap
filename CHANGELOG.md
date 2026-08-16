@@ -1,3 +1,9 @@
+## [1.2.14](https://github.com/appium/appium-ios-tuntap/compare/v1.2.13...v1.2.14) (2026-08-16)
+
+### Bug Fixes
+
+* share TUN backend ownership between device and forwarder ([#90](https://github.com/appium/appium-ios-tuntap/issues/90)) ([5c8bd79](https://github.com/appium/appium-ios-tuntap/commit/5c8bd79ff51d9d4b3ea6f3deb819cea7161b0291))
+
 ## [1.2.13](https://github.com/appium/appium-ios-tuntap/compare/v1.2.12...v1.2.13) (2026-08-15)
 
 ### Bug Fixes
