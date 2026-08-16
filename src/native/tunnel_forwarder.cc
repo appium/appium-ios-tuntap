@@ -417,7 +417,7 @@ bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& inf
   return true;
 }
 
-bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend, ForwarderErrorCallback on_error,
+bool TunnelForwarder::StartForwarding(std::shared_ptr<TunPlatformBackend> tun_backend, ForwarderErrorCallback on_error,
                                       std::string& error) {
   if (running_.load()) {
     error = "Tunnel forwarder already running";
@@ -427,7 +427,7 @@ bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend, Forwarder
     error = "TLS session is not connected";
     return false;
   }
-  if (tun_backend == nullptr || !tun_backend->IsOpen()) {
+  if (!tun_backend || !tun_backend->IsOpen()) {
     error = "TUN device is not open";
     return false;
   }
@@ -445,12 +445,12 @@ bool TunnelForwarder::StartForwarding(TunPlatformBackend* tun_backend, Forwarder
     on_error_ = std::move(on_error);
   }
 
-  tun_backend_ = tun_backend;
+  tun_backend_ = std::move(tun_backend);
   running_.store(true);
   tun_writes_.store(0);
   tun_drops_.store(0);
   ssl_reads_.store(0);
-  tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_backend->GetNativeFd());
+  tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_backend_->GetNativeFd());
   tun_thread_ = std::thread(&TunnelForwarder::TunToDeviceLoop, this);
   sock_thread_ = std::thread(&TunnelForwarder::DeviceToTunLoop, this);
   return true;
@@ -479,7 +479,8 @@ void TunnelForwarder::Stop() {
   }
 
   ssl_.Close();
-  tun_backend_ = nullptr;
+  // Reset only after joining both threads: drops this forwarder's strong ref.
+  tun_backend_.reset();
 }
 
 ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_while_running) {
@@ -1071,10 +1072,15 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
       error_tsfn_ = Napi::ThreadSafeFunction::New(env, on_error, "TunnelForwarderOnError", 0, 1);
     }
 
-    TunPlatformBackend* tun_backend = info[0].As<Napi::External<TunPlatformBackend>>().Data();
+    auto* tun_backend = info[0].As<Napi::External<std::shared_ptr<TunPlatformBackend>>>().Data();
+    if (tun_backend == nullptr) {
+      ReleaseErrorTsfn();
+      Napi::Error::New(env, "TUN device is not open").ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
     std::string error;
     ForwarderErrorCallback callback = [this](std::string msg) { ReportError(std::move(msg)); };
-    if (!forwarder_.StartForwarding(tun_backend, std::move(callback), error)) {
+    if (!forwarder_.StartForwarding(*tun_backend, std::move(callback), error)) {
       ReleaseErrorTsfn();
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
     }
