@@ -226,6 +226,20 @@ process.once('SIGINT', () => {
 });
 ```
 
+## Verifying AFC data-path changes
+
+Any change touching the forwarding path (native forwarder, backends, tunnel MTU, TLS) must be verified against a real device with the AFC tests in [appium-ios-remotexpc](https://github.com/appium/appium-ios-remotexpc). With a live tunnel up (`npm run tunnel-creation`):
+
+```sh
+# Throughput: pushes a 10 MiB file over AFC, reports MiB/s
+npm run test:afc-push-perf
+
+# Stability: 20 rounds of 10 MiB push + pull + sha256 verify over one AFC session
+AFC_STABILITY_ITERATIONS=20 npm run test:afc-tunnel-stability
+```
+
+Both must pass, and push throughput should be flat or better versus a run on the unchanged build. Compare only runs on the same link: USB and Wi-Fi tunnels differ by an order of magnitude (check the `Connection:` type logged by tunnel-creation).
+
 ## Troubleshooting
 
 ### Linux Issues
