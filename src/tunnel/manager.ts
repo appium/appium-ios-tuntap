@@ -2,7 +2,7 @@ import type {Socket} from 'node:net';
 
 import {log} from '../logger.js';
 import {TunTap} from '../TunTap.js';
-import {CD_TUNNEL_MTU} from './constants.js';
+import {getRequestedTunnelMtu} from './constants.js';
 import {tunDebug} from './debug-log.js';
 import {TunnelForwarder, type TunnelLockdownTlsCredentials, type TunnelPskTlsCredentials} from './forwarder.js';
 import type {TunnelConnection, TunnelInfo} from './types.js';
@@ -170,7 +170,9 @@ async function connectTunnel(
     tcpSocket.setKeepAlive(true, 1000);
 
     await setupTls(forwarder);
-    const tunnelInfo = await forwarder.handshake(CD_TUNNEL_MTU);
+    const requestedMtu = getRequestedTunnelMtu();
+    const tunnelInfo = await forwarder.handshake(requestedMtu);
+    log.info(`Tunnel MTU: requested ${requestedMtu}, granted ${tunnelInfo.clientParameters.mtu}`);
     tunDebug('Tunnel parameters exchanged:', tunnelInfo);
 
     const tunInterfaceInfo = await tunnelManager.setupInterface(tunnelInfo);
