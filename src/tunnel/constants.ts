@@ -1,28 +1,30 @@
 import {log} from '../logger.js';
 
 /** CDTunnel lockdown handshake MTU (IPv6 minimum). */
-export const CD_TUNNEL_MTU = 1280;
+export const CD_TUNNEL_MTU_SIZE = 1280;
 
 /** Upper bound for MTU requests (WinTun per-packet cap is 65535; keep margin). */
-export const MAX_TUNNEL_MTU_REQUEST = 65000;
+export const MAX_TUNNEL_MTU_REQUEST_SIZE = 65000;
 
 export const IPV6_HEADER_SIZE = 40;
 export const IPV6_VERSION = 6;
 
 /**
- * MTU to request in the CDTunnel handshake, from APPIUM_TUNTAP_MTU_REQUEST.
- * Clamped to [CD_TUNNEL_MTU, MAX_TUNNEL_MTU_REQUEST]; unset or invalid falls
- * back to CD_TUNNEL_MTU. The device may grant less than requested.
+ * MTU to request in the CDTunnel handshake, from APPIUM_TUNTAP_MTU_REQUEST_SIZE.
+ * Clamped to [CD_TUNNEL_MTU_SIZE, MAX_TUNNEL_MTU_REQUEST_SIZE]; unset or invalid
+ * falls back to CD_TUNNEL_MTU_SIZE. The device may grant less than requested.
+ * Not memoized on purpose: it runs once per tunnel creation and callers may
+ * change the env between tunnels (and tests between cases).
  */
 export function getRequestedTunnelMtu(): number {
-  const raw = process.env.APPIUM_TUNTAP_MTU_REQUEST?.trim();
+  const raw = process.env.APPIUM_TUNTAP_MTU_REQUEST_SIZE?.trim();
   if (!raw) {
-    return CD_TUNNEL_MTU;
+    return CD_TUNNEL_MTU_SIZE;
   }
   const parsed = Number(raw);
   if (!Number.isInteger(parsed)) {
-    log.warn(`Ignoring invalid APPIUM_TUNTAP_MTU_REQUEST '${raw}'; using default MTU ${CD_TUNNEL_MTU}`);
-    return CD_TUNNEL_MTU;
+    log.warn(`Ignoring invalid APPIUM_TUNTAP_MTU_REQUEST_SIZE '${raw}'; using default MTU ${CD_TUNNEL_MTU_SIZE}`);
+    return CD_TUNNEL_MTU_SIZE;
   }
-  return Math.min(Math.max(parsed, CD_TUNNEL_MTU), MAX_TUNNEL_MTU_REQUEST);
+  return Math.min(Math.max(parsed, CD_TUNNEL_MTU_SIZE), MAX_TUNNEL_MTU_REQUEST_SIZE);
 }

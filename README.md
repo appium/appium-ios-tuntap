@@ -226,6 +226,14 @@ process.once('SIGINT', () => {
 });
 ```
 
+## Environment Variables
+
+### APPIUM_TUNTAP_MTU_REQUEST_SIZE
+
+MTU to request from the device in the CDTunnel handshake. Defaults to `1280` (the IPv6 minimum). Accepts integers in `1280`–`65000`; out-of-range values are clamped and invalid values fall back to the default with a warning. The device decides the granted value, which is what actually gets applied — the tunnel log shows `requested X, granted Y`.
+
+Note: a device may grant a value it cannot reliably carry (observed: a grant of 16000 where packets above ~8 KB were silently dropped, breaking AFC). Validate any non-default value with the AFC tests below before adopting it.
+
 ## Verifying AFC data-path changes
 
 Any change touching the forwarding path (native forwarder, backends, tunnel MTU, TLS) must be verified against a real device with the AFC tests in [appium-ios-remotexpc](https://github.com/appium/appium-ios-remotexpc). With a live tunnel up (`npm run tunnel-creation`):
