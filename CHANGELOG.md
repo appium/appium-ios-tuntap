@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/appium/appium-ios-tuntap/compare/v1.2.14...v1.3.0) (2026-08-17)
+
+### Features
+
+* allow requesting a larger tunnel MTU via env var ([#91](https://github.com/appium/appium-ios-tuntap/issues/91)) ([31357cf](https://github.com/appium/appium-ios-tuntap/commit/31357cfaaf27934933a6ad20f27877ef3f43a5f7))
+
 ## [1.2.14](https://github.com/appium/appium-ios-tuntap/compare/v1.2.13...v1.2.14) (2026-08-16)
 
 ### Bug Fixes
