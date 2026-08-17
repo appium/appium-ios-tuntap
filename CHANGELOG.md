@@ -1,3 +1,9 @@
+## [1.3.1](https://github.com/appium/appium-ios-tuntap/compare/v1.3.0...v1.3.1) (2026-08-17)
+
+### Bug Fixes
+
+* warn once per invalid MTU request value ([#93](https://github.com/appium/appium-ios-tuntap/issues/93)) ([cb3b8a1](https://github.com/appium/appium-ios-tuntap/commit/cb3b8a198510b2cc077130664568d7b0637b650e))
+
 ## [1.3.0](https://github.com/appium/appium-ios-tuntap/compare/v1.2.14...v1.3.0) (2026-08-17)
 
 ### Features
