@@ -60,6 +60,8 @@ class TunnelForwarder {
   void DeviceToTunLoop();
   TunReadResult ReadTunPacket(std::vector<uint8_t>& out);
   void AppendTunPacket(std::vector<uint8_t>& batch, std::vector<uint8_t>& packet);
+  bool DrainQueuedTunPackets(std::vector<uint8_t>& batch, std::vector<uint8_t>& packet);
+  bool FlushTunBatch(const std::vector<uint8_t>& batch, uint64_t writes_before, uint64_t& batches);
   ssize_t WriteTunPacket(const uint8_t* data, size_t len);
   ssize_t SslReadChunk(uint8_t* buf, size_t max_len, bool only_while_running = true);
   void Fail(const std::string& reason);

@@ -700,6 +700,48 @@ void TunnelForwarder::AppendTunPacket(std::vector<uint8_t>& batch, std::vector<u
   }
 }
 
+// Coalesces packets already queued on the TUN fd into the batch without
+// waiting. ReadPacket is used directly: ReadTunPacket turns NoData into a
+// wait. Stops while a worst-case packet still fits so one SSL write stays a
+// single TLS record. Returns false when the backend reported Closed or Error.
+bool TunnelForwarder::DrainQueuedTunPackets(std::vector<uint8_t>& batch, std::vector<uint8_t>& packet) {
+  while (batch.size() + mtu_ <= kTunBatchMax) {
+    std::string error;
+    const ReadPacketStatus status = tun_backend_->ReadPacket(mtu_, packet, error);
+    if (status == ReadPacketStatus::NoData) {
+      break;
+    }
+    if (status == ReadPacketStatus::Data) {
+      if (!packet.empty()) {
+        AppendTunPacket(batch, packet);
+      }
+      continue;
+    }
+    if (status == ReadPacketStatus::Error && !error.empty()) {
+      tuntap::FwdDebug("forwarder-tun-read-error", "%s", error.c_str());
+    }
+    return false;
+  }
+  return true;
+}
+
+// Sends the whole batch with one SSL write. Returns false on write failure.
+bool TunnelForwarder::FlushTunBatch(const std::vector<uint8_t>& batch, uint64_t writes_before, uint64_t& batches) {
+  if (batch.empty()) {
+    return true;
+  }
+  if (SslWriteAll(batch.data(), batch.size()) < 0) {
+    return false;
+  }
+  ++batches;
+  if (batches <= 100 || batches % 200 == 0) {
+    tuntap::FwdDebug("forwarder-tun-batch", "packets=%llu bytes=%zu batches=%llu",
+                     static_cast<unsigned long long>(tun_writes_.load() - writes_before), batch.size(),
+                     static_cast<unsigned long long>(batches));
+  }
+  return true;
+}
+
 void TunnelForwarder::TunToDeviceLoop() {
   std::vector<uint8_t> packet;
   std::vector<uint8_t> batch;
@@ -721,47 +763,16 @@ void TunnelForwarder::TunToDeviceLoop() {
     batch.clear();
     const uint64_t writes_before = tun_writes_.load();
     AppendTunPacket(batch, packet);
+    // Drain failure still flushes the batch first so drained packets survive.
+    const bool drain_ok = DrainQueuedTunPackets(batch, packet);
 
-    // Coalesce packets already queued on the TUN fd into one SSL write.
-    // ReadPacket is used directly: ReadTunPacket turns NoData into a wait.
-    // Stop while a worst-case packet still fits so the write stays one record.
-    bool read_failed = false;
-    while (batch.size() + mtu_ <= kTunBatchMax) {
-      std::string error;
-      const ReadPacketStatus status = tun_backend_->ReadPacket(mtu_, packet, error);
-      if (status == ReadPacketStatus::Data) {
-        if (!packet.empty()) {
-          AppendTunPacket(batch, packet);
-        }
-        continue;
+    if (!FlushTunBatch(batch, writes_before, batches)) {
+      if (running_.load()) {
+        Fail("SSL write failed in tun-to-device loop");
       }
-      if (status == ReadPacketStatus::NoData) {
-        break;
-      }
-      if (status == ReadPacketStatus::Error && !error.empty()) {
-        tuntap::FwdDebug("forwarder-tun-read-error", "%s", error.c_str());
-      }
-      // Closed or Error: flush drained packets before taking the failure path.
-      read_failed = true;
-      break;
+      return;
     }
-
-    if (!batch.empty()) {
-      if (SslWriteAll(batch.data(), batch.size()) < 0) {
-        if (running_.load()) {
-          Fail("SSL write failed in tun-to-device loop");
-        }
-        return;
-      }
-      ++batches;
-      if (batches <= 100 || batches % 200 == 0) {
-        tuntap::FwdDebug("forwarder-tun-batch", "packets=%llu bytes=%zu batches=%llu",
-                         static_cast<unsigned long long>(tun_writes_.load() - writes_before), batch.size(),
-                         static_cast<unsigned long long>(batches));
-      }
-    }
-
-    if (read_failed) {
+    if (!drain_ok) {
       if (running_.load()) {
         Fail("TUN read failed in tun-to-device loop");
       }
