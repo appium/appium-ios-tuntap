@@ -26,6 +26,10 @@ namespace {
 constexpr const char* kCdTunnelMagic = "CDTunnel";
 constexpr size_t kCdTunnelHeaderSize = 10;
 constexpr size_t kMaxIngressBuffer = size_t{256} * 1024;
+// Egress batch cap per SSL write. Device-side CDTunnel drops TLS records
+// above ~8.2 KiB (verified on iOS 17 hardware), so writes must stay below
+// that; this also keeps every write to a single record with whole packets.
+constexpr size_t kTunBatchMax = size_t{8192};
 
 #ifdef _WIN32
 constexpr short kPollIn = POLLRDNORM;
@@ -657,8 +661,50 @@ ssize_t TunnelForwarder::WriteTunPacket(const uint8_t* data, size_t len) {
   }
 }
 
+void TunnelForwarder::AppendTunPacket(std::vector<uint8_t>& batch, std::vector<uint8_t>& packet) {
+#ifdef _WIN32
+  if (!IsIpv6Packet(packet.data(), packet.size())) {
+    const uint64_t count = ++tun_drops_;
+    if (count <= 20 || count % 200 == 0) {
+      DebugIpv6Packet("forwarder-tun-drop-nonipv6", packet.data(), packet.size(), count);
+    }
+    return;
+  }
+  if (IsIpv6Multicast(packet.data(), packet.size())) {
+    const uint64_t count = ++tun_drops_;
+    if (count <= 20 || count % 200 == 0) {
+      DebugIpv6Packet("forwarder-tun-drop-mcast", packet.data(), packet.size(), count);
+    }
+    return;
+  }
+  if (IsIcmpv6NeighborDiscovery(packet.data(), packet.size())) {
+    const uint64_t count = ++tun_drops_;
+    if (count <= 20 || count % 200 == 0) {
+      DebugIpv6Packet("forwarder-tun-drop-ndp", packet.data(), packet.size(), count);
+    }
+    return;
+  }
+  uint16_t old_checksum = 0;
+  uint16_t new_checksum = 0;
+  const bool checksum_changed = NormalizeTcpChecksum(packet, old_checksum, new_checksum);
+#endif
+  batch.insert(batch.end(), packet.begin(), packet.end());
+  const uint64_t count = ++tun_writes_;
+  if (count <= 100 || count % 200 == 0) {
+    DebugIpv6Packet("forwarder-tun-write", packet.data(), packet.size(), count);
+#ifdef _WIN32
+    tuntap::FwdDebug("forwarder-tcp-checksum", "packets=%llu changed=%s old=0x%04x new=0x%04x",
+                     static_cast<unsigned long long>(count), checksum_changed ? "true" : "false", old_checksum,
+                     new_checksum);
+#endif
+  }
+}
+
 void TunnelForwarder::TunToDeviceLoop() {
   std::vector<uint8_t> packet;
+  std::vector<uint8_t> batch;
+  batch.reserve(kTunBatchMax);
+  uint64_t batches = 0;
 
   while (running_.load()) {
     const TunReadResult read_result = ReadTunPacket(packet);
@@ -671,46 +717,55 @@ void TunnelForwarder::TunToDeviceLoop() {
     if (read_result != TunReadResult::kOk || packet.empty()) {
       continue;
     }
-#ifdef _WIN32
-    if (!IsIpv6Packet(packet.data(), packet.size())) {
-      const uint64_t count = ++tun_drops_;
-      if (count <= 20 || count % 200 == 0) {
-        DebugIpv6Packet("forwarder-tun-drop-nonipv6", packet.data(), packet.size(), count);
+
+    batch.clear();
+    const uint64_t writes_before = tun_writes_.load();
+    AppendTunPacket(batch, packet);
+
+    // Coalesce packets already queued on the TUN fd into one SSL write.
+    // ReadPacket is used directly: ReadTunPacket turns NoData into a wait.
+    // Stop while a worst-case packet still fits so the write stays one record.
+    bool read_failed = false;
+    while (batch.size() + mtu_ <= kTunBatchMax) {
+      std::string error;
+      const ReadPacketStatus status = tun_backend_->ReadPacket(mtu_, packet, error);
+      if (status == ReadPacketStatus::Data) {
+        if (!packet.empty()) {
+          AppendTunPacket(batch, packet);
+        }
+        continue;
       }
-      continue;
-    }
-    if (IsIpv6Multicast(packet.data(), packet.size())) {
-      const uint64_t count = ++tun_drops_;
-      if (count <= 20 || count % 200 == 0) {
-        DebugIpv6Packet("forwarder-tun-drop-mcast", packet.data(), packet.size(), count);
+      if (status == ReadPacketStatus::NoData) {
+        break;
       }
-      continue;
-    }
-    if (IsIcmpv6NeighborDiscovery(packet.data(), packet.size())) {
-      const uint64_t count = ++tun_drops_;
-      if (count <= 20 || count % 200 == 0) {
-        DebugIpv6Packet("forwarder-tun-drop-ndp", packet.data(), packet.size(), count);
+      if (status == ReadPacketStatus::Error && !error.empty()) {
+        tuntap::FwdDebug("forwarder-tun-read-error", "%s", error.c_str());
       }
-      continue;
+      // Closed or Error: flush drained packets before taking the failure path.
+      read_failed = true;
+      break;
     }
-    uint16_t old_checksum = 0;
-    uint16_t new_checksum = 0;
-    const bool checksum_changed = NormalizeTcpChecksum(packet, old_checksum, new_checksum);
-#endif
-    if (SslWriteAll(packet.data(), packet.size()) < 0) {
+
+    if (!batch.empty()) {
+      if (SslWriteAll(batch.data(), batch.size()) < 0) {
+        if (running_.load()) {
+          Fail("SSL write failed in tun-to-device loop");
+        }
+        return;
+      }
+      ++batches;
+      if (batches <= 100 || batches % 200 == 0) {
+        tuntap::FwdDebug("forwarder-tun-batch", "packets=%llu bytes=%zu batches=%llu",
+                         static_cast<unsigned long long>(tun_writes_.load() - writes_before), batch.size(),
+                         static_cast<unsigned long long>(batches));
+      }
+    }
+
+    if (read_failed) {
       if (running_.load()) {
-        Fail("SSL write failed in tun-to-device loop");
+        Fail("TUN read failed in tun-to-device loop");
       }
       return;
-    }
-    const uint64_t count = ++tun_writes_;
-    if (count <= 100 || count % 200 == 0) {
-      DebugIpv6Packet("forwarder-tun-write", packet.data(), packet.size(), count);
-#ifdef _WIN32
-      tuntap::FwdDebug("forwarder-tcp-checksum", "packets=%llu changed=%s old=0x%04x new=0x%04x",
-                       static_cast<unsigned long long>(count), checksum_changed ? "true" : "false", old_checksum,
-                       new_checksum);
-#endif
     }
   }
 }
