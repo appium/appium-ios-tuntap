@@ -1,3 +1,9 @@
+## [1.3.2](https://github.com/appium/appium-ios-tuntap/compare/v1.3.1...v1.3.2) (2026-08-24)
+
+### Bug Fixes
+
+* release device mutex around receive-thread join on Windows ([#94](https://github.com/appium/appium-ios-tuntap/issues/94)) ([b4bab4d](https://github.com/appium/appium-ios-tuntap/commit/b4bab4d91db00a7413d52d7da1f430265b9176b2))
+
 ## [1.3.1](https://github.com/appium/appium-ios-tuntap/compare/v1.3.0...v1.3.1) (2026-08-17)
 
 ### Bug Fixes
