@@ -179,13 +179,10 @@ class WindowsTunBackend : public TunPlatformBackend {
 
   // The worker thread can begin invoking `on_packet`/`on_error` immediately
   // after this returns; callers must therefore not assume callbacks fire
-  // only after the function returns. In practice the callbacks defined in
-  // `tuntap.cc` either marshal to libuv via TSFN (`on_packet`) or take
-  // `device_mutex_` (`on_error`). Brief contention on `device_mutex_` is
-  // expected and resolves on the order of microseconds because
-  // `std::thread`'s constructor does not block on the worker reaching its
-  // first instruction. There is no deadlock risk because the calling JS
-  // thread releases the lock as soon as `StartPolling` returns.
+  // only after the function returns. `on_packet` marshals to libuv via TSFN;
+  // `on_error` takes `device_mutex_`, which cannot deadlock against
+  // StopReceiveLoop's join because TunDevice::StopPollingLocked releases that
+  // mutex around the join (see tuntap.cc).
   bool StartReceiveLoop(uv_loop_t* /*loop*/, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
                         std::string& error) override {
     if (!session_) {
