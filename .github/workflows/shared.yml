@@ -123,6 +123,17 @@ jobs:
         brew install llvm
         echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
 
+    - name: Install clang-tidy (Windows)
+      if: ${{ contains(inputs.image, 'windows') && inputs.run-cpp-lint }}
+      shell: pwsh
+      run: |
+        # Runner images ship LLVM; install it only if clang-tidy is missing.
+        if (-not (Get-Command clang-tidy -ErrorAction SilentlyContinue)) {
+          choco install llvm -y --no-progress
+          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        }
+        clang-tidy --version
+
     - name: Run C++ format check
       if: ${{ inputs.run-cpp-format-check }}
       run: npm run format:cpp:check
