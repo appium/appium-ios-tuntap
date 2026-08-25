@@ -51,9 +51,11 @@ esac
 # win_delay_load_hook.cc) is a bare substring on purpose: Windows entries use
 # backslash separators, and Git Bash halves doubled backslashes in arguments
 # to native executables like jq.exe, so the filter must stay backslash-free.
+# jq 1.7 on Windows emits CRLF line endings; strip the \r or every filename
+# handed to clang-tidy ends in a carriage return ("no such file or directory").
 files=()
 while IFS= read -r file; do
   files+=("$file")
-done < <(jq -r '.[] | select(.file | contains("node_modules") | not) | .file' build/Release/compile_commands.json)
+done < <(jq -r '.[] | select(.file | contains("node_modules") | not) | .file' build/Release/compile_commands.json | tr -d '\r')
 
 clang-tidy -p build/Release "${extra_args[@]}" "${files[@]}"
