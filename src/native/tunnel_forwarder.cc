@@ -58,7 +58,7 @@ bool ConnectRawTcp(const std::string& host, uint16_t port, int& fd, std::string&
     return false;
   }
 
-  SOCKET sock = INVALID_SOCKET;
+  auto sock = INVALID_SOCKET;
   int last_wsa_error = 0;
   for (const struct addrinfo* addr = resolved; addr != nullptr; addr = addr->ai_next) {
     sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
@@ -84,7 +84,7 @@ bool ConnectRawTcp(const std::string& host, uint16_t port, int& fd, std::string&
   const BOOL no_delay = TRUE;
   setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&no_delay), sizeof(no_delay));
 
-  const uintptr_t raw_fd = static_cast<uintptr_t>(sock);
+  const auto raw_fd = static_cast<uintptr_t>(sock);
   if (raw_fd > static_cast<uintptr_t>(std::numeric_limits<int>::max())) {
     closesocket(sock);
     error = "Connected socket handle is too large for OpenSSL fd API";
@@ -204,7 +204,7 @@ uint16_t ComputeIpv6TransportChecksum(const uint8_t* packet, size_t len, uint8_t
     return 0;
   }
 
-  const uint16_t payload_len = static_cast<uint16_t>((packet[4] << 8) | packet[5]);
+  const auto payload_len = static_cast<uint16_t>((packet[4] << 8) | packet[5]);
   if (payload_len == 0 || len < 40 + payload_len) {
     return 0;
   }
@@ -223,7 +223,7 @@ bool NormalizeTcpChecksum(std::vector<uint8_t>& packet, uint16_t& old_checksum, 
     return false;
   }
 
-  const uint16_t payload_len = static_cast<uint16_t>((packet[4] << 8) | packet[5]);
+  const auto payload_len = static_cast<uint16_t>((packet[4] << 8) | packet[5]);
   if (payload_len < 20 || packet.size() < 40 + payload_len) {
     return false;
   }
@@ -274,6 +274,29 @@ void DebugIpv6Packet(const char* tag, const uint8_t* data, size_t len, uint64_t 
   tuntap::FwdDebug(tag, "len=%zu packets=%llu next=%u payload=%u %s -> %s", len, static_cast<unsigned long long>(count),
                    data[6], payload_len, src.c_str(), dst.c_str());
 }
+
+#ifdef _WIN32
+// WinTun surfaces every outbound packet from the adapter, including traffic
+// the tunnel must not carry. Counts the drop and rate-limits its debug log.
+bool DropOutboundPacket(const std::vector<uint8_t>& packet, std::atomic<uint64_t>& tun_drops) {
+  const char* reason = nullptr;
+  if (!IsIpv6Packet(packet.data(), packet.size())) {
+    reason = "forwarder-tun-drop-nonipv6";
+  } else if (IsIpv6Multicast(packet.data(), packet.size())) {
+    reason = "forwarder-tun-drop-mcast";
+  } else if (IsIcmpv6NeighborDiscovery(packet.data(), packet.size())) {
+    reason = "forwarder-tun-drop-ndp";
+  }
+  if (reason == nullptr) {
+    return false;
+  }
+  const uint64_t count = ++tun_drops;
+  if (count <= 20 || count % 200 == 0) {
+    DebugIpv6Packet(reason, packet.data(), packet.size(), count);
+  }
+  return true;
+}
+#endif
 
 void DebugSslError(const char* tag, int ssl_error) {
   unsigned long openssl_error = ERR_get_error();
@@ -672,25 +695,7 @@ void TunnelForwarder::TunToDeviceLoop() {
       continue;
     }
 #ifdef _WIN32
-    if (!IsIpv6Packet(packet.data(), packet.size())) {
-      const uint64_t count = ++tun_drops_;
-      if (count <= 20 || count % 200 == 0) {
-        DebugIpv6Packet("forwarder-tun-drop-nonipv6", packet.data(), packet.size(), count);
-      }
-      continue;
-    }
-    if (IsIpv6Multicast(packet.data(), packet.size())) {
-      const uint64_t count = ++tun_drops_;
-      if (count <= 20 || count % 200 == 0) {
-        DebugIpv6Packet("forwarder-tun-drop-mcast", packet.data(), packet.size(), count);
-      }
-      continue;
-    }
-    if (IsIcmpv6NeighborDiscovery(packet.data(), packet.size())) {
-      const uint64_t count = ++tun_drops_;
-      if (count <= 20 || count % 200 == 0) {
-        DebugIpv6Packet("forwarder-tun-drop-ndp", packet.data(), packet.size(), count);
-      }
+    if (DropOutboundPacket(packet, tun_drops_)) {
       continue;
     }
     uint16_t old_checksum = 0;
@@ -1022,7 +1027,7 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
 #ifdef _WIN32
     // Copy the PSK on the JS thread; the buffer may be collected before the
     // worker runs.
-    Napi::Buffer<uint8_t> psk = info[2].As<Napi::Buffer<uint8_t>>();
+    auto psk = info[2].As<Napi::Buffer<uint8_t>>();
     std::vector<uint8_t> psk_copy(psk.Data(), psk.Data() + psk.Length());
     auto deferred = Napi::Promise::Deferred::New(env);
     auto* worker =

@@ -30,16 +30,16 @@ std::wstring GetAddonDirectory() {
   HMODULE module = nullptr;
   // Pass the address of any function in this translation unit so the resolver
   // returns the addon's own module rather than the host process executable.
-  if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                          reinterpret_cast<LPCWSTR>(&GetAddonDirectory), &module)) {
-    return std::wstring();
+  if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCWSTR>(&GetAddonDirectory), &module) == FALSE) {
+    return {};
   }
 
   std::vector<wchar_t> buffer(MAX_PATH);
   for (;;) {
     DWORD len = GetModuleFileNameW(module, buffer.data(), static_cast<DWORD>(buffer.size()));
     if (len == 0) {
-      return std::wstring();
+      return {};
     }
     if (len < buffer.size()) {
       buffer.resize(len);
@@ -51,7 +51,7 @@ std::wstring GetAddonDirectory() {
   std::wstring path(buffer.begin(), buffer.end());
   size_t pos = path.find_last_of(L"\\/");
   if (pos == std::wstring::npos) {
-    return std::wstring();
+    return {};
   }
   path.resize(pos);
   return path;
@@ -75,7 +75,7 @@ WintunApi& WintunApi::Instance() {
 }
 
 bool WintunApi::Load(std::string& error) {
-  std::lock_guard<std::mutex> lock(load_mutex_);
+  std::scoped_lock lock(load_mutex_);
   if (loaded_) {
     return true;
   }
@@ -122,7 +122,7 @@ bool WintunApi::TryLoadFrom(LPCWSTR path) {
 }
 
 bool WintunApi::ResolveEntryPoints(std::string& error) {
-  if (!module_) {
+  if (module_ == nullptr) {
     error = "wintun.dll module handle is null";
     return false;
   }
@@ -176,7 +176,7 @@ std::string FormatLastError(DWORD error_code) {
       MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), reinterpret_cast<LPSTR>(&buffer), 0, nullptr);
 
   std::string message;
-  if (len && buffer) {
+  if (len != 0 && buffer != nullptr) {
     message.assign(buffer, len);
     ::LocalFree(buffer);
     while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
@@ -192,12 +192,12 @@ std::string FormatLastError(DWORD error_code) {
 
 std::wstring Utf8ToUtf16(const std::string& utf8) {
   if (utf8.empty()) {
-    return std::wstring();
+    return {};
   }
 
   int len = ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), nullptr, 0);
   if (len <= 0) {
-    return std::wstring();
+    return {};
   }
 
   std::wstring result(static_cast<size_t>(len), L'\0');

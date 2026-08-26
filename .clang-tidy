@@ -20,5 +20,6 @@ Checks: >
   -readability-magic-numbers,
   -readability-uppercase-literal-suffix
 WarningsAsErrors: '*'
-HeaderFilterRegex: 'src/(tuntap\.cc|native/)'
+# Both path separators: on Windows, diagnostics report backslash paths.
+HeaderFilterRegex: 'src[/\\](tuntap\.cc|native[/\\])'
 FormatStyle: file

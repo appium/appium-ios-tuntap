@@ -4,8 +4,10 @@
 
 #include <windows.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <sstream>
 #include <thread>
@@ -32,7 +34,9 @@ class WindowsTunBackend : public TunPlatformBackend {
  public:
   WindowsTunBackend() = default;
   ~WindowsTunBackend() override {
-    StopReceiveLoop();
+    // Explicitly qualified: virtual dispatch is already settled during
+    // destruction, so make the non-polymorphic call visible.
+    WindowsTunBackend::StopReceiveLoop();
     EndSessionInternal();
     CloseAdapterInternal();
   }
@@ -66,10 +70,10 @@ class WindowsTunBackend : public TunPlatformBackend {
     // already exists; that adapter will likewise be removed on close, which
     // is the desired behavior — we do not want stale adapters to accumulate.
     adapter_ = api.CreateAdapter(adapter_name.c_str(), kTunnelType, nullptr);
-    if (!adapter_) {
+    if (adapter_ == nullptr) {
       DWORD created_err = ::GetLastError();
       adapter_ = api.OpenAdapter(adapter_name.c_str());
-      if (!adapter_) {
+      if (adapter_ == nullptr) {
         DWORD opened_err = ::GetLastError();
         error = "Failed to create or open WinTun adapter: create failed with " + FormatLastError(created_err) +
                 "; open failed with " + FormatLastError(opened_err);
@@ -78,14 +82,14 @@ class WindowsTunBackend : public TunPlatformBackend {
     }
 
     session_ = api.StartSession(adapter_, kSessionCapacity);
-    if (!session_) {
+    if (session_ == nullptr) {
       error = "Failed to start WinTun session: " + FormatLastError(::GetLastError());
       CloseAdapterInternal();
       return false;
     }
 
     read_event_ = api.GetReadWaitEvent(session_);
-    if (!read_event_) {
+    if (read_event_ == nullptr) {
       error = "Failed to acquire WinTun read-wait event: " + FormatLastError(::GetLastError());
       EndSessionInternal();
       CloseAdapterInternal();
@@ -114,7 +118,7 @@ class WindowsTunBackend : public TunPlatformBackend {
   bool IsOpen() const override { return session_ != nullptr; }
 
   ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
-    if (!session_) {
+    if (session_ == nullptr) {
       error = "Device not open";
       return ReadPacketStatus::Error;
     }
@@ -122,7 +126,7 @@ class WindowsTunBackend : public TunPlatformBackend {
     auto& api = WintunApi::Instance();
     DWORD packet_size = 0;
     BYTE* packet = api.ReceivePacket(session_, &packet_size);
-    if (!packet) {
+    if (packet == nullptr) {
       DWORD err = ::GetLastError();
       switch (err) {
         case ERROR_NO_MORE_ITEMS:
@@ -146,7 +150,7 @@ class WindowsTunBackend : public TunPlatformBackend {
   }
 
   ssize_t WritePacket(const uint8_t* data, size_t length, std::string& error) override {
-    if (!session_) {
+    if (session_ == nullptr) {
       error = "Device not open";
       return -1;
     }
@@ -160,7 +164,7 @@ class WindowsTunBackend : public TunPlatformBackend {
 
     auto& api = WintunApi::Instance();
     BYTE* slot = api.AllocateSendPacket(session_, static_cast<DWORD>(length));
-    if (!slot) {
+    if (slot == nullptr) {
       DWORD err = ::GetLastError();
       if (err == ERROR_HANDLE_EOF) {
         error = "WinTun adapter is terminating";
@@ -185,7 +189,7 @@ class WindowsTunBackend : public TunPlatformBackend {
   // mutex around the join (see tuntap.cc).
   bool StartReceiveLoop(uv_loop_t* /*loop*/, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
                         std::string& error) override {
-    if (!session_) {
+    if (session_ == nullptr) {
       error = "Device not open";
       return false;
     }
@@ -245,7 +249,7 @@ class WindowsTunBackend : public TunPlatformBackend {
   int GetNativeFd() const override { return -1; }
 
   bool WaitReadable(const std::atomic<bool>& running, std::string& error) override {
-    if (!read_event_) {
+    if (read_event_ == nullptr) {
       error = "Device not open";
       return false;
     }
@@ -278,12 +282,12 @@ class WindowsTunBackend : public TunPlatformBackend {
  private:
   static std::string Utf16ToUtf8(const std::wstring& utf16) {
     if (utf16.empty()) {
-      return std::string();
+      return {};
     }
     int len =
         ::WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), static_cast<int>(utf16.size()), nullptr, 0, nullptr, nullptr);
     if (len <= 0) {
-      return std::string();
+      return {};
     }
     std::string out(static_cast<size_t>(len), '\0');
     ::WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), static_cast<int>(utf16.size()), out.data(), len, nullptr, nullptr);
@@ -291,7 +295,7 @@ class WindowsTunBackend : public TunPlatformBackend {
   }
 
   void EndSessionInternal() {
-    if (session_) {
+    if (session_ != nullptr) {
       WintunApi::Instance().EndSession(session_);
       session_ = nullptr;
     }
@@ -299,15 +303,53 @@ class WindowsTunBackend : public TunPlatformBackend {
   }
 
   void CloseAdapterInternal() {
-    if (adapter_) {
+    if (adapter_ != nullptr) {
       WintunApi::Instance().CloseAdapter(adapter_);
       adapter_ = nullptr;
     }
   }
 
-  void WorkerMain(size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error) {
+  // Outcome of draining the queued packets: the ring is empty and the read
+  // event can be re-armed, the drain stopped early (paused, shutting down, or
+  // the packet callback declined more data), or the session is gone and the
+  // worker must exit.
+  enum class DrainStatus : std::uint8_t { kDrained, kInterrupted, kFatal };
+
+  DrainStatus DrainReceivedPackets(size_t buffer_size, const PacketCallback& on_packet, const ErrorCallback& on_error) {
     auto& api = WintunApi::Instance();
-    HANDLE wait_handles[2] = {read_event_, quit_event_.get()};
+    while (worker_running_.load() && !receive_paused_.load()) {
+      DWORD packet_size = 0;
+      BYTE* packet = api.ReceivePacket(session_, &packet_size);
+      if (packet != nullptr) {
+        const size_t copy_len =
+            static_cast<size_t>(packet_size) > buffer_size ? buffer_size : static_cast<size_t>(packet_size);
+        std::vector<uint8_t> data(packet, packet + copy_len);
+        api.ReleaseReceivePacket(session_, packet);
+        if (on_packet && !on_packet(std::move(data))) {
+          return DrainStatus::kInterrupted;
+        }
+        continue;
+      }
+
+      const DWORD err = ::GetLastError();
+      if (err == ERROR_NO_MORE_ITEMS) {
+        return DrainStatus::kDrained;
+      }
+      if (err == ERROR_HANDLE_EOF) {
+        if (on_error) {
+          on_error("WinTun adapter terminating");
+        }
+      } else if (on_error) {
+        on_error("WintunReceivePacket failed: " + FormatLastError(err));
+      }
+      worker_running_.store(false);
+      return DrainStatus::kFatal;
+    }
+    return DrainStatus::kInterrupted;
+  }
+
+  void WorkerMain(size_t buffer_size, const PacketCallback& on_packet, const ErrorCallback& on_error) {
+    const std::array<HANDLE, 2> wait_handles = {read_event_, quit_event_.get()};
 
     while (worker_running_.load()) {
       while (receive_paused_.load() && worker_running_.load()) {
@@ -320,48 +362,15 @@ class WindowsTunBackend : public TunPlatformBackend {
       // Drain everything available before going back to wait. WinTun's
       // read-wait event is auto-reset on signal, so we must consume all
       // queued packets before re-arming.
-      bool drained = false;
-      while (worker_running_.load() && !receive_paused_.load()) {
-        DWORD packet_size = 0;
-        BYTE* packet = api.ReceivePacket(session_, &packet_size);
-        if (packet) {
-          const size_t copy_len =
-              static_cast<size_t>(packet_size) > buffer_size ? buffer_size : static_cast<size_t>(packet_size);
-          std::vector<uint8_t> data(packet, packet + copy_len);
-          api.ReleaseReceivePacket(session_, packet);
-          if (on_packet && !on_packet(std::move(data))) {
-            break;
-          }
-          continue;
-        }
-
-        DWORD err = ::GetLastError();
-        if (err == ERROR_NO_MORE_ITEMS) {
-          drained = true;
-          break;
-        }
-        if (err == ERROR_HANDLE_EOF) {
-          if (on_error) {
-            on_error("WinTun adapter terminating");
-          }
-          worker_running_.store(false);
-          return;
-        }
-        if (on_error) {
-          on_error("WintunReceivePacket failed: " + FormatLastError(err));
-        }
-        worker_running_.store(false);
+      const DrainStatus drained = DrainReceivedPackets(buffer_size, on_packet, on_error);
+      if (drained == DrainStatus::kFatal || !worker_running_.load()) {
         return;
       }
-
-      if (!worker_running_.load()) {
-        return;
-      }
-      if (!drained) {
+      if (drained != DrainStatus::kDrained) {
         continue;
       }
 
-      DWORD wait = ::WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
+      const DWORD wait = ::WaitForMultipleObjects(2, wait_handles.data(), FALSE, INFINITE);
       if (wait == WAIT_OBJECT_0 + 1) {
         // quit_event signalled.
         return;

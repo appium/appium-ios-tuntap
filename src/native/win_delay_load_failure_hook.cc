@@ -35,13 +35,15 @@ FARPROC WINAPI DelayLoadFailureHook(unsigned int event, DelayLoadInfo* info) {
                    "native addon build may be incompatible with the current Node.js "
                    "install; try reinstalling appium-ios-tuntap or building it from "
                    "source (npm install --build-from-source).\n",
-                   info->dlp.fImportByName ? info->dlp.szProcName : "(ordinal import)", info->szDll, info->dwLastError);
+                   info->dlp.fImportByName != FALSE ? info->dlp.szProcName : "(ordinal import)", info->szDll,
+                   info->dwLastError);
       break;
     default:
       break;
   }
-  // NULL keeps the default behavior: the runtime still raises afterward.
-  return NULL;
+  // A null result keeps the default behavior: the runtime still raises
+  // afterward.
+  return nullptr;
 }
 
 }  // namespace
