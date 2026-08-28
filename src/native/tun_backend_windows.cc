@@ -109,7 +109,7 @@ class WindowsTunBackend : public TunPlatformBackend {
     interface_name_.clear();
   }
 
-  bool IsOpen() const override { return session_ != nullptr; }
+  [[nodiscard]] bool IsOpen() const override { return session_ != nullptr; }
 
   ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
     if (session_ == nullptr) {
@@ -181,7 +181,7 @@ class WindowsTunBackend : public TunPlatformBackend {
 
   // WinTun exposes no POSIX file descriptor: its readable object is a Win32
   // event `HANDLE`, not a numeric fd. Always -1.
-  int GetNativeFd() const override { return -1; }
+  [[nodiscard]] int GetNativeFd() const override { return -1; }
 
   bool WaitReadable(const std::atomic<bool>& running, std::string& error) override {
     if (read_event_ == nullptr) {
