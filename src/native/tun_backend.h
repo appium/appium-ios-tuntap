@@ -7,7 +7,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,8 +18,6 @@ using ssize_t = SSIZE_T;
 #include <sys/types.h>
 #endif
 
-#include <uv.h>
-
 enum class ReadPacketStatus : std::uint8_t {
   Data,
   NoData,
@@ -30,25 +27,11 @@ enum class ReadPacketStatus : std::uint8_t {
 
 /**
  * Backend abstraction that hides OS-specific TUN device handling from the
- * N-API surface.
- *
- * Each backend owns:
- * - its native handle (POSIX file descriptor or Win32 `HANDLE`)
- * - the receive-loop primitive it needs (libuv `uv_poll_t` on POSIX, a
- *   dedicated worker thread plus a Win32 event on Windows)
+ * N-API surface. Each backend owns its native handle (POSIX file descriptor
+ * or WinTun session).
  */
 class TunPlatformBackend {
  public:
-  // Invoked once per packet read by the receive loop. Always called on a
-  // background thread (libuv loop thread on POSIX, worker thread on Windows);
-  // the caller in `tuntap.cc` is responsible for marshalling onto the JS
-  // thread via `Napi::ThreadSafeFunction`.
-  using PacketCallback = std::function<bool(std::vector<uint8_t>)>;
-
-  // Invoked at most once when the receive loop encounters a fatal error and
-  // stops. The receive loop must not deliver any further packets afterwards.
-  using ErrorCallback = std::function<void(const std::string&)>;
-
   virtual ~TunPlatformBackend() = default;
 
   virtual bool OpenDevice(const std::string& requested_name, std::string& out_interface_name, std::string& error) = 0;
@@ -63,16 +46,6 @@ class TunPlatformBackend {
   // an explicit writable event.
   virtual bool WaitReadable(const std::atomic<bool>& running, std::string& error) = 0;
   virtual bool WaitWritable(const std::atomic<bool>& running, std::string& error) = 0;
-
-  // Begin asynchronous packet delivery. `loop` is supplied by Node-API and is
-  // used by POSIX backends for `uv_poll_init`; Windows ignores it.
-  virtual bool StartReceiveLoop(uv_loop_t* loop, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
-                                std::string& error) = 0;
-  virtual void StopReceiveLoop() = 0;
-
-  // Temporarily stop delivering packets without tearing down the receive loop.
-  virtual void PauseReceiveLoop() {}
-  virtual void ResumeReceiveLoop() {}
 
   // Returns the underlying POSIX file descriptor when one exists. Backends
   // without a numeric fd (e.g. Wintun on Windows) return `-1`.

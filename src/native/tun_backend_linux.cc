@@ -16,7 +16,6 @@
 
 #include "file_descriptor.h"
 #include "posix_tun_backend.h"
-#include "posix_uv_poll_loop.h"
 
 namespace {
 
@@ -74,7 +73,7 @@ class LinuxTunBackend : public PosixTunBackend {
     out.resize(max_payload_size);
     ssize_t bytes_read = read(fd_.get(), out.data(), out.size());
     if (bytes_read < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
         out.clear();
         return ReadPacketStatus::NoData;
       }

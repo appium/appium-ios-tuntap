@@ -19,7 +19,6 @@
 
 #include "file_descriptor.h"
 #include "posix_tun_backend.h"
-#include "posix_uv_poll_loop.h"
 
 #define UTUN_CONTROL_NAME "com.apple.net.utun_control"
 
@@ -94,7 +93,7 @@ class DarwinTunBackend : public PosixTunBackend {
     }
     ssize_t bytes_read = read(fd_.get(), read_frame_.data(), read_cap);
     if (bytes_read < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
         out.clear();
         return ReadPacketStatus::NoData;
       }
