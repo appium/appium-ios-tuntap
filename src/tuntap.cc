@@ -26,12 +26,12 @@ class TunDevice : public Napi::ObjectWrap<TunDevice> {
 
   // Both require device_mutex_ to be held by the caller.
   void CloseInternal();
-  bool IsOpenLocked() const { return is_open_ && backend_ && backend_->IsOpen(); }
+  [[nodiscard]] bool IsOpenLocked() const { return is_open_ && backend_ && backend_->IsOpen(); }
 
   std::shared_ptr<TunPlatformBackend> backend_;
   std::string requested_name_;
   std::string interface_name_;
-  bool is_open_;
+  bool is_open_ = false;
   std::mutex device_mutex_;
 
   // Keep in sync with MAX_BUFFER_SIZE in src/TunTap.ts.
@@ -58,7 +58,7 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
 }
 
 TunDevice::TunDevice(const Napi::CallbackInfo& info)
-    : Napi::ObjectWrap<TunDevice>(info), backend_(CreatePlatformBackend()), is_open_(false) {
+    : Napi::ObjectWrap<TunDevice>(info), backend_(CreatePlatformBackend()) {
   Napi::Env env = info.Env();
   Napi::HandleScope scope(env);
 
@@ -135,9 +135,9 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
     return env.Null();
   }
   if (rs == ReadPacketStatus::NoData) {
-    return Napi::Buffer<uint8_t>::New(env, 0);
+    return {env, Napi::Buffer<uint8_t>::New(env, 0)};
   }
-  return Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size());
+  return {env, Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size())};
 }
 
 Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
