@@ -64,7 +64,6 @@
         ["OS=='linux'", {
           "sources": [
             "src/native/file_descriptor.cc",
-            "src/native/posix_uv_poll_loop.cc",
             "src/native/debug_log.cc",
             "src/native/tun_backend_linux.cc",
             "src/native/tunnel_ssl.cc",
@@ -93,7 +92,6 @@
           },
           "sources": [
             "src/native/file_descriptor.cc",
-            "src/native/posix_uv_poll_loop.cc",
             "src/native/debug_log.cc",
             "src/native/tun_backend_darwin.cc",
             "src/native/tunnel_ssl.cc",
@@ -118,7 +116,6 @@
           },
           "sources": [
             "src/native/debug_log.cc",
-            "src/native/handle.cc",
             "src/native/wintun_loader.cc",
             "src/native/tun_backend_windows.cc",
             "src/native/tunnel_ssl.cc",

@@ -3,48 +3,40 @@
 #if defined(__APPLE__) || defined(__linux__)
 
 #include <cerrno>
+#include <cstring>
+#include <fcntl.h>
 #include <poll.h>
 
-#include <chrono>
 #include <string>
-#include <utility>
-#include <vector>
 
 #include "file_descriptor.h"
-#include "posix_uv_poll_loop.h"
 #include "tun_backend.h"
 
+/** Sets O_NONBLOCK on `fd`; fills `error` and returns false on failure. */
+inline bool SetNonBlocking(int fd, std::string& error) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0) {
+    error = std::string("Failed to get file descriptor flags: ") + strerror(errno);
+    return false;
+  }
+  if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    error = std::string("Failed to set non-blocking mode: ") + strerror(errno);
+    return false;
+  }
+  return true;
+}
+
 // Shared base class for POSIX TUN backends (Darwin, Linux). Owns the file
-// descriptor, the assigned interface name, and the libuv poll loop. Concrete
-// subclasses implement only the platform-specific OpenDevice, ReadPacket, and
-// WritePacket.
+// descriptor and the assigned interface name. Concrete subclasses implement
+// only the platform-specific OpenDevice, ReadPacket, and WritePacket.
 class PosixTunBackend : public TunPlatformBackend {
  public:
   void CloseDevice() override {
-    poll_loop_.Stop();
     fd_.reset();
     interface_name_.clear();
   }
 
   [[nodiscard]] bool IsOpen() const override { return fd_.is_valid(); }
-
-  bool StartReceiveLoop(uv_loop_t* loop, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
-                        std::string& error) override {
-    if (!fd_.is_valid()) {
-      error = "Device not open";
-      return false;
-    }
-    return poll_loop_.Start(
-        loop, fd_.get(), buffer_size,
-        [this](size_t size, std::vector<uint8_t>& out, std::string& err) { return ReadPacket(size, out, err); },
-        std::move(on_packet), std::move(on_error), error);
-  }
-
-  void StopReceiveLoop() override { poll_loop_.Stop(); }
-
-  void PauseReceiveLoop() override { poll_loop_.Pause(); }
-
-  void ResumeReceiveLoop() override { poll_loop_.Resume(); }
 
   [[nodiscard]] int GetNativeFd() const override { return fd_.get(); }
 
@@ -59,7 +51,6 @@ class PosixTunBackend : public TunPlatformBackend {
  protected:
   FileDescriptor fd_;
   std::string interface_name_;
-  PosixUvPollLoop poll_loop_;
 
  private:
   bool WaitForEvents(short events, const std::atomic<bool>& running, std::string& error) {

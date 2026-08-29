@@ -4,17 +4,15 @@
 
 #include <windows.h>
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <sstream>
 #include <thread>
-#include <utility>
 #include <vector>
 
-#include "handle.h"
+#include "debug_log.h"
 #include "wintun_loader.h"
 
 namespace {
@@ -34,9 +32,6 @@ class WindowsTunBackend : public TunPlatformBackend {
  public:
   WindowsTunBackend() = default;
   ~WindowsTunBackend() override {
-    // Explicitly qualified: virtual dispatch is already settled during
-    // destruction, so make the non-polymorphic call visible.
-    WindowsTunBackend::StopReceiveLoop();
     EndSessionInternal();
     CloseAdapterInternal();
   }
@@ -109,13 +104,12 @@ class WindowsTunBackend : public TunPlatformBackend {
   }
 
   void CloseDevice() override {
-    StopReceiveLoop();
     EndSessionInternal();
     CloseAdapterInternal();
     interface_name_.clear();
   }
 
-  bool IsOpen() const override { return session_ != nullptr; }
+  [[nodiscard]] bool IsOpen() const override { return session_ != nullptr; }
 
   ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
     if (session_ == nullptr) {
@@ -144,6 +138,10 @@ class WindowsTunBackend : public TunPlatformBackend {
 
     const size_t copy_len =
         static_cast<size_t>(packet_size) > max_payload_size ? max_payload_size : static_cast<size_t>(packet_size);
+    if (copy_len < static_cast<size_t>(packet_size)) {
+      tuntap::FwdDebug("wintun-read-truncated", "size=%lu max=%zu", static_cast<unsigned long>(packet_size),
+                       max_payload_size);
+    }
     out.assign(packet, packet + copy_len);
     api.ReleaseReceivePacket(session_, packet);
     return ReadPacketStatus::Data;
@@ -181,72 +179,9 @@ class WindowsTunBackend : public TunPlatformBackend {
     return static_cast<ssize_t>(length);
   }
 
-  // The worker thread can begin invoking `on_packet`/`on_error` immediately
-  // after this returns; callers must therefore not assume callbacks fire
-  // only after the function returns. `on_packet` marshals to libuv via TSFN;
-  // `on_error` takes `device_mutex_`, which cannot deadlock against
-  // StopReceiveLoop's join because TunDevice::StopPollingLocked releases that
-  // mutex around the join (see tuntap.cc).
-  bool StartReceiveLoop(uv_loop_t* /*loop*/, size_t buffer_size, PacketCallback on_packet, ErrorCallback on_error,
-                        std::string& error) override {
-    if (session_ == nullptr) {
-      error = "Device not open";
-      return false;
-    }
-    if (buffer_size == 0) {
-      error = "Invalid receive-loop parameters";
-      return false;
-    }
-    if (worker_running_.load()) {
-      error = "Receive loop already started";
-      return false;
-    }
-
-    quit_event_.reset(::CreateEventW(nullptr, /*manualReset=*/TRUE,
-                                     /*initialState=*/FALSE, nullptr));
-    if (!quit_event_.is_valid()) {
-      error = "Failed to create quit event: " + FormatLastError(::GetLastError());
-      return false;
-    }
-
-    worker_running_.store(true);
-    try {
-      worker_ =
-          std::thread(&WindowsTunBackend::WorkerMain, this, buffer_size, std::move(on_packet), std::move(on_error));
-    } catch (const std::system_error& sysErr) {
-      worker_running_.store(false);
-      quit_event_.reset();
-      error = std::string("Failed to spawn receive thread: ") + sysErr.what();
-      return false;
-    }
-    return true;
-  }
-
-  void StopReceiveLoop() override {
-    if (!worker_.joinable()) {
-      // Either never started or already cleaned up. Reset the event in case
-      // it was created without ever spawning a thread.
-      quit_event_.reset();
-      receive_paused_.store(false);
-      return;
-    }
-    worker_running_.store(false);
-    receive_paused_.store(false);
-    if (quit_event_.is_valid()) {
-      ::SetEvent(quit_event_.get());
-    }
-    worker_.join();
-    quit_event_.reset();
-  }
-
-  void PauseReceiveLoop() override { receive_paused_.store(true); }
-
-  void ResumeReceiveLoop() override { receive_paused_.store(false); }
-
   // WinTun exposes no POSIX file descriptor: its readable object is a Win32
-  // event `HANDLE`, not a numeric fd. Always -1 — the N-API layer treats -1
-  // as "no pollable fd" and drives delivery through `StartReceiveLoop`.
-  int GetNativeFd() const override { return -1; }
+  // event `HANDLE`, not a numeric fd. Always -1.
+  [[nodiscard]] int GetNativeFd() const override { return -1; }
 
   bool WaitReadable(const std::atomic<bool>& running, std::string& error) override {
     if (read_event_ == nullptr) {
@@ -309,88 +244,9 @@ class WindowsTunBackend : public TunPlatformBackend {
     }
   }
 
-  // Outcome of draining the queued packets: the ring is empty and the read
-  // event can be re-armed, the drain stopped early (paused, shutting down, or
-  // the packet callback declined more data), or the session is gone and the
-  // worker must exit.
-  enum class DrainStatus : std::uint8_t { kDrained, kInterrupted, kFatal };
-
-  DrainStatus DrainReceivedPackets(size_t buffer_size, const PacketCallback& on_packet, const ErrorCallback& on_error) {
-    auto& api = WintunApi::Instance();
-    while (worker_running_.load() && !receive_paused_.load()) {
-      DWORD packet_size = 0;
-      BYTE* packet = api.ReceivePacket(session_, &packet_size);
-      if (packet != nullptr) {
-        const size_t copy_len =
-            static_cast<size_t>(packet_size) > buffer_size ? buffer_size : static_cast<size_t>(packet_size);
-        std::vector<uint8_t> data(packet, packet + copy_len);
-        api.ReleaseReceivePacket(session_, packet);
-        if (on_packet && !on_packet(std::move(data))) {
-          return DrainStatus::kInterrupted;
-        }
-        continue;
-      }
-
-      const DWORD err = ::GetLastError();
-      if (err == ERROR_NO_MORE_ITEMS) {
-        return DrainStatus::kDrained;
-      }
-      if (err == ERROR_HANDLE_EOF) {
-        if (on_error) {
-          on_error("WinTun adapter terminating");
-        }
-      } else if (on_error) {
-        on_error("WintunReceivePacket failed: " + FormatLastError(err));
-      }
-      worker_running_.store(false);
-      return DrainStatus::kFatal;
-    }
-    return DrainStatus::kInterrupted;
-  }
-
-  void WorkerMain(size_t buffer_size, const PacketCallback& on_packet, const ErrorCallback& on_error) {
-    const std::array<HANDLE, 2> wait_handles = {read_event_, quit_event_.get()};
-
-    while (worker_running_.load()) {
-      while (receive_paused_.load() && worker_running_.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      }
-      if (!worker_running_.load()) {
-        return;
-      }
-
-      // Drain everything available before going back to wait. WinTun's
-      // read-wait event is auto-reset on signal, so we must consume all
-      // queued packets before re-arming.
-      const DrainStatus drained = DrainReceivedPackets(buffer_size, on_packet, on_error);
-      if (drained == DrainStatus::kFatal || !worker_running_.load()) {
-        return;
-      }
-      if (drained != DrainStatus::kDrained) {
-        continue;
-      }
-
-      const DWORD wait = ::WaitForMultipleObjects(2, wait_handles.data(), FALSE, INFINITE);
-      if (wait == WAIT_OBJECT_0 + 1) {
-        // quit_event signalled.
-        return;
-      }
-      if (wait != WAIT_OBJECT_0) {
-        if (on_error) {
-          on_error("WaitForMultipleObjects failed: " + FormatLastError(::GetLastError()));
-        }
-        return;
-      }
-    }
-  }
-
   WINTUN_ADAPTER_HANDLE adapter_ = nullptr;
   WINTUN_SESSION_HANDLE session_ = nullptr;
   HANDLE read_event_ = nullptr;  // Owned by `session_`; do not CloseHandle.
-  Handle quit_event_;
-  std::thread worker_;
-  std::atomic<bool> worker_running_{false};
-  std::atomic<bool> receive_paused_{false};
   std::string interface_name_;
 };
 

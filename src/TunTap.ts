@@ -9,16 +9,9 @@ import type {TunTapInterfaceStats, TunTapPlatform} from './platform/types.js';
 
 const require = createRequire(import.meta.url);
 const DEFAULT_READ_BUFFER_SIZE = 4096;
-const MAX_BUFFER_SIZE = 0xffff; // 65535
+const MAX_BUFFER_SIZE = 0xffff; // 65535; keep in sync with MAX_READ_BUFFER in src/tuntap.cc
 const DEFAULT_MTU = 1500;
 const MIN_MTU = 1280;
-
-/**
- * Called by {@link TunTap.startPolling} for each packet read from the TUN device.
- *
- * @param data — raw L3 frame (IPv6) read from the device
- */
-export type PacketCallback = (data: Buffer) => void;
 
 interface NativeTunDevice {
   open(): boolean;
@@ -27,10 +20,9 @@ interface NativeTunDevice {
   write(data: Buffer): number;
   getName(): string;
   getFd(): number;
+  /** Absent on native binaries built before this method was added. */
+  isOpen?(): boolean;
   getForwardingHandle(): unknown;
-  startPolling(callback: PacketCallback, bufferSize?: number, queueDepth?: number): void;
-  pausePolling(): void;
-  resumePolling(): void;
 }
 
 interface NativeTuntapModule {
@@ -166,11 +158,13 @@ export class TunTap {
   }
 
   /**
-   * Read one datagram/packet from the TUN device (blocking in the native layer).
+   * Read one datagram/packet from the TUN device (non-blocking; returns an empty buffer if no packet is available).
+   * Unsupported while a TunnelForwarder is active on this device: concurrent reads race with the forwarder (lost packets or crashes).
+   * On terminal EOF the native device self-closes; this wrapper mirrors that into its own state before throwing.
    *
    * @param maxSize — upper bound on bytes to read (default 4096)
    * @returns packet buffer
-   * @throws {TunTapError} if not open, closed, or read fails
+   * @throws {TunTapError} if not open, closed, or read fails — including terminal EOF (e.g. the interface was torn down externally), which throws rather than returning an empty buffer
    * @throws {RangeError} if `maxSize` is out of range
    */
   read(maxSize: number = DEFAULT_READ_BUFFER_SIZE): Buffer {
@@ -182,12 +176,16 @@ export class TunTap {
     try {
       return this.device.read(maxSize);
     } catch (err: unknown) {
+      if (this.device.isOpen?.() === false) {
+        this.close();
+      }
       throw new TunTapError(`Read failed: ${(err as Error).message}`);
     }
   }
 
   /**
    * Write a full IPv6 packet to the TUN device.
+   * Unsupported while a TunnelForwarder is active on this device: concurrent writes race with the forwarder.
    *
    * @param data — L3 payload to write
    * @returns number of bytes written
@@ -210,48 +208,11 @@ export class TunTap {
     try {
       return this.device.write(data);
     } catch (err: unknown) {
+      if (this.device.isOpen?.() === false) {
+        this.close();
+      }
       throw new TunTapError(`Write failed: ${(err as Error).message}`);
     }
-  }
-
-  /**
-   * Start libuv-driven polling on the TUN fd; `callback` runs on the Node thread pool per packet.
-   *
-   * @param callback — invoked with each packet read from the device
-   * @param bufferSize — max read size per poll (default 65535)
-   * @param queueDepth — packets the native layer may queue ahead of the callback (1–64, default 8)
-   * @throws {TunTapError} if not open or closed
-   * @throws {TypeError} if `callback` is not a function
-   * @throws {RangeError} if `bufferSize` is out of range
-   */
-  startPolling(callback: PacketCallback, bufferSize: number = MAX_BUFFER_SIZE, queueDepth: number = 8): void {
-    this.assertReady();
-    if (typeof callback !== 'function') {
-      throw new TypeError('Callback must be a function');
-    }
-    if (bufferSize <= 0 || bufferSize > MAX_BUFFER_SIZE) {
-      throw new RangeError(`Buffer size must be between 1 and ${MAX_BUFFER_SIZE} bytes`);
-    }
-    if (queueDepth <= 0 || queueDepth > 64) {
-      throw new RangeError('Queue depth must be between 1 and 64');
-    }
-    this.device.startPolling(callback, bufferSize, queueDepth);
-  }
-
-  /**
-   * Pause libuv-driven polling without tearing down the receive callback.
-   */
-  pausePolling(): void {
-    this.assertReady();
-    this.device.pausePolling();
-  }
-
-  /**
-   * Resume polling after {@link TunTap.pausePolling}.
-   */
-  resumePolling(): void {
-    this.assertReady();
-    this.device.resumePolling();
   }
 
   /**

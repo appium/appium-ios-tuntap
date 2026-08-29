@@ -1,130 +1,43 @@
 #include <napi.h>
 
-#include <atomic>
-#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <utility>
-#include <deque>
 
 #include "native/tun_backend.h"
 #include "native/tunnel_forwarder.h"
 
-class TunDevice;
-
 namespace {
-
-struct TunPollDispatch : public std::enable_shared_from_this<TunPollDispatch> {
-  Napi::ThreadSafeFunction tsfn;
-  std::mutex mutex;
-  std::deque<std::vector<uint8_t>> pending;
-  size_t max_pending_ = 1;
-  TunDevice* device_ = nullptr;
-
-  // Each queued job keeps the dispatch alive, so it outlives a close that
-  // happens while callbacks are still draining.
-  struct PacketJob {
-    std::shared_ptr<TunPollDispatch> dispatch;
-    std::vector<uint8_t>* packet;
-  };
-
-  void OnJsConsumed();
-
-  // Drop the device back-pointer so a late callback cannot resume a closing device.
-  void Detach() {
-    std::scoped_lock lock(mutex);
-    device_ = nullptr;
-  }
-
-  static void CallJs(Napi::Env env, Napi::Function jsCallback, const std::shared_ptr<TunPollDispatch>& self,
-                     std::vector<uint8_t>* packet) {
-    if (env == nullptr || jsCallback.IsEmpty() || packet == nullptr) {
-      delete packet;
-      return;
-    }
-    auto* backing = packet;
-    Napi::Buffer<uint8_t> buf = Napi::Buffer<uint8_t>::New(
-        env, backing->data(), backing->size(), [](Napi::Env, uint8_t*, std::vector<uint8_t>* vec) { delete vec; },
-        backing);
-    jsCallback.Call({buf});
-    if (self) {
-      self->OnJsConsumed();
-    }
-  }
-
-  void FlushPending() {
-    std::scoped_lock lock(mutex);
-    while (!pending.empty()) {
-      auto* packet = new std::vector<uint8_t>(std::move(pending.front()));
-      pending.pop_front();
-      auto* job = new PacketJob{shared_from_this(), packet};
-      napi_status status = tsfn.NonBlockingCall(job, [](Napi::Env env, Napi::Function jsCallback, PacketJob* job) {
-        CallJs(env, jsCallback, job->dispatch, job->packet);
-        delete job;
-      });
-      if (status != napi_ok) {
-        // Queue full or TSFN closing: requeue so data and order survive.
-        pending.push_front(std::move(*packet));
-        delete packet;
-        delete job;
-        break;
-      }
-    }
-  }
-
-  bool PostPacket(std::vector<uint8_t> packet) {
-    {
-      std::scoped_lock lock(mutex);
-      if (pending.size() >= max_pending_) {
-        return false;
-      }
-      pending.push_back(std::move(packet));
-    }
-    FlushPending();
-    std::scoped_lock lock(mutex);
-    return pending.size() < max_pending_;
-  }
-};
-
-}  // namespace
 
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
  public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports);
-  TunDevice(const Napi::CallbackInfo& info);
+  explicit TunDevice(const Napi::CallbackInfo& info);
   ~TunDevice() override;
 
-  void CloseInternal(std::unique_lock<std::mutex>& device_lock);
-  void ResumeReceiveFromDispatch();
-
  private:
-  friend struct TunPollDispatch;
-
   Napi::Value Open(const Napi::CallbackInfo& info);
   Napi::Value Close(const Napi::CallbackInfo& info);
   Napi::Value Read(const Napi::CallbackInfo& info);
   Napi::Value Write(const Napi::CallbackInfo& info);
   Napi::Value GetName(const Napi::CallbackInfo& info);
   Napi::Value GetFd(const Napi::CallbackInfo& info);
+  Napi::Value IsOpen(const Napi::CallbackInfo& info);
   Napi::Value GetForwardingHandle(const Napi::CallbackInfo& info);
-  Napi::Value StartPolling(const Napi::CallbackInfo& info);
-  Napi::Value PausePolling(const Napi::CallbackInfo& info);
-  Napi::Value ResumePolling(const Napi::CallbackInfo& info);
+
+  // Both require device_mutex_ to be held by the caller.
+  void CloseInternal();
+  [[nodiscard]] bool IsOpenLocked() const { return is_open_ && backend_ && backend_->IsOpen(); }
 
   std::shared_ptr<TunPlatformBackend> backend_;
   std::string requested_name_;
   std::string interface_name_;
-  std::atomic<bool> is_open_;
+  bool is_open_ = false;
   std::mutex device_mutex_;
 
-  Napi::ThreadSafeFunction tsfn_;
-  std::shared_ptr<TunPollDispatch> poll_dispatch_;
-  std::atomic<bool> polling_;
-  static constexpr size_t MAX_POLL_BUFFER = 65535;
-
-  void StopPollingLocked(std::unique_lock<std::mutex>& device_lock);
-  void ReleaseTsfnLocked();
+  // Keep in sync with MAX_BUFFER_SIZE in src/TunTap.ts.
+  static constexpr size_t MAX_READ_BUFFER = 65535;
 };
 
 Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
@@ -138,10 +51,8 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
                                         InstanceMethod("write", &TunDevice::Write),
                                         InstanceMethod("getName", &TunDevice::GetName),
                                         InstanceMethod("getFd", &TunDevice::GetFd),
+                                        InstanceMethod("isOpen", &TunDevice::IsOpen),
                                         InstanceMethod("getForwardingHandle", &TunDevice::GetForwardingHandle),
-                                        InstanceMethod("startPolling", &TunDevice::StartPolling),
-                                        InstanceMethod("pausePolling", &TunDevice::PausePolling),
-                                        InstanceMethod("resumePolling", &TunDevice::ResumePolling),
                                     });
 
   exports.Set("TunDevice", func);
@@ -149,7 +60,7 @@ Napi::Object TunDevice::Init(Napi::Env env, Napi::Object exports) {
 }
 
 TunDevice::TunDevice(const Napi::CallbackInfo& info)
-    : Napi::ObjectWrap<TunDevice>(info), backend_(CreatePlatformBackend()), is_open_(false), polling_(false) {
+    : Napi::ObjectWrap<TunDevice>(info), backend_(CreatePlatformBackend()) {
   Napi::Env env = info.Env();
   Napi::HandleScope scope(env);
 
@@ -159,8 +70,8 @@ TunDevice::TunDevice(const Napi::CallbackInfo& info)
 }
 
 TunDevice::~TunDevice() {
-  std::unique_lock<std::mutex> device_lock(device_mutex_);
-  CloseInternal(device_lock);
+  std::scoped_lock lock(device_mutex_);
+  CloseInternal();
 }
 
 Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
@@ -189,8 +100,8 @@ Napi::Value TunDevice::Open(const Napi::CallbackInfo& info) {
 
 Napi::Value TunDevice::Close(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  std::unique_lock<std::mutex> device_lock(device_mutex_);
-  CloseInternal(device_lock);
+  std::scoped_lock lock(device_mutex_);
+  CloseInternal();
   return Napi::Boolean::New(env, true);
 }
 
@@ -198,7 +109,7 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::scoped_lock lock(device_mutex_);
 
-  if (!is_open_ || !backend_ || !backend_->IsOpen()) {
+  if (!IsOpenLocked()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
     return env.Null();
   }
@@ -206,8 +117,8 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
   size_t buffer_size = 4096;
   if (info.Length() > 0 && info[0].IsNumber()) {
     buffer_size = info[0].As<Napi::Number>().Uint32Value();
-    if (buffer_size == 0 || buffer_size > MAX_POLL_BUFFER) {
-      Napi::RangeError::New(env, "Read buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER))
+    if (buffer_size == 0 || buffer_size > MAX_READ_BUFFER) {
+      Napi::RangeError::New(env, "Read buffer size must be between 1 and " + std::to_string(MAX_READ_BUFFER))
           .ThrowAsJavaScriptException();
       return env.Null();
     }
@@ -220,7 +131,12 @@ Napi::Value TunDevice::Read(const Napi::CallbackInfo& info) {
     Napi::Error::New(env, error).ThrowAsJavaScriptException();
     return env.Null();
   }
-  if (rs == ReadPacketStatus::NoData || rs == ReadPacketStatus::Closed) {
+  if (rs == ReadPacketStatus::Closed) {
+    CloseInternal();
+    Napi::Error::New(env, "TUN device closed").ThrowAsJavaScriptException();
+    return env.Null();
+  }
+  if (rs == ReadPacketStatus::NoData) {
     return {env, Napi::Buffer<uint8_t>::New(env, 0)};
   }
   return {env, Napi::Buffer<uint8_t>::Copy(env, packet.data(), packet.size())};
@@ -230,7 +146,7 @@ Napi::Value TunDevice::Write(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::scoped_lock lock(device_mutex_);
 
-  if (!is_open_ || !backend_ || !backend_->IsOpen()) {
+  if (!IsOpenLocked()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
     return Napi::Number::New(env, -1);
   }
@@ -263,11 +179,16 @@ Napi::Value TunDevice::GetFd(const Napi::CallbackInfo& info) {
   return Napi::Number::New(info.Env(), backend_ ? backend_->GetNativeFd() : -1);
 }
 
+Napi::Value TunDevice::IsOpen(const Napi::CallbackInfo& info) {
+  std::scoped_lock lock(device_mutex_);
+  return Napi::Boolean::New(info.Env(), IsOpenLocked());
+}
+
 Napi::Value TunDevice::GetForwardingHandle(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   std::scoped_lock lock(device_mutex_);
 
-  if (!is_open_ || !backend_ || !backend_->IsOpen()) {
+  if (!IsOpenLocked()) {
     Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
     return env.Null();
   }
@@ -279,121 +200,15 @@ Napi::Value TunDevice::GetForwardingHandle(const Napi::CallbackInfo& info) {
       env, shared, [](Napi::Env, std::shared_ptr<TunPlatformBackend>* data) { delete data; });
 }
 
-Napi::Value TunDevice::StartPolling(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
-  std::unique_lock<std::mutex> device_lock(device_mutex_);
-
-  if (!is_open_ || !backend_ || !backend_->IsOpen()) {
-    Napi::Error::New(env, "Device not open").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  if (info.Length() < 1 || !info[0].IsFunction()) {
-    Napi::TypeError::New(env, "Expected function as first argument").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  StopPollingLocked(device_lock);
-
-  size_t buffer_size = MAX_POLL_BUFFER;
-  if (info.Length() > 1 && info[1].IsNumber()) {
-    auto size = info[1].As<Napi::Number>().Uint32Value();
-    if (size == 0 || size > MAX_POLL_BUFFER) {
-      Napi::RangeError::New(env, "Buffer size must be between 1 and " + std::to_string(MAX_POLL_BUFFER))
-          .ThrowAsJavaScriptException();
-      return env.Null();
+void TunDevice::CloseInternal() {
+  if (is_open_) {
+    is_open_ = false;
+    if (backend_) {
+      backend_->CloseDevice();
     }
-    buffer_size = size;
+    interface_name_.clear();
   }
-
-  size_t queue_depth = 8;
-  if (info.Length() > 2 && info[2].IsNumber()) {
-    queue_depth = info[2].As<Napi::Number>().Uint32Value();
-    if (queue_depth == 0 || queue_depth > 64) {
-      Napi::RangeError::New(env, "Queue depth must be between 1 and 64").ThrowAsJavaScriptException();
-      return env.Null();
-    }
-  }
-
-  // Queue depth > 1 lets the poll thread post the next packet while JS is still
-  // handling the previous callback (still serialized on the main thread).
-  // Bounded queue (queue_depth) + one thread ref so the single Release() in
-  // ReleaseTsfnLocked finalizes the TSFN and unpins the event loop.
-  tsfn_ = Napi::ThreadSafeFunction::New(env, info[0].As<Napi::Function>(), "TunDeviceDataCallback", queue_depth, 1);
-
-  uv_loop_t* loop = nullptr;
-  napi_status napi_st = napi_get_uv_event_loop(env, &loop);
-  if (napi_st != napi_ok || loop == nullptr) {
-    ReleaseTsfnLocked();
-    Napi::Error::New(env, "Failed to acquire event loop").ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  Napi::ThreadSafeFunction tsfn = tsfn_;
-  auto dispatch = std::make_shared<TunPollDispatch>();
-  dispatch->tsfn = tsfn;
-  dispatch->max_pending_ = queue_depth;
-  dispatch->device_ = this;
-  poll_dispatch_ = dispatch;
-  auto packet_cb = [this, weak_dispatch =
-                              std::weak_ptr<TunPollDispatch>(dispatch)](std::vector<uint8_t> packet) mutable -> bool {
-    const auto dispatch = weak_dispatch.lock();
-    if (!dispatch) {
-      return false;
-    }
-    const bool accepted = dispatch->PostPacket(std::move(packet));
-    if (polling_ && backend_) {
-      // Pause until the JS callback runs (pmd3 reads one utun packet per iteration).
-      backend_->PauseReceiveLoop();
-    }
-    return accepted;
-  };
-  // Terminal receive-loop errors release the JS-side polling_ flag and TSFN
-  // promptly. Runs on the libuv thread on POSIX but the worker thread on
-  // Windows; StopPollingLocked unlocks around its join so this cannot deadlock.
-  auto error_cb = [this](const std::string& message) {
-    fprintf(stderr, "tuntap receive loop error: %s\n", message.c_str());
-    std::scoped_lock lock(device_mutex_);
-    polling_ = false;
-    ReleaseTsfnLocked();
-  };
-
-  std::string start_error;
-  if (!backend_->StartReceiveLoop(loop, buffer_size, std::move(packet_cb), std::move(error_cb), start_error)) {
-    ReleaseTsfnLocked();
-    Napi::Error::New(env, start_error).ThrowAsJavaScriptException();
-    return env.Null();
-  }
-
-  polling_ = true;
-  return env.Undefined();
 }
-
-Napi::Value TunDevice::PausePolling(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
-  std::scoped_lock lock(device_mutex_);
-
-  if (!polling_ || !backend_ || !backend_->IsOpen()) {
-    return env.Undefined();
-  }
-
-  backend_->PauseReceiveLoop();
-  return env.Undefined();
-}
-
-Napi::Value TunDevice::ResumePolling(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
-  std::scoped_lock lock(device_mutex_);
-
-  if (!polling_ || !backend_ || !backend_->IsOpen()) {
-    return env.Undefined();
-  }
-
-  backend_->ResumeReceiveLoop();
-  return env.Undefined();
-}
-
-namespace {
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   TunDevice::Init(env, exports);
@@ -408,59 +223,3 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 // module-registration constructor in the same translation unit.
 // NOLINTNEXTLINE(misc-use-anonymous-namespace)
 NODE_API_MODULE(tuntap, Init)
-
-void TunDevice::CloseInternal(std::unique_lock<std::mutex>& device_lock) {
-  if (is_open_.exchange(false)) {
-    StopPollingLocked(device_lock);
-    if (backend_) {
-      backend_->CloseDevice();
-    }
-    interface_name_.clear();
-  }
-}
-
-// Joins the receive thread, whose error callback locks device_mutex_ on
-// Windows; unlock across the join so that callback can finish. Only worker
-// threads can act in the unlocked window (JS and uv callbacks share one thread).
-void TunDevice::StopPollingLocked(std::unique_lock<std::mutex>& device_lock) {
-  if (polling_.exchange(false) && backend_) {
-    device_lock.unlock();
-    backend_->StopReceiveLoop();
-    device_lock.lock();
-  }
-  ReleaseTsfnLocked();
-}
-
-void TunDevice::ReleaseTsfnLocked() {
-  // Release() does not block: already-queued callbacks still run afterwards.
-  // They own the dispatch via shared_ptr, so dropping our reference here is safe.
-  if (poll_dispatch_) {
-    poll_dispatch_->Detach();
-    poll_dispatch_.reset();
-  }
-  if (tsfn_ != nullptr) {
-    tsfn_.Release();
-    tsfn_ = nullptr;
-  }
-}
-
-void TunPollDispatch::OnJsConsumed() {
-  FlushPending();
-  TunDevice* device = nullptr;
-  {
-    std::scoped_lock lock(mutex);
-    if (pending.empty() && device_ != nullptr) {
-      device = device_;
-    }
-  }
-  if (device != nullptr) {
-    device->ResumeReceiveFromDispatch();
-  }
-}
-
-void TunDevice::ResumeReceiveFromDispatch() {
-  std::scoped_lock lock(device_mutex_);
-  if (polling_ && backend_) {
-    backend_->ResumeReceiveLoop();
-  }
-}

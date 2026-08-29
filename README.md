@@ -188,10 +188,8 @@ await tunnel.closer();
 #### Methods
 - `open(): boolean` - Open the TUN device
 - `close(): boolean` - Close the TUN device
-- `read(maxSize?: number): Buffer` - Read data from the device (default: 4096 bytes)
-- `write(data: Buffer): number` - Write data to the device
-- `startPolling(callback, bufferSize?, queueDepth?): void` - Deliver each packet to `callback` (defaults: 65535 bytes, queue depth 8). One-shot: stop by closing the device.
-- `pausePolling(): void` / `resumePolling(): void` - Suspend and resume delivery without tearing down the callback
+- `read(maxSize?: number): Buffer` - Read data from the device (default: 4096 bytes). Non-blocking: returns an empty buffer when no packet is queued. Unsupported while a `TunnelForwarder` is active on the device — concurrent reads race with the forwarder (lost packets or crashes).
+- `write(data: Buffer): number` - Write data to the device. Unsupported while a `TunnelForwarder` is active — concurrent writes race with the forwarder.
 - `configure(address: string, mtu?: number): Promise<void>` - Configure IPv6 address and MTU
 - `addRoute(destination: string): Promise<void>` - Add a route to the device
 - `removeRoute(destination: string): Promise<void>` - Remove a route from the device
