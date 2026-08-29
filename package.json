@@ -52,7 +52,7 @@
     "test:integration": "node --enable-source-maps --test --test-force-exit --test-concurrency=1 --test-timeout=60000 \"lib/test/integration/**/*.spec.js\""
   },
   "dependencies": {
-    "@appium/support": "^7.2.0",
+    "@appium/support": "^7.2.6",
     "node-addon-api": "^8.5.0",
     "node-gyp-build": "^4.8.4"
   },
