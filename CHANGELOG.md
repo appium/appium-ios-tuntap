@@ -1,3 +1,15 @@
+## [2.0.0](https://github.com/appium/appium-ios-tuntap/compare/v1.3.2...v2.0.0) (2026-08-29)
+
+### ⚠ BREAKING CHANGES
+
+* startPolling(), pausePolling(), resumePolling() and the
+PacketCallback export are removed. read() throws on terminal EOF instead
+of returning an empty buffer.
+
+### Features
+
+* remove the JS polling API (startPolling/pausePolling/resumePolling) ([#96](https://github.com/appium/appium-ios-tuntap/issues/96)) ([67df6f3](https://github.com/appium/appium-ios-tuntap/commit/67df6f38b7b9d63f7d1f6d3975870ac5a7297650)), closes [#52](https://github.com/appium/appium-ios-tuntap/issues/52)
+
 ## [1.3.2](https://github.com/appium/appium-ios-tuntap/compare/v1.3.1...v1.3.2) (2026-08-24)
 
 ### Bug Fixes
