@@ -1,3 +1,9 @@
+## [2.0.1](https://github.com/appium/appium-ios-tuntap/compare/v2.0.0...v2.0.1) (2026-08-29)
+
+### Miscellaneous Chores
+
+* bump support ([#97](https://github.com/appium/appium-ios-tuntap/issues/97)) ([aab38a2](https://github.com/appium/appium-ios-tuntap/commit/aab38a20305b2e8af592622c99fcae498449a6ae))
+
 ## [2.0.0](https://github.com/appium/appium-ios-tuntap/compare/v1.3.2...v2.0.0) (2026-08-29)
 
 ### ⚠ BREAKING CHANGES
