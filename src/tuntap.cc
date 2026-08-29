@@ -8,10 +8,12 @@
 #include "native/tun_backend.h"
 #include "native/tunnel_forwarder.h"
 
+namespace {
+
 class TunDevice : public Napi::ObjectWrap<TunDevice> {
  public:
   static Napi::Object Init(Napi::Env env, Napi::Object exports);
-  TunDevice(const Napi::CallbackInfo& info);
+  explicit TunDevice(const Napi::CallbackInfo& info);
   ~TunDevice() override;
 
  private:
@@ -198,7 +200,15 @@ Napi::Value TunDevice::GetForwardingHandle(const Napi::CallbackInfo& info) {
       env, shared, [](Napi::Env, std::shared_ptr<TunPlatformBackend>* data) { delete data; });
 }
 
-namespace {
+void TunDevice::CloseInternal() {
+  if (is_open_) {
+    is_open_ = false;
+    if (backend_) {
+      backend_->CloseDevice();
+    }
+    interface_name_.clear();
+  }
+}
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   TunDevice::Init(env, exports);
@@ -213,13 +223,3 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
 // module-registration constructor in the same translation unit.
 // NOLINTNEXTLINE(misc-use-anonymous-namespace)
 NODE_API_MODULE(tuntap, Init)
-
-void TunDevice::CloseInternal() {
-  if (is_open_) {
-    is_open_ = false;
-    if (backend_) {
-      backend_->CloseDevice();
-    }
-    interface_name_.clear();
-  }
-}
