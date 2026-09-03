@@ -1,3 +1,9 @@
+## [2.0.2](https://github.com/appium/appium-ios-tuntap/compare/v2.0.1...v2.0.2) (2026-09-03)
+
+### Bug Fixes
+
+* parse Darwin netstat counters right-anchored so utun rows are not shifted ([#99](https://github.com/appium/appium-ios-tuntap/issues/99)) ([9009e02](https://github.com/appium/appium-ios-tuntap/commit/9009e020654cc8ed3b87e9f47b2614cdf4070f46))
+
 ## [2.0.1](https://github.com/appium/appium-ios-tuntap/compare/v2.0.0...v2.0.1) (2026-08-29)
 
 ### Miscellaneous Chores
