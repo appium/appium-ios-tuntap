@@ -32,14 +32,14 @@ export class DarwinTunTapPlatform implements TunTapPlatform {
       throw new TunTapError('Unexpected netstat output');
     }
 
-    const stats = lines[1].split(/\s+/);
+    const [ipkts, ierrs, ibytes, opkts, oerrs, obytes] = lines[1].trim().split(/\s+/).slice(-7, -1);
     return {
-      rxPackets: parseInt(stats[4], 10) || 0,
-      rxErrors: parseInt(stats[5], 10) || 0,
-      rxBytes: parseInt(stats[6], 10) || 0,
-      txPackets: parseInt(stats[7], 10) || 0,
-      txErrors: parseInt(stats[8], 10) || 0,
-      txBytes: parseInt(stats[9], 10) || 0,
+      rxPackets: parseInt(ipkts, 10) || 0,
+      rxErrors: parseInt(ierrs, 10) || 0,
+      rxBytes: parseInt(ibytes, 10) || 0,
+      txPackets: parseInt(opkts, 10) || 0,
+      txErrors: parseInt(oerrs, 10) || 0,
+      txBytes: parseInt(obytes, 10) || 0,
     };
   }
 }
