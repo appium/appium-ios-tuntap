@@ -120,8 +120,8 @@ jobs:
     - name: Install clang-tidy (macOS)
       if: ${{ contains(inputs.image, 'macos') && inputs.run-cpp-lint }}
       run: |
-        brew install llvm
-        echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+        brew install llvm@22
+        echo "$(brew --prefix llvm@22)/bin" >> "$GITHUB_PATH"
 
     - name: Install clang-tidy (Windows)
       if: ${{ contains(inputs.image, 'windows') && inputs.run-cpp-lint }}
