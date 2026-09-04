@@ -165,8 +165,12 @@ export class TunnelForwarder {
 async function handOffSocket(tcpSocket: Socket, start: (fd: number) => Promise<void>): Promise<void> {
   tcpSocket.pause();
   tcpSocket.removeAllListeners();
-  const connected = start(getSocketFd(tcpSocket));
-  destroySocket(tcpSocket);
+  let connected: Promise<void>;
+  try {
+    connected = start(getSocketFd(tcpSocket));
+  } finally {
+    destroySocket(tcpSocket);
+  }
   await connected;
 }
 
