@@ -1,3 +1,9 @@
+## [2.0.3](https://github.com/appium/appium-ios-tuntap/compare/v2.0.2...v2.0.3) (2026-09-04)
+
+### Bug Fixes
+
+* run the POSIX TLS connect off the JS thread ([#101](https://github.com/appium/appium-ios-tuntap/issues/101)) ([957f77a](https://github.com/appium/appium-ios-tuntap/commit/957f77a158d135c619d3223883ecb1bcb87736ae))
+
 ## [2.0.2](https://github.com/appium/appium-ios-tuntap/compare/v2.0.1...v2.0.2) (2026-09-03)
 
 ### Bug Fixes
