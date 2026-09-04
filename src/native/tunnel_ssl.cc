@@ -103,20 +103,6 @@ int DuplicateSocketFd(int tcp_fd, std::string& error) {
 }
 #endif
 
-// Takes an owned copy of the caller's socket so the JS side can drop the
-// original as soon as Connect returns.
-int AcquireOwnedFd(int tcp_fd, std::string& error) {
-#ifdef _WIN32
-  return DuplicateSocketFd(tcp_fd, error);
-#else
-  const int fd = dup(tcp_fd);
-  if (fd < 0) {
-    error = std::string("dup of TCP socket failed: ") + strerror(errno);
-  }
-  return fd;
-#endif
-}
-
 // ERR_reason_error_string returns null when the queue is empty, which is the
 // normal case for SSL_ERROR_SYSCALL (peer reset, EOF mid-handshake).
 std::string DescribeConnectFailure(int ssl_error) {
@@ -180,6 +166,28 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
 }
 
 }  // namespace
+
+// Takes an owned copy of the caller's socket so the JS side can drop the
+// original as soon as Connect returns.
+int AcquireOwnedFd(int tcp_fd, std::string& error) {
+#ifdef _WIN32
+  return DuplicateSocketFd(tcp_fd, error);
+#else
+  const int fd = dup(tcp_fd);
+  if (fd < 0) {
+    error = std::string("dup of TCP socket failed: ") + strerror(errno);
+  }
+  return fd;
+#endif
+}
+
+void ReleaseOwnedFd(int fd) {
+#ifdef _WIN32
+  closesocket(static_cast<SOCKET>(fd));
+#else
+  ::close(fd);
+#endif
+}
 
 TunnelSslClient::~TunnelSslClient() { Close(); }
 
@@ -376,11 +384,7 @@ void TunnelSslClient::Close() {
     ctx_ = nullptr;
   }
   if (owned_fd_ >= 0) {
-#ifdef _WIN32
-    closesocket(static_cast<SOCKET>(owned_fd_));
-#else
-    ::close(owned_fd_);
-#endif
+    ReleaseOwnedFd(owned_fd_);
     owned_fd_ = -1;
   }
   psk_key_.clear();

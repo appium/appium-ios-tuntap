@@ -10,6 +10,12 @@
 /** SSL_connect and CDTunnel handshake I/O deadline (milliseconds). */
 inline constexpr int kTunnelHandshakeTimeoutMs = 15000;
 
+/** Duplicates `tcp_fd` into a descriptor the caller owns; -1 and `error` on failure. */
+int AcquireOwnedFd(int tcp_fd, std::string& error);
+
+/** Closes a descriptor returned by AcquireOwnedFd. */
+void ReleaseOwnedFd(int fd);
+
 /** TLS client for lockdown (PEM cert) or Apple TV Remote Pairing (TLS-PSK). */
 class TunnelSslClient {
  public:
