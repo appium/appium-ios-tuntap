@@ -770,91 +770,58 @@ namespace {
 // which a blocked event loop could never deliver. Each worker keeps a
 // persistent ref to the wrap so the forwarder outlives the async work.
 
+// Runs a blocking TLS connect on the thread pool. `dial` yields a connected
+// socket that the worker closes afterwards: TunnelSslClient duplicates the fd
+// and owns the duplicate, so the original is ours to close either way.
+class ConnectWorker : public Napi::AsyncWorker {
+ public:
+  using Dial = std::function<bool(int& fd, std::string& error)>;
+  using Connect = std::function<bool(int fd, std::string& error)>;
+
+  ConnectWorker(Napi::Object receiver, Dial dial, Connect connect, Napi::Promise::Deferred deferred)
+      : Napi::AsyncWorker(receiver.Env()),
+        receiver_(Napi::Persistent(receiver)),
+        dial_(std::move(dial)),
+        connect_(std::move(connect)),
+        deferred_(deferred) {}
+
+ protected:
+  void Execute() override {
+    std::string error;
+    int fd = -1;
+    if (!dial_(fd, error)) {
+      SetError(error);
+      return;
+    }
+    const bool ok = connect_(fd, error);
+    ReleaseOwnedFd(fd);
+    if (!ok) {
+      SetError(error);
+    }
+  }
+
+  void OnOK() override { deferred_.Resolve(Env().Undefined()); }
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+ private:
+  Napi::ObjectReference receiver_;
+  Dial dial_;
+  Connect connect_;
+  Napi::Promise::Deferred deferred_;
+};
+
+ConnectWorker::Dial DialOwnedFd(int fd) {
+  return [fd](int& out_fd, std::string&) {
+    out_fd = fd;
+    return true;
+  };
+}
+
 #ifdef _WIN32
-class ConnectHostWorker : public Napi::AsyncWorker {
- public:
-  ConnectHostWorker(Napi::Object receiver, TunnelForwarder& forwarder, std::string host, uint16_t port,
-                    std::string cert_pem, std::string key_pem, Napi::Promise::Deferred deferred)
-      : Napi::AsyncWorker(receiver.Env()),
-        receiver_(Napi::Persistent(receiver)),
-        forwarder_(forwarder),
-        host_(std::move(host)),
-        port_(port),
-        cert_pem_(std::move(cert_pem)),
-        key_pem_(std::move(key_pem)),
-        deferred_(deferred) {}
-
- protected:
-  void Execute() override {
-    std::string error;
-    int fd = -1;
-    if (!ConnectRawTcp(host_, port_, fd, error)) {
-      SetError(error);
-      return;
-    }
-    const bool ok = forwarder_.Connect(fd, cert_pem_, key_pem_, error);
-    // TunnelSslClient duplicates the fd (WSADuplicateSocketW) and owns the
-    // duplicate, so the original is ours to close either way.
-    closesocket(static_cast<SOCKET>(fd));
-    if (!ok) {
-      SetError(error);
-    }
-  }
-
-  void OnOK() override { deferred_.Resolve(Env().Undefined()); }
-  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
-
- private:
-  Napi::ObjectReference receiver_;
-  TunnelForwarder& forwarder_;
-  std::string host_;
-  uint16_t port_;
-  std::string cert_pem_;
-  std::string key_pem_;
-  Napi::Promise::Deferred deferred_;
-};
-
-class ConnectPskHostWorker : public Napi::AsyncWorker {
- public:
-  ConnectPskHostWorker(Napi::Object receiver, TunnelForwarder& forwarder, std::string host, uint16_t port,
-                       std::vector<uint8_t> psk, std::string identity, Napi::Promise::Deferred deferred)
-      : Napi::AsyncWorker(receiver.Env()),
-        receiver_(Napi::Persistent(receiver)),
-        forwarder_(forwarder),
-        host_(std::move(host)),
-        port_(port),
-        psk_(std::move(psk)),
-        identity_(std::move(identity)),
-        deferred_(deferred) {}
-
- protected:
-  void Execute() override {
-    std::string error;
-    int fd = -1;
-    if (!ConnectRawTcp(host_, port_, fd, error)) {
-      SetError(error);
-      return;
-    }
-    const bool ok = forwarder_.ConnectPsk(fd, psk_.data(), psk_.size(), identity_, error);
-    closesocket(static_cast<SOCKET>(fd));
-    if (!ok) {
-      SetError(error);
-    }
-  }
-
-  void OnOK() override { deferred_.Resolve(Env().Undefined()); }
-  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
-
- private:
-  Napi::ObjectReference receiver_;
-  TunnelForwarder& forwarder_;
-  std::string host_;
-  uint16_t port_;
-  std::vector<uint8_t> psk_;
-  std::string identity_;
-  Napi::Promise::Deferred deferred_;
-};
-#endif  // _WIN32
+ConnectWorker::Dial DialHost(std::string host, uint16_t port) {
+  return [host = std::move(host), port](int& fd, std::string& error) { return ConnectRawTcp(host, port, fd, error); };
+}
+#endif
 
 class HandshakeWorker : public Napi::AsyncWorker {
  public:
@@ -949,6 +916,27 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
     }
   }
 
+  static Napi::Value QueueConnect(const Napi::CallbackInfo& info, ConnectWorker::Dial dial,
+                                  ConnectWorker::Connect connect) {
+    auto deferred = Napi::Promise::Deferred::New(info.Env());
+    auto* worker = new ConnectWorker(info.This().As<Napi::Object>(), std::move(dial), std::move(connect), deferred);
+    worker->Queue();
+    return deferred.Promise();
+  }
+
+  ConnectWorker::Connect LockdownConnect(std::string cert_pem, std::string key_pem) {
+    return [this, cert_pem = std::move(cert_pem), key_pem = std::move(key_pem)](int fd, std::string& error) {
+      return forwarder_.Connect(fd, cert_pem, key_pem, error);
+    };
+  }
+
+  // Takes the PSK by value: the JS buffer may be collected before the worker runs.
+  ConnectWorker::Connect PskConnect(std::vector<uint8_t> psk, std::string identity) {
+    return [this, psk = std::move(psk), identity = std::move(identity)](int fd, std::string& error) {
+      return forwarder_.ConnectPsk(fd, psk.data(), psk.size(), identity, error);
+    };
+  }
+
   Napi::Value Connect(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
     if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsString() || !info[2].IsString()) {
@@ -957,11 +945,14 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
     }
 
     std::string error;
-    if (!forwarder_.Connect(info[0].As<Napi::Number>().Int32Value(), info[1].As<Napi::String>().Utf8Value(),
-                            info[2].As<Napi::String>().Utf8Value(), error)) {
+    const int fd = AcquireOwnedFd(info[0].As<Napi::Number>().Int32Value(), error);
+    if (fd < 0) {
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-    return env.Undefined();
+    return QueueConnect(
+        info, DialOwnedFd(fd),
+        LockdownConnect(info[1].As<Napi::String>().Utf8Value(), info[2].As<Napi::String>().Utf8Value()));
   }
 
   // Only touches `forwarder_` inside the #ifdef _WIN32 branch below, so on
@@ -976,13 +967,11 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
     }
 
 #ifdef _WIN32
-    auto deferred = Napi::Promise::Deferred::New(env);
-    auto* worker =
-        new ConnectHostWorker(info.This().As<Napi::Object>(), forwarder_, info[0].As<Napi::String>().Utf8Value(),
-                              static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value()),
-                              info[2].As<Napi::String>().Utf8Value(), info[3].As<Napi::String>().Utf8Value(), deferred);
-    worker->Queue();
-    return deferred.Promise();
+    return QueueConnect(
+        info,
+        DialHost(info[0].As<Napi::String>().Utf8Value(),
+                 static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value())),
+        LockdownConnect(info[2].As<Napi::String>().Utf8Value(), info[3].As<Napi::String>().Utf8Value()));
 #else
     Napi::Error::New(env, "connectHost is only supported on Windows").ThrowAsJavaScriptException();
     return env.Undefined();
@@ -1003,10 +992,13 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
 
     auto psk = info[1].As<Napi::Buffer<uint8_t>>();
     std::string error;
-    if (!forwarder_.ConnectPsk(info[0].As<Napi::Number>().Int32Value(), psk.Data(), psk.Length(), identity, error)) {
+    const int fd = AcquireOwnedFd(info[0].As<Napi::Number>().Int32Value(), error);
+    if (fd < 0) {
       Napi::Error::New(env, error).ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-    return env.Undefined();
+    return QueueConnect(info, DialOwnedFd(fd),
+                        PskConnect(std::vector<uint8_t>(psk.Data(), psk.Data() + psk.Length()), std::move(identity)));
   }
 
   // Only touches `forwarder_` inside the #ifdef _WIN32 branch below; see the
@@ -1025,17 +1017,11 @@ class TunnelForwarderWrap : public Napi::ObjectWrap<TunnelForwarderWrap> {
     }
 
 #ifdef _WIN32
-    // Copy the PSK on the JS thread; the buffer may be collected before the
-    // worker runs.
     auto psk = info[2].As<Napi::Buffer<uint8_t>>();
-    std::vector<uint8_t> psk_copy(psk.Data(), psk.Data() + psk.Length());
-    auto deferred = Napi::Promise::Deferred::New(env);
-    auto* worker =
-        new ConnectPskHostWorker(info.This().As<Napi::Object>(), forwarder_, info[0].As<Napi::String>().Utf8Value(),
-                                 static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value()), std::move(psk_copy),
-                                 std::move(identity), deferred);
-    worker->Queue();
-    return deferred.Promise();
+    return QueueConnect(info,
+                        DialHost(info[0].As<Napi::String>().Utf8Value(),
+                                 static_cast<uint16_t>(info[1].As<Napi::Number>().Uint32Value())),
+                        PskConnect(std::vector<uint8_t>(psk.Data(), psk.Data() + psk.Length()), std::move(identity)));
 #else
     Napi::Error::New(env, "connectPskHost is only supported on Windows").ThrowAsJavaScriptException();
     return env.Undefined();

@@ -23,9 +23,9 @@ export interface TunnelPskTlsCredentials {
 }
 
 interface NativeTunnelForwarder {
-  connect(tcpFd: number, certPem: string, keyPem: string): void;
+  connect(tcpFd: number, certPem: string, keyPem: string): Promise<void>;
   connectHost(host: string, port: number, certPem: string, keyPem: string): Promise<void>;
-  connectPsk(tcpFd: number, psk: Buffer, identity?: string): void;
+  connectPsk(tcpFd: number, psk: Buffer, identity?: string): Promise<void>;
   connectPskHost(host: string, port: number, psk: Buffer, identity?: string): Promise<void>;
   handshake(requestedMtu: number): Promise<TunnelInfo>;
   startForwarding(tunForwardingHandle: unknown, onError?: (message: string) => void): void;
@@ -45,32 +45,26 @@ export class TunnelForwarder {
   private loopbackBridge: Server | null = null;
 
   async connect(tcpSocket: Socket, credentials: TunnelLockdownTlsCredentials): Promise<void> {
-    this.forwarder = new nativeTuntap.TunnelForwarder();
+    const forwarder = new nativeTuntap.TunnelForwarder();
+    this.forwarder = forwarder;
 
     if (process.platform === 'win32') {
       const {host, port} = await this.bridgeToNative(tcpSocket);
       await this.forwarder.connectHost(host, port, credentials.cert, credentials.key);
     } else {
-      tcpSocket.pause();
-      tcpSocket.removeAllListeners();
-      this.forwarder.connect(getSocketFd(tcpSocket), credentials.cert, credentials.key);
-      // Native holds its own dup() of the fd, so drop the JS socket.
-      destroySocket(tcpSocket);
+      await handOffSocket(tcpSocket, (fd) => forwarder.connect(fd, credentials.cert, credentials.key));
     }
   }
 
   async connectPsk(tcpSocket: Socket, credentials: TunnelPskTlsCredentials): Promise<void> {
-    this.forwarder = new nativeTuntap.TunnelForwarder();
+    const forwarder = new nativeTuntap.TunnelForwarder();
+    this.forwarder = forwarder;
 
     if (process.platform === 'win32') {
       const {host, port} = await this.bridgeToNative(tcpSocket);
       await this.forwarder.connectPskHost(host, port, credentials.psk, credentials.identity ?? '');
     } else {
-      tcpSocket.pause();
-      tcpSocket.removeAllListeners();
-      this.forwarder.connectPsk(getSocketFd(tcpSocket), credentials.psk, credentials.identity ?? '');
-      // Native holds its own dup() of the fd, so drop the JS socket.
-      destroySocket(tcpSocket);
+      await handOffSocket(tcpSocket, (fd) => forwarder.connectPsk(fd, credentials.psk, credentials.identity ?? ''));
     }
   }
 
@@ -162,6 +156,18 @@ export class TunnelForwarder {
       });
     });
   }
+}
+
+/**
+ * POSIX handoff. Native dup()s the fd inside `start` before returning; the JS socket is destroyed
+ * before the handshake is awaited because a paused socket keeps its handle reading.
+ */
+async function handOffSocket(tcpSocket: Socket, start: (fd: number) => Promise<void>): Promise<void> {
+  tcpSocket.pause();
+  tcpSocket.removeAllListeners();
+  const connected = start(getSocketFd(tcpSocket));
+  destroySocket(tcpSocket);
+  await connected;
 }
 
 function getSocketFd(socket: Socket): number {
