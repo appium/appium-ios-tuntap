@@ -1,3 +1,9 @@
+## [2.0.4](https://github.com/appium/appium-ios-tuntap/compare/v2.0.3...v2.0.4) (2026-09-05)
+
+### Bug Fixes
+
+* destroy the socket when the native connect throws synchronously ([#102](https://github.com/appium/appium-ios-tuntap/issues/102)) ([a19ee6e](https://github.com/appium/appium-ios-tuntap/commit/a19ee6eeae5d159a3a15a062dfefa992610e037c))
+
 ## [2.0.3](https://github.com/appium/appium-ios-tuntap/compare/v2.0.2...v2.0.3) (2026-09-04)
 
 ### Bug Fixes
