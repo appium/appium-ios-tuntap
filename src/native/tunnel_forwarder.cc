@@ -384,16 +384,19 @@ void TunnelForwarder::Fail(const std::string& reason) {
 
 bool TunnelForwarder::Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem, std::string& error) {
   Stop();
+  std::scoped_lock op_lock(session_op_mutex_);
   return ssl_.Connect(tcp_fd, cert_pem, key_pem, kTunnelHandshakeTimeoutMs, error);
 }
 
 bool TunnelForwarder::ConnectPsk(int tcp_fd, const uint8_t* psk, size_t psk_len, const std::string& identity,
                                  std::string& error) {
   Stop();
+  std::scoped_lock op_lock(session_op_mutex_);
   return ssl_.ConnectPsk(tcp_fd, psk, psk_len, identity, kTunnelHandshakeTimeoutMs, error);
 }
 
 bool TunnelForwarder::Handshake(uint32_t requested_mtu, TunnelHandshakeInfo& info, std::string& error) {
+  std::scoped_lock op_lock(session_op_mutex_);
   SSL* ssl = ssl_.ssl();
   if (ssl == nullptr) {
     error = "TLS session is not connected";
@@ -482,6 +485,8 @@ bool TunnelForwarder::StartForwarding(std::shared_ptr<TunPlatformBackend> tun_ba
 void TunnelForwarder::Stop() {
   running_.store(false);
 
+  std::scoped_lock op_lock(session_op_mutex_);
+
   {
     std::scoped_lock lock(ssl_mutex_);
     if (ssl_.ssl() != nullptr) {
@@ -501,7 +506,10 @@ void TunnelForwarder::Stop() {
     on_error_ = nullptr;
   }
 
-  ssl_.Close();
+  {
+    std::scoped_lock lock(ssl_mutex_);
+    ssl_.Close();
+  }
   // Reset only after joining both threads: drops this forwarder's strong ref.
   tun_backend_.reset();
 }
@@ -532,6 +540,7 @@ ssize_t TunnelForwarder::SslReadChunk(uint8_t* buf, size_t max_len, bool only_wh
       if (ssl == nullptr) {
         return -1;
       }
+      ERR_clear_error();
       n = SSL_read(ssl, buf, static_cast<int>(max_len));
       if (n > 0) {
         return n;
@@ -591,6 +600,7 @@ ssize_t TunnelForwarder::SslWriteAll(const uint8_t* data, size_t len, bool only_
       if (ssl == nullptr) {
         return -1;
       }
+      ERR_clear_error();
       n = SSL_write(ssl, data + sent, static_cast<int>(len - sent));
       if (n > 0) {
         sent += static_cast<size_t>(n);

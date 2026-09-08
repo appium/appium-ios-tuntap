@@ -7,6 +7,8 @@
 #include <fcntl.h>
 #include <poll.h>
 
+#include <mutex>
+#include <shared_mutex>
 #include <string>
 
 #include "file_descriptor.h"
@@ -32,13 +34,20 @@ inline bool SetNonBlocking(int fd, std::string& error) {
 class PosixTunBackend : public TunPlatformBackend {
  public:
   void CloseDevice() override {
+    std::unique_lock lock(fd_mutex_);
     fd_.reset();
     interface_name_.clear();
   }
 
-  [[nodiscard]] bool IsOpen() const override { return fd_.is_valid(); }
+  [[nodiscard]] bool IsOpen() const override {
+    std::shared_lock lock(fd_mutex_);
+    return fd_.is_valid();
+  }
 
-  [[nodiscard]] int GetNativeFd() const override { return fd_.get(); }
+  [[nodiscard]] int GetNativeFd() const override {
+    std::shared_lock lock(fd_mutex_);
+    return fd_.get();
+  }
 
   bool WaitReadable(const std::atomic<bool>& running, std::string& error) override {
     return WaitForEvents(POLLIN, running, error);
@@ -51,19 +60,21 @@ class PosixTunBackend : public TunPlatformBackend {
  protected:
   FileDescriptor fd_;
   std::string interface_name_;
+  mutable std::shared_mutex fd_mutex_;
 
  private:
   bool WaitForEvents(short events, const std::atomic<bool>& running, std::string& error) {
-    if (!fd_.is_valid()) {
-      error = "Device not open";
-      return false;
-    }
-
-    struct pollfd pfd {};
-    pfd.fd = fd_.get();
-    pfd.events = events;
-
     while (running.load()) {
+      std::shared_lock lock(fd_mutex_);
+      if (!fd_.is_valid()) {
+        error = "Device not open";
+        return false;
+      }
+
+      struct pollfd pfd {};
+      pfd.fd = fd_.get();
+      pfd.events = events;
+
       const int rc = poll(&pfd, 1, 200);
       if (rc > 0) {
         if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {

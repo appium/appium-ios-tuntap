@@ -64,6 +64,7 @@ class TunnelForwarder {
   void Fail(const std::string& reason);
 
   TunnelSslClient ssl_;
+  std::mutex session_op_mutex_;
   std::mutex ssl_mutex_;
   std::mutex error_mutex_;
   ForwarderErrorCallback on_error_;
