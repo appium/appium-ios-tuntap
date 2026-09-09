@@ -1,3 +1,9 @@
+## [2.0.5](https://github.com/appium/appium-ios-tuntap/compare/v2.0.4...v2.0.5) (2026-09-09)
+
+### Bug Fixes
+
+* serialize tunnel teardown against in-flight workers and device close ([#104](https://github.com/appium/appium-ios-tuntap/issues/104)) ([e87faef](https://github.com/appium/appium-ios-tuntap/commit/e87faef56793c4b0e52fc748fd5a53237777a86d))
+
 ## [2.0.4](https://github.com/appium/appium-ios-tuntap/compare/v2.0.3...v2.0.4) (2026-09-05)
 
 ### Bug Fixes
