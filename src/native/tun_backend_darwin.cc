@@ -15,6 +15,7 @@
 #include <netinet6/in6_var.h>
 
 #include <array>
+#include <shared_mutex>
 #include <utility>
 
 #include "file_descriptor.h"
@@ -82,6 +83,7 @@ class DarwinTunBackend : public PosixTunBackend {
   }
 
   ReadPacketStatus ReadPacket(size_t max_payload_size, std::vector<uint8_t>& out, std::string& error) override {
+    std::shared_lock lock(fd_mutex_);
     if (!fd_.is_valid()) {
       error = "Device not open";
       return ReadPacketStatus::Error;
@@ -116,6 +118,7 @@ class DarwinTunBackend : public PosixTunBackend {
   }
 
   ssize_t WritePacket(const uint8_t* data, size_t length, std::string& error) override {
+    std::shared_lock lock(fd_mutex_);
     if (!fd_.is_valid()) {
       error = "Device not open";
       return -1;

@@ -224,6 +224,7 @@ bool TunnelSslClient::ConnectTls(int timeout_ms, std::string& error) {
   const auto connect_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
 
   for (;;) {
+    ERR_clear_error();
     const int rc = SSL_connect(ssl_);
     if (rc == 1) {
       return true;
