@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cerrno>
 #include <cstring>
+#include <memory>
 
 #include <openssl/bio.h>
 #include <openssl/err.h>
@@ -64,6 +65,36 @@ bool LoadPem(SSL_CTX* ctx, const std::string& pem, bool is_cert, std::string& er
     return false;
   }
   EVP_PKEY_free(key);
+  return true;
+}
+
+using X509Ptr = std::unique_ptr<X509, decltype(&X509_free)>;
+
+X509Ptr ReadCertPem(const std::string& pem) {
+  BIO* bio = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
+  X509* cert = bio == nullptr ? nullptr : PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+  BIO_free(bio);
+  return X509Ptr(cert, X509_free);
+}
+
+X509Ptr GetPeerCert(SSL* ssl) {
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  return X509Ptr(SSL_get1_peer_certificate(ssl), X509_free);
+#else
+  return X509Ptr(SSL_get_peer_certificate(ssl), X509_free);
+#endif
+}
+
+bool VerifyPinnedPeer(SSL* ssl, X509* expected, std::string& error) {
+  const X509Ptr peer = GetPeerCert(ssl);
+  if (peer == nullptr) {
+    error = "Device presented no TLS certificate";
+    return false;
+  }
+  if (X509_cmp(peer.get(), expected) != 0) {
+    error = "Device TLS certificate does not match the pair record";
+    return false;
+  }
   return true;
 }
 
@@ -249,8 +280,8 @@ bool TunnelSslClient::ConnectTls(int timeout_ms, std::string& error) {
   }
 }
 
-bool TunnelSslClient::Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem, int timeout_ms,
-                              std::string& error) {
+bool TunnelSslClient::Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem,
+                              const std::string& device_cert_pem, int timeout_ms, std::string& error) {
   Close();
   if (tcp_fd < 0) {
     error = "Invalid TCP file descriptor";
@@ -293,6 +324,12 @@ bool TunnelSslClient::Connect(int tcp_fd, const std::string& cert_pem, const std
     Close();
     return false;
   }
+  const X509Ptr device_cert = ReadCertPem(device_cert_pem);
+  if (device_cert == nullptr) {
+    error = "Failed to load device certificate PEM";
+    Close();
+    return false;
+  }
 
   ssl_ = SSL_new(ctx_);
   if (ssl_ == nullptr) {
@@ -302,7 +339,7 @@ bool TunnelSslClient::Connect(int tcp_fd, const std::string& cert_pem, const std
   }
 
   SSL_set_fd(ssl_, owned_fd_);
-  if (!ConnectTls(timeout_ms, error)) {
+  if (!ConnectTls(timeout_ms, error) || !VerifyPinnedPeer(ssl_, device_cert.get(), error)) {
     Close();
     return false;
   }

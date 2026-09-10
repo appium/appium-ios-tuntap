@@ -42,7 +42,8 @@ class TunnelForwarder {
   TunnelForwarder(const TunnelForwarder&) = delete;
   TunnelForwarder& operator=(const TunnelForwarder&) = delete;
 
-  bool Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem, std::string& error);
+  bool Connect(int tcp_fd, const std::string& cert_pem, const std::string& key_pem, const std::string& device_cert_pem,
+               std::string& error);
 
   bool ConnectPsk(int tcp_fd, const uint8_t* psk, size_t psk_len, const std::string& identity, std::string& error);
 
