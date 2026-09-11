@@ -119,13 +119,14 @@ export class TunTap {
         }
       } catch (err: unknown) {
         const message = (err as Error).message ?? '';
-        if (message.includes('Permission denied') || message.includes('sudo')) {
+        if (
+          message.includes('Permission denied') ||
+          message.includes('Operation not permitted') ||
+          message.includes('sudo')
+        ) {
           throw new TunTapPermissionError(message);
         }
-        if (message.includes('not available') || message.includes('does not exist')) {
-          throw new TunTapDeviceError(message);
-        }
-        throw err;
+        throw new TunTapDeviceError(message);
       }
     }
     return this._isOpen;
