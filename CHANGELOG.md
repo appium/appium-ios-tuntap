@@ -1,3 +1,9 @@
+## [2.0.6](https://github.com/appium/appium-ios-tuntap/compare/v2.0.5...v2.0.6) (2026-09-11)
+
+### Bug Fixes
+
+* map "Operation not permitted" in open() to TunTapPermissionError ([#105](https://github.com/appium/appium-ios-tuntap/issues/105)) ([f6f7974](https://github.com/appium/appium-ios-tuntap/commit/f6f79744a623b2a80b9c588f56983e1a29014805))
+
 ## [2.0.5](https://github.com/appium/appium-ios-tuntap/compare/v2.0.4...v2.0.5) (2026-09-09)
 
 ### Bug Fixes
