@@ -124,9 +124,9 @@ export class TunTap {
           message.includes('Operation not permitted') ||
           message.includes('sudo')
         ) {
-          throw new TunTapPermissionError(message);
+          throw new TunTapPermissionError(message, {cause: err});
         }
-        throw new TunTapDeviceError(message);
+        throw new TunTapDeviceError(message, {cause: err});
       }
     }
     return this._isOpen;

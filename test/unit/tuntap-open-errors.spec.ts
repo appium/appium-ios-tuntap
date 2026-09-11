@@ -10,7 +10,15 @@ const skipReason = getSkipReason(hasRequiredPrivileges);
 describe('TunTap open() error mapping', {timeout: 10000}, () => {
   it('should throw TunTapPermissionError when opened without root', {skip: skipReason}, () => {
     const tun = new TunTap();
-    assert.throws(() => tun.open(), TunTapPermissionError);
+    assert.throws(
+      () => tun.open(),
+      (err: unknown) => {
+        assert.ok(err instanceof TunTapPermissionError);
+        assert.ok(err.cause instanceof Error);
+        assert.strictEqual(err.cause.message, err.message);
+        return true;
+      },
+    );
   });
 });
 

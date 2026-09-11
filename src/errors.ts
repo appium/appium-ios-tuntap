@@ -5,12 +5,14 @@ export class TunTapError extends Error {
   /**
    * @param message — human-readable description
    * @param code — optional machine-readable code (e.g. `EPERM`)
+   * @param options — optional `cause` carrying the original error
    */
   constructor(
     message: string,
     public code?: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -18,9 +20,12 @@ export class TunTapError extends Error {
 export class TunTapPermissionError extends TunTapError {
   public override name = 'TunTapPermissionError';
 
-  /** @param message — description including hint to run with appropriate privileges */
-  constructor(message: string) {
-    super(message, 'EPERM');
+  /**
+   * @param message — description including hint to run with appropriate privileges
+   * @param options — optional `cause` carrying the original error
+   */
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'EPERM', options);
   }
 }
 
@@ -28,8 +33,11 @@ export class TunTapPermissionError extends TunTapError {
 export class TunTapDeviceError extends TunTapError {
   public override name = 'TunTapDeviceError';
 
-  /** @param message — description from the native layer or OS */
-  constructor(message: string) {
-    super(message, 'ENODEV');
+  /**
+   * @param message — description from the native layer or OS
+   * @param options — optional `cause` carrying the original error
+   */
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'ENODEV', options);
   }
 }
