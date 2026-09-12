@@ -111,7 +111,7 @@ describe('TunTap Integration Tests', {timeout: 15000}, () => {
     const activeTun = tun;
     activeTun.open();
     await assert.rejects(() => activeTun.configure('not-an-ip', 1500), /Invalid IPv6 address/);
-    await assert.rejects(() => activeTun.configure('fd00::1', 50), /MTU must be between/);
+    await assert.rejects(() => activeTun.configure('fd00::1', 50), /MTU must be an integer between/);
     activeTun.close();
   });
 

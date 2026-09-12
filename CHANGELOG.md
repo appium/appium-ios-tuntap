@@ -1,3 +1,9 @@
+## [2.0.7](https://github.com/appium/appium-ios-tuntap/compare/v2.0.6...v2.0.7) (2026-09-12)
+
+### Bug Fixes
+
+* reject NaN and non-integer MTU in configure() ([#107](https://github.com/appium/appium-ios-tuntap/issues/107)) ([eef4666](https://github.com/appium/appium-ios-tuntap/commit/eef4666ec0fe8cb39787f6f82de55d1cbd9ebb69))
+
 ## [2.0.6](https://github.com/appium/appium-ios-tuntap/compare/v2.0.5...v2.0.6) (2026-09-11)
 
 ### Bug Fixes
