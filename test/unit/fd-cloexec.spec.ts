@@ -71,14 +71,18 @@ describe('fd close-on-exec', {skip: LINUX_ONLY, timeout: 20000}, () => {
     tun = forwarder = socket = peer = undefined;
   });
 
-  it('a child spawned while the device is open does not inherit the TUN fd', {skip: skipWithoutPrivileges}, async () => {
-    tun = new TunTap();
-    assert.ok(tun.open());
-    assert.ok(ownFdTargets().includes(TUN_DEVICE_PATH), 'parent should hold the TUN device');
+  it(
+    'a child spawned while the device is open does not inherit the TUN fd',
+    {skip: skipWithoutPrivileges},
+    async () => {
+      tun = new TunTap();
+      assert.ok(tun.open());
+      assert.ok(ownFdTargets().includes(TUN_DEVICE_PATH), 'parent should hold the TUN device');
 
-    const inherited = await childFdTargets();
-    assert.ok(!inherited.includes(TUN_DEVICE_PATH), `child inherited the TUN fd: ${inherited.join(', ')}`);
-  });
+      const inherited = await childFdTargets();
+      assert.ok(!inherited.includes(TUN_DEVICE_PATH), `child inherited the TUN fd: ${inherited.join(', ')}`);
+    },
+  );
 
   it('a child spawned while the TLS session is up does not inherit the duplicated socket', async () => {
     const started = await startStallingPeer();
