@@ -1,3 +1,9 @@
+## [2.0.8](https://github.com/appium/appium-ios-tuntap/compare/v2.0.7...v2.0.8) (2026-09-13)
+
+### Miscellaneous Chores
+
+* **release:** remove shrinkwrap step from publish workflow ([#109](https://github.com/appium/appium-ios-tuntap/issues/109)) ([83e065b](https://github.com/appium/appium-ios-tuntap/commit/83e065b236391887313ce4716042b93bc1d8e03a))
+
 ## [2.0.7](https://github.com/appium/appium-ios-tuntap/compare/v2.0.6...v2.0.7) (2026-09-12)
 
 ### Bug Fixes
