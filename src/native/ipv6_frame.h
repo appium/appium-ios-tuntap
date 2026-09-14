@@ -9,8 +9,11 @@ namespace ipv6_frame {
 constexpr size_t kHeaderSize = 40;
 constexpr uint8_t kVersion = 6;
 
-/** Returns complete frame length, or 0 if buffer does not yet hold a full frame. */
-inline size_t FrameLength(const uint8_t* data, size_t len) {
+/**
+ * Returns complete frame length, 0 if incomplete, or 1 (resync one byte) when the header is not
+ * IPv6 or claims more than `max_frame` bytes.
+ */
+inline size_t FrameLength(const uint8_t* data, size_t len, size_t max_frame) {
   if (len < kHeaderSize) {
     return 0;
   }
@@ -19,21 +22,32 @@ inline size_t FrameLength(const uint8_t* data, size_t len) {
   }
   const size_t payload = (static_cast<size_t>(data[4]) << 8) | data[5];
   const size_t total = kHeaderSize + payload;
+  if (total > max_frame) {
+    return 1;
+  }
   if (len < total) {
     return 0;
   }
   return total;
 }
 
-/** Append bytes and extract every complete IPv6 frame into `out`. */
-inline void DrainFrames(std::vector<uint8_t>& buffer, std::vector<std::vector<uint8_t>>& out) {
+/**
+ * Extract every complete IPv6 frame of at most `max_frame` bytes into `out`; returns how many
+ * oversize claims were skipped.
+ */
+inline size_t DrainFrames(std::vector<uint8_t>& buffer, std::vector<std::vector<uint8_t>>& out, size_t max_frame) {
   size_t offset = 0;
+  size_t oversize = 0;
   while (offset < buffer.size()) {
-    const size_t frame_len = FrameLength(buffer.data() + offset, buffer.size() - offset);
+    const uint8_t* cursor = buffer.data() + offset;
+    const size_t frame_len = FrameLength(cursor, buffer.size() - offset, max_frame);
     if (frame_len == 0) {
       break;
     }
     if (frame_len == 1) {
+      if (((cursor[0] >> 4) & 0x0f) == kVersion) {
+        ++oversize;
+      }
       offset += 1;
       continue;
     }
@@ -44,6 +58,7 @@ inline void DrainFrames(std::vector<uint8_t>& buffer, std::vector<std::vector<ui
   if (offset > 0) {
     buffer.erase(buffer.begin(), buffer.begin() + static_cast<ptrdiff_t>(offset));
   }
+  return oversize;
 }
 
 }  // namespace ipv6_frame

@@ -4,10 +4,12 @@ import {describe, it} from 'node:test';
 
 import {IPV6_HEADER_SIZE, IPV6_VERSION} from '../../../src/tunnel/constants.js';
 
+const MTU = 1280;
+
 /**
  * Mirror of native ipv6_frame::FrameLength for unit tests.
  */
-function frameLength(buffer: Buffer): number {
+function frameLength(buffer: Buffer, maxFrame: number): number {
   if (buffer.length < IPV6_HEADER_SIZE) {
     return 0;
   }
@@ -16,6 +18,9 @@ function frameLength(buffer: Buffer): number {
   }
   const payloadLength = buffer.readUInt16BE(4);
   const total = IPV6_HEADER_SIZE + payloadLength;
+  if (total > maxFrame) {
+    return 1;
+  }
   if (buffer.length < total) {
     return 0;
   }
@@ -24,19 +29,26 @@ function frameLength(buffer: Buffer): number {
 
 describe('IPv6 frame length', () => {
   it('returns 0 when buffer is shorter than header', () => {
-    assert.strictEqual(frameLength(Buffer.alloc(20)), 0);
+    assert.strictEqual(frameLength(Buffer.alloc(20), MTU), 0);
   });
 
   it('returns full frame length for a complete packet', () => {
     const packet = Buffer.alloc(1280);
     packet[0] = 0x60;
     packet.writeUInt16BE(1240, 4);
-    assert.strictEqual(frameLength(packet), 1280);
+    assert.strictEqual(frameLength(packet, MTU), 1280);
   });
 
   it('returns 1 for resync on non-IPv6 version nibble', () => {
     const packet = Buffer.alloc(1280);
     packet[0] = 0x40;
-    assert.strictEqual(frameLength(packet), 1);
+    assert.strictEqual(frameLength(packet, MTU), 1);
+  });
+
+  it('returns 1 for resync when the claimed length exceeds the MTU', () => {
+    const packet = Buffer.alloc(1280);
+    packet[0] = 0x60;
+    packet.writeUInt16BE(0xffff, 4);
+    assert.strictEqual(frameLength(packet, MTU), 1);
   });
 });
