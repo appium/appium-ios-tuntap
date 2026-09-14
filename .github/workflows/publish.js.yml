@@ -39,15 +39,6 @@ jobs:
         find prebuilds -type f -name '*.node' | sort
     - run: npm install --no-package-lock
       name: Install dependencies
-    - run: |
-        rm -rf node_modules package-lock.json
-        npm prune --omit=dev --omit=peer --no-package-lock
-      name: Remove dev dependencies and appium peer dependencies
-    - run: npm shrinkwrap --omit=dev --omit=peer
-      name: Create shrinkwrap
-      # "--no-package-lock" prevent adding dev dependencies in the shrinkwrap
-    - run: npm install --only=dev --no-package-lock
-      name: Install dev dependencies for the release
 
     - run: npx semantic-release
       env:
