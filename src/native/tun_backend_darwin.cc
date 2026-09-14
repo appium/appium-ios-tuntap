@@ -4,6 +4,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/kern_control.h>
 #include <sys/socket.h>
@@ -36,6 +37,10 @@ class DarwinTunBackend : public PosixTunBackend {
     FileDescriptor temp_fd(socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL));
     if (!temp_fd.is_valid()) {
       error = std::string("Failed to create control socket: ") + strerror(errno);
+      return false;
+    }
+    if (fcntl(temp_fd.get(), F_SETFD, FD_CLOEXEC) < 0) {
+      error = std::string("Failed to set close-on-exec on control socket: ") + strerror(errno);
       return false;
     }
 

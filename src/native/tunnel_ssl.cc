@@ -173,7 +173,7 @@ int AcquireOwnedFd(int tcp_fd, std::string& error) {
 #ifdef _WIN32
   return DuplicateSocketFd(tcp_fd, error);
 #else
-  const int fd = dup(tcp_fd);
+  const int fd = fcntl(tcp_fd, F_DUPFD_CLOEXEC, 0);
   if (fd < 0) {
     error = std::string("dup of TCP socket failed: ") + strerror(errno);
   }

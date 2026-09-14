@@ -33,7 +33,7 @@ class LinuxTunBackend : public PosixTunBackend {
       return false;
     }
 
-    FileDescriptor temp_fd(open(kTunDevicePath, O_RDWR));
+    FileDescriptor temp_fd(open(kTunDevicePath, O_RDWR | O_CLOEXEC));
     if (!temp_fd.is_valid()) {
       error = std::string("Failed to open ") + kTunDevicePath + ": " + strerror(errno) +
               ". This usually means you don't have sufficient permissions. "
