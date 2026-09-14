@@ -1,3 +1,9 @@
+## [2.0.9](https://github.com/appium/appium-ios-tuntap/compare/v2.0.8...v2.0.9) (2026-09-14)
+
+### Bug Fixes
+
+* set close-on-exec on the TUN fd and the owned TLS socket ([#108](https://github.com/appium/appium-ios-tuntap/issues/108)) ([fbc8209](https://github.com/appium/appium-ios-tuntap/commit/fbc8209f3c72f04d1d4e179187ce32f8e15c316f))
+
 ## [2.0.8](https://github.com/appium/appium-ios-tuntap/compare/v2.0.7...v2.0.8) (2026-09-13)
 
 ### Miscellaneous Chores
