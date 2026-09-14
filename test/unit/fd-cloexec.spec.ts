@@ -2,8 +2,9 @@ import assert from 'node:assert';
 import {Buffer} from 'node:buffer';
 import {execFile, spawn, type ChildProcess} from 'node:child_process';
 import {once} from 'node:events';
-import {readdirSync, readlinkSync} from 'node:fs';
+import {readdir, readlink} from 'node:fs/promises';
 import {connect, type Socket} from 'node:net';
+import path from 'node:path';
 import {afterEach, describe, it} from 'node:test';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
@@ -24,18 +25,15 @@ const PSK_IDENTITY = 'Client_identity';
 const PEER_RESET_MS = 5000;
 const PEER_SCRIPT = fileURLToPath(new URL('../fixtures/tunnel-peer.js', import.meta.url));
 const TUN_DEVICE_PATH = '/dev/net/tun';
+const PROC_SELF_FD = '/proc/self/fd';
 const SOCKET_TARGET = /^socket:\[\d+\]$/;
 const execFileAsync = promisify(execFile);
 
-/** Link targets of every fd this process holds open; skips the listing's own dir fd. */
-function ownFdTargets(): string[] {
-  return readdirSync('/proc/self/fd').flatMap((fd) => {
-    try {
-      return [readlinkSync(`/proc/self/fd/${fd}`)];
-    } catch {
-      return [];
-    }
-  });
+/** Link targets of every fd this process holds open; skips entries gone by the time they are read. */
+async function ownFdTargets(): Promise<string[]> {
+  const entries = await readdir(PROC_SELF_FD);
+  const targets = await Promise.all(entries.map((fd) => readlink(path.join(PROC_SELF_FD, fd)).catch(() => undefined)));
+  return targets.filter((target): target is string => target !== undefined);
 }
 
 /** Link targets of every fd a freshly spawned child holds open. */
@@ -77,7 +75,7 @@ describe('fd close-on-exec', {skip: LINUX_ONLY, timeout: 20000}, () => {
     async () => {
       tun = new TunTap();
       assert.ok(tun.open());
-      assert.ok(ownFdTargets().includes(TUN_DEVICE_PATH), 'parent should hold the TUN device');
+      assert.ok((await ownFdTargets()).includes(TUN_DEVICE_PATH), 'parent should hold the TUN device');
 
       const inherited = await childFdTargets();
       assert.ok(!inherited.includes(TUN_DEVICE_PATH), `child inherited the TUN fd: ${inherited.join(', ')}`);
@@ -91,7 +89,7 @@ describe('fd close-on-exec', {skip: LINUX_ONLY, timeout: 20000}, () => {
     await once(socket, 'connect');
     forwarder = new TunnelForwarder();
     await forwarder.connectPsk(socket, {psk: PSK, identity: PSK_IDENTITY});
-    const ownSockets = ownFdTargets().filter((target) => SOCKET_TARGET.test(target));
+    const ownSockets = (await ownFdTargets()).filter((target) => SOCKET_TARGET.test(target));
 
     const inherited = (await childFdTargets()).filter((target) => ownSockets.includes(target));
     assert.deepStrictEqual(inherited, [], 'child inherited the duplicated TLS socket');
