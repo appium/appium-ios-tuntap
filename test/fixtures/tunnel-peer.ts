@@ -5,7 +5,7 @@ import tls from 'node:tls';
 /**
  * TLS-PSK (or silent TCP) peer for the TunnelForwarder specs. Runs in a child
  * process; PEER_MODE picks the behavior, PEER_RESET_MS the delay before a reset,
- * PEER_UDP_PORT the frame destination for the frame-sending modes. Prints the port.
+ * PEER_UDP_PORT the in-tunnel port the frame-sending modes answer on. Prints the port.
  */
 
 const mode = process.env.PEER_MODE;
@@ -16,6 +16,10 @@ const IPV6_HEADER_SIZE = 40;
 const UDP_HEADER_SIZE = 8;
 const UDP_PROTOCOL = 17;
 const FRAME_RESEND_MS = 250;
+const SERVER_ADDRESS = 'fd00::1';
+// Not used by any other spec: spec files run in parallel, and Windows refuses
+// to put one IPv6 address on two adapters.
+const CLIENT_ADDRESS = 'fd00::12';
 
 /** Expands an IPv6 address with at most one `::` into its 16 bytes. */
 function ipv6Bytes(address: string): Buffer {
@@ -41,18 +45,22 @@ function internetChecksum(data: Buffer): number {
 }
 
 /** Builds a checksummed IPv6/UDP packet carrying `payload`. */
-function ipv6UdpFrame(source: string, destination: string, destinationPort: number, payload: Buffer): Buffer {
-  const src = ipv6Bytes(source);
-  const dst = ipv6Bytes(destination);
+function ipv6UdpFrame(
+  source: Buffer,
+  destination: Buffer,
+  sourcePort: number,
+  destinationPort: number,
+  payload: Buffer,
+): Buffer {
   const udpLength = UDP_HEADER_SIZE + payload.length;
   const udp = Buffer.alloc(udpLength);
-  udp.writeUInt16BE(destinationPort, 0);
+  udp.writeUInt16BE(sourcePort, 0);
   udp.writeUInt16BE(destinationPort, 2);
   udp.writeUInt16BE(udpLength, 4);
   payload.copy(udp, UDP_HEADER_SIZE);
   const pseudoHeader = Buffer.alloc(40);
-  src.copy(pseudoHeader, 0);
-  dst.copy(pseudoHeader, 16);
+  source.copy(pseudoHeader, 0);
+  destination.copy(pseudoHeader, 16);
   pseudoHeader.writeUInt32BE(udpLength, 32);
   pseudoHeader[39] = UDP_PROTOCOL;
   udp.writeUInt16BE(internetChecksum(Buffer.concat([pseudoHeader, udp])) || 0xffff, 6);
@@ -61,8 +69,8 @@ function ipv6UdpFrame(source: string, destination: string, destinationPort: numb
   header.writeUInt16BE(udpLength, 4);
   header[6] = UDP_PROTOCOL;
   header[7] = 64;
-  src.copy(header, 8);
-  dst.copy(header, 24);
+  source.copy(header, 8);
+  destination.copy(header, 24);
   return Buffer.concat([header, udp]);
 }
 
@@ -74,13 +82,60 @@ function bogusHeader(): Buffer {
   return header;
 }
 
-/** Repeats `prefix` followed by three valid frames until the socket closes. */
-function sendFrameBursts(socket: tls.TLSSocket, prefix: Buffer): void {
-  const frames = [0, 1, 2].map((i) => ipv6UdpFrame('fd00::1', 'fd00::2', udpPort, Buffer.from(`frame-${i}`)));
-  const burst = Buffer.concat([prefix, ...frames]);
-  socket.write(burst);
-  const resend = setInterval(() => socket.write(burst), FRAME_RESEND_MS);
-  socket.once('close', () => clearInterval(resend));
+/** Splits `stream` into complete IPv6 packets, skipping non-IPv6 bytes; returns them and the unparsed tail. */
+function splitIpv6Packets(stream: Buffer): {packets: Buffer[]; rest: Buffer} {
+  const packets: Buffer[] = [];
+  let offset = 0;
+  while (stream.length - offset >= IPV6_HEADER_SIZE) {
+    if (stream[offset] >> 4 !== 6) {
+      offset += 1;
+      continue;
+    }
+    const length = IPV6_HEADER_SIZE + stream.readUInt16BE(offset + 4);
+    if (stream.length - offset < length) {
+      break;
+    }
+    packets.push(stream.subarray(offset, offset + length));
+    offset += length;
+  }
+  return {packets, rest: stream.subarray(offset)};
+}
+
+/** True for a host UDP datagram addressed to the peer's in-tunnel address and port. */
+function isDatagramToPeer(packet: Buffer): boolean {
+  return (
+    packet.length >= IPV6_HEADER_SIZE + UDP_HEADER_SIZE &&
+    packet[6] === UDP_PROTOCOL &&
+    packet.subarray(24, 40).equals(ipv6Bytes(SERVER_ADDRESS)) &&
+    packet.readUInt16BE(IPV6_HEADER_SIZE + 2) === udpPort
+  );
+}
+
+/**
+ * Waits for the host's datagram to the peer, then repeats `prefix` followed by
+ * three valid reply frames until the socket closes. Replying, as a device does,
+ * keeps the frames acceptable to a host firewall that drops unsolicited inbound.
+ */
+function replyWithFrameBursts(socket: tls.TLSSocket, prefix: Buffer): void {
+  let pending: Buffer = Buffer.alloc(0);
+  const onData = (chunk: Buffer) => {
+    const {packets, rest} = splitIpv6Packets(Buffer.concat([pending, chunk]));
+    pending = rest;
+    const datagram = packets.find(isDatagramToPeer);
+    if (!datagram) {
+      return;
+    }
+    socket.off('data', onData);
+    const host = datagram.subarray(8, 24);
+    const hostPort = datagram.readUInt16BE(IPV6_HEADER_SIZE);
+    const peer = datagram.subarray(24, 40);
+    const frames = [0, 1, 2].map((i) => ipv6UdpFrame(peer, host, udpPort, hostPort, Buffer.from(`frame-${i}`)));
+    const burst = Buffer.concat([prefix, ...frames]);
+    socket.write(burst);
+    const resend = setInterval(() => socket.write(burst), FRAME_RESEND_MS);
+    socket.once('close', () => clearInterval(resend));
+  };
+  socket.on('data', onData);
 }
 
 function frame(bodyLength: number, body: Buffer): Buffer {
@@ -92,8 +147,8 @@ function frame(bodyLength: number, body: Buffer): Buffer {
 
 const handshakeBody = Buffer.from(
   JSON.stringify({
-    clientParameters: {address: 'fd00::2', mtu: 1280},
-    serverAddress: 'fd00::1',
+    clientParameters: {address: CLIENT_ADDRESS, mtu: 1280},
+    serverAddress: SERVER_ADDRESS,
     serverRSDPort: 1234,
   }),
 );
@@ -121,9 +176,9 @@ function createPskServer(): tls.Server {
       } else {
         socket.write(frame(handshakeBody.length, handshakeBody));
         if (mode === 'garbage-then-frames') {
-          sendFrameBursts(socket, bogusHeader());
+          replyWithFrameBursts(socket, bogusHeader());
         } else if (mode === 'frames-only') {
-          sendFrameBursts(socket, Buffer.alloc(0));
+          replyWithFrameBursts(socket, Buffer.alloc(0));
         }
       }
     });
