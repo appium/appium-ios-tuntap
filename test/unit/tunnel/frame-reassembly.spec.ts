@@ -21,7 +21,6 @@ const PSK_IDENTITY = 'Client_identity';
 const TUNNEL_MTU = 1280;
 const EXPECTED_PAYLOADS = ['frame-0', 'frame-1', 'frame-2'];
 const DELIVERY_TIMEOUT_MS = 5000;
-const POSIX_ONLY = process.platform === 'win32' && 'POSIX fd handoff only';
 const PEER_SCRIPT = fileURLToPath(new URL('../../fixtures/tunnel-peer.js', import.meta.url));
 
 const skipWithoutPrivileges = (await hasPrivileges()) ? false : 'Requires root privileges';
@@ -54,7 +53,7 @@ function collectPayloads(udp: dgram.Socket, count: number): Promise<string[]> {
   });
 }
 
-describe('TunnelForwarder frame reassembly', {skip: POSIX_ONLY || skipWithoutPrivileges, timeout: 20000}, () => {
+describe('TunnelForwarder frame reassembly', {skip: skipWithoutPrivileges, timeout: 20000}, () => {
   let peer: ChildProcess | undefined;
   let socket: Socket | undefined;
   let udp: dgram.Socket | undefined;
