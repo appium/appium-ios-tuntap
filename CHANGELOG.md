@@ -1,3 +1,9 @@
+## [2.0.10](https://github.com/appium/appium-ios-tuntap/compare/v2.0.9...v2.0.10) (2026-09-15)
+
+### Bug Fixes
+
+* bound reassembled frame length by the granted MTU ([#110](https://github.com/appium/appium-ios-tuntap/issues/110)) ([e51c736](https://github.com/appium/appium-ios-tuntap/commit/e51c73636170770b6f8f3c7b0a1a192cc8079878))
+
 ## [2.0.9](https://github.com/appium/appium-ios-tuntap/compare/v2.0.8...v2.0.9) (2026-09-14)
 
 ### Bug Fixes
