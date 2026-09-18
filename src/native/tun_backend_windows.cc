@@ -59,11 +59,9 @@ class WindowsTunBackend : public TunPlatformBackend {
     // error string below. This mirrors the root (EUID 0) requirement of the
     // POSIX backends.
     //
-    // Prefer creating a fresh adapter so `WintunCloseAdapter` on shutdown
-    // also tears down the kernel object. Falling back to `OpenAdapter`
-    // handles the "leftover from a crashed process" case where the adapter
-    // already exists; that adapter will likewise be removed on close, which
-    // is the desired behavior — we do not want stale adapters to accumulate.
+    // Prefer creating a fresh adapter: `WintunCloseAdapter` removes only
+    // adapters this process created. One obtained through the `OpenAdapter`
+    // fallback persists after close.
     adapter_ = api.CreateAdapter(adapter_name.c_str(), kTunnelType, nullptr);
     if (adapter_ == nullptr) {
       DWORD created_err = ::GetLastError();
