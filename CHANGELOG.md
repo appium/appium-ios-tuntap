@@ -1,3 +1,9 @@
+## [2.0.11](https://github.com/appium/appium-ios-tuntap/compare/v2.0.10...v2.0.11) (2026-09-18)
+
+### Bug Fixes
+
+* drop oversized WinTun packets instead of truncating them ([#112](https://github.com/appium/appium-ios-tuntap/issues/112)) ([ee19d0c](https://github.com/appium/appium-ios-tuntap/commit/ee19d0c369cc539f49225c1017fce0a09fbd887a))
+
 ## [2.0.10](https://github.com/appium/appium-ios-tuntap/compare/v2.0.9...v2.0.10) (2026-09-15)
 
 ### Bug Fixes
