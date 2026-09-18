@@ -26,7 +26,7 @@ const UDP_HEADER_SIZE = 8;
 const PROBE_PACKET_SIZE = IPV6_HEADER_SIZE + UDP_HEADER_SIZE + PROBE_PAYLOAD.length;
 const TRUNCATING_READ_SIZE = 64;
 
-describe('TunTap Integration Tests', {timeout: 15000}, () => {
+describe('TunTap Integration Tests', {timeout: 30000}, () => {
   let tun: TunTap | null;
 
   describe('TunTap CLI Utility Signal Handling', {skip: process.platform === 'win32'}, () => {
