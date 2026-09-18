@@ -134,13 +134,18 @@ class WindowsTunBackend : public TunPlatformBackend {
       }
     }
 
-    const size_t copy_len =
-        static_cast<size_t>(packet_size) > max_payload_size ? max_payload_size : static_cast<size_t>(packet_size);
-    if (copy_len < static_cast<size_t>(packet_size)) {
-      tuntap::FwdDebug("wintun-read-truncated", "size=%lu max=%zu", static_cast<unsigned long>(packet_size),
+    // A packet larger than the caller's buffer cannot be delivered intact.
+    // Returning a truncated prefix would hand back a buffer whose IP header
+    // claims more bytes than are present, so drop the packet instead.
+    if (static_cast<size_t>(packet_size) > max_payload_size) {
+      tuntap::FwdDebug("wintun-read-oversized", "size=%lu max=%zu", static_cast<unsigned long>(packet_size),
                        max_payload_size);
+      api.ReleaseReceivePacket(session_, packet);
+      out.clear();
+      return ReadPacketStatus::NoData;
     }
-    out.assign(packet, packet + copy_len);
+
+    out.assign(packet, packet + packet_size);
     api.ReleaseReceivePacket(session_, packet);
     return ReadPacketStatus::Data;
   }
