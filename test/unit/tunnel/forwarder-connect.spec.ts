@@ -50,4 +50,22 @@ describe('TunnelForwarder.connectPsk', {skip: process.platform === 'win32' && 'P
       peer.kill();
     }
   });
+
+  it('does not report a peer that drops the connection mid-connect as a timeout', async () => {
+    const {peer, port} = await startSilentPeer();
+    const socket = connect(port, '127.0.0.1');
+    await once(socket, 'connect');
+    const forwarder = new TunnelForwarder();
+    try {
+      await assert.rejects(forwarder.connectPsk(socket, {psk: Buffer.alloc(32, 1)}), (err: Error) => {
+        assert.match(err.message, /SSL_connect/);
+        assert.doesNotMatch(err.message, /timed out/);
+        return true;
+      });
+    } finally {
+      forwarder.stop();
+      socket.destroy();
+      peer.kill();
+    }
+  });
 });
