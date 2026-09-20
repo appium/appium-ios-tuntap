@@ -1,3 +1,9 @@
+## [2.0.12](https://github.com/appium/appium-ios-tuntap/compare/v2.0.11...v2.0.12) (2026-09-20)
+
+### Bug Fixes
+
+* report a peer hangup during TLS connect as a closed connection, not a timeout ([#113](https://github.com/appium/appium-ios-tuntap/issues/113)) ([f489d18](https://github.com/appium/appium-ios-tuntap/commit/f489d18c4b65f7104e17f3e6d82b10ff094943c5))
+
 ## [2.0.11](https://github.com/appium/appium-ios-tuntap/compare/v2.0.10...v2.0.11) (2026-09-18)
 
 ### Bug Fixes
