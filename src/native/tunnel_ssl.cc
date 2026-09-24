@@ -119,7 +119,9 @@ std::string DescribeConnectFailure(int ssl_error) {
   return "SSL_connect failed: ssl_error=" + std::to_string(ssl_error) + " system_error=" + std::to_string(system_error);
 }
 
-bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point deadline) {
+enum class PollConnectResult : std::uint8_t { Ready, Timeout, Hangup };
+
+PollConnectResult PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point deadline) {
 #ifdef _WIN32
   WSAPOLLFD pfd{};
   pfd.fd = static_cast<SOCKET>(fd);
@@ -132,7 +134,7 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
   for (;;) {
     const Clock::time_point now = Clock::now();
     if (now >= deadline) {
-      return false;
+      return PollConnectResult::Timeout;
     }
     const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
     const int timeout_ms = remaining_ms > 5000 ? 5000 : static_cast<int>(remaining_ms);
@@ -147,9 +149,9 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
                           | POLLNVAL
 #endif
                           )) != 0) {
-        return false;
+        return PollConnectResult::Hangup;
       }
-      return (pfd.revents & events) != 0;
+      return (pfd.revents & events) != 0 ? PollConnectResult::Ready : PollConnectResult::Timeout;
     }
     if (rc == 0) {
       continue;
@@ -161,8 +163,21 @@ bool PollConnectFd(int fd, short events, std::chrono::steady_clock::time_point d
 #endif
       continue;
     }
-    return false;
+    return PollConnectResult::Timeout;
   }
+}
+
+/** Waits for `events` during SSL_connect; on failure sets `error` naming a timeout or a dropped peer. */
+bool WaitForConnectIo(int fd, short events, const char* direction, std::chrono::steady_clock::time_point deadline,
+                      std::string& error) {
+  const PollConnectResult result = PollConnectFd(fd, events, deadline);
+  if (result == PollConnectResult::Ready) {
+    return true;
+  }
+  error = result == PollConnectResult::Hangup
+              ? std::string("SSL_connect failed: connection closed by peer while waiting to ") + direction
+              : std::string("SSL_connect timed out waiting to ") + direction;
+  return false;
 }
 
 }  // namespace
@@ -173,7 +188,7 @@ int AcquireOwnedFd(int tcp_fd, std::string& error) {
 #ifdef _WIN32
   return DuplicateSocketFd(tcp_fd, error);
 #else
-  const int fd = dup(tcp_fd);
+  const int fd = fcntl(tcp_fd, F_DUPFD_CLOEXEC, 0);
   if (fd < 0) {
     error = std::string("dup of TCP socket failed: ") + strerror(errno);
   }
@@ -231,15 +246,13 @@ bool TunnelSslClient::ConnectTls(int timeout_ms, std::string& error) {
     }
     const int err = SSL_get_error(ssl_, rc);
     if (err == SSL_ERROR_WANT_READ) {
-      if (!PollConnectFd(owned_fd_, kPollIn, connect_deadline)) {
-        error = "SSL_connect timed out waiting to read";
+      if (!WaitForConnectIo(owned_fd_, kPollIn, "read", connect_deadline, error)) {
         return false;
       }
       continue;
     }
     if (err == SSL_ERROR_WANT_WRITE) {
-      if (!PollConnectFd(owned_fd_, kPollOut, connect_deadline)) {
-        error = "SSL_connect timed out waiting to write";
+      if (!WaitForConnectIo(owned_fd_, kPollOut, "write", connect_deadline, error)) {
         return false;
       }
       continue;

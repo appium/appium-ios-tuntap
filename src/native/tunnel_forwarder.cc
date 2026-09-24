@@ -476,6 +476,7 @@ bool TunnelForwarder::StartForwarding(std::shared_ptr<TunPlatformBackend> tun_ba
   tun_writes_.store(0);
   tun_drops_.store(0);
   ssl_reads_.store(0);
+  oversize_frames_.store(0);
   tuntap::FwdDebug("forwarder-start", "mtu=%zu tunFd=%d", mtu_, tun_backend_->GetNativeFd());
   tun_thread_ = std::thread(&TunnelForwarder::TunToDeviceLoop, this);
   sock_thread_ = std::thread(&TunnelForwarder::DeviceToTunLoop, this);
@@ -758,7 +759,12 @@ void TunnelForwarder::DeviceToTunLoop() {
     ingress.insert(ingress.end(), chunk.begin(), chunk.begin() + n);
 
     std::vector<std::vector<uint8_t>> frames;
-    ipv6_frame::DrainFrames(ingress, frames);
+    const size_t oversize = ipv6_frame::DrainFrames(ingress, frames, mtu_);
+    if (oversize > 0) {
+      const uint64_t total = oversize_frames_.fetch_add(oversize) + oversize;
+      tuntap::FwdDebug("forwarder-frame-oversize", "skipped=%zu total=%llu mtu=%zu", oversize,
+                       static_cast<unsigned long long>(total), mtu_);
+    }
 
     for (const auto& frame : frames) {
       if (WriteTunPacket(frame.data(), frame.size()) < 0) {

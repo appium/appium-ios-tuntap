@@ -75,6 +75,7 @@ class TunnelForwarder {
   std::atomic<uint64_t> tun_writes_{0};
   std::atomic<uint64_t> tun_drops_{0};
   std::atomic<uint64_t> ssl_reads_{0};
+  std::atomic<uint64_t> oversize_frames_{0};
   std::chrono::steady_clock::time_point handshake_deadline_;
   std::thread tun_thread_;
   std::thread sock_thread_;

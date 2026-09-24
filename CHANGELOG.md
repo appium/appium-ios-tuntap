@@ -1,3 +1,45 @@
+## [2.0.12](https://github.com/appium/appium-ios-tuntap/compare/v2.0.11...v2.0.12) (2026-09-20)
+
+### Bug Fixes
+
+* report a peer hangup during TLS connect as a closed connection, not a timeout ([#113](https://github.com/appium/appium-ios-tuntap/issues/113)) ([f489d18](https://github.com/appium/appium-ios-tuntap/commit/f489d18c4b65f7104e17f3e6d82b10ff094943c5))
+
+## [2.0.11](https://github.com/appium/appium-ios-tuntap/compare/v2.0.10...v2.0.11) (2026-09-18)
+
+### Bug Fixes
+
+* drop oversized WinTun packets instead of truncating them ([#112](https://github.com/appium/appium-ios-tuntap/issues/112)) ([ee19d0c](https://github.com/appium/appium-ios-tuntap/commit/ee19d0c369cc539f49225c1017fce0a09fbd887a))
+
+## [2.0.10](https://github.com/appium/appium-ios-tuntap/compare/v2.0.9...v2.0.10) (2026-09-15)
+
+### Bug Fixes
+
+* bound reassembled frame length by the granted MTU ([#110](https://github.com/appium/appium-ios-tuntap/issues/110)) ([e51c736](https://github.com/appium/appium-ios-tuntap/commit/e51c73636170770b6f8f3c7b0a1a192cc8079878))
+
+## [2.0.9](https://github.com/appium/appium-ios-tuntap/compare/v2.0.8...v2.0.9) (2026-09-14)
+
+### Bug Fixes
+
+* set close-on-exec on the TUN fd and the owned TLS socket ([#108](https://github.com/appium/appium-ios-tuntap/issues/108)) ([fbc8209](https://github.com/appium/appium-ios-tuntap/commit/fbc8209f3c72f04d1d4e179187ce32f8e15c316f))
+
+## [2.0.8](https://github.com/appium/appium-ios-tuntap/compare/v2.0.7...v2.0.8) (2026-09-13)
+
+### Miscellaneous Chores
+
+* **release:** remove shrinkwrap step from publish workflow ([#109](https://github.com/appium/appium-ios-tuntap/issues/109)) ([83e065b](https://github.com/appium/appium-ios-tuntap/commit/83e065b236391887313ce4716042b93bc1d8e03a))
+
+## [2.0.7](https://github.com/appium/appium-ios-tuntap/compare/v2.0.6...v2.0.7) (2026-09-12)
+
+### Bug Fixes
+
+* reject NaN and non-integer MTU in configure() ([#107](https://github.com/appium/appium-ios-tuntap/issues/107)) ([eef4666](https://github.com/appium/appium-ios-tuntap/commit/eef4666ec0fe8cb39787f6f82de55d1cbd9ebb69))
+
+## [2.0.6](https://github.com/appium/appium-ios-tuntap/compare/v2.0.5...v2.0.6) (2026-09-11)
+
+### Bug Fixes
+
+* map "Operation not permitted" in open() to TunTapPermissionError ([#105](https://github.com/appium/appium-ios-tuntap/issues/105)) ([f6f7974](https://github.com/appium/appium-ios-tuntap/commit/f6f79744a623b2a80b9c588f56983e1a29014805))
+
 ## [2.0.5](https://github.com/appium/appium-ios-tuntap/compare/v2.0.4...v2.0.5) (2026-09-09)
 
 ### Bug Fixes

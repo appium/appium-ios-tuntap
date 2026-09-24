@@ -223,8 +223,8 @@ export class TunTap {
     if (!isIPv6(address)) {
       throw new TypeError('Invalid IPv6 address format');
     }
-    if (mtu < MIN_MTU || mtu > MAX_BUFFER_SIZE) {
-      throw new RangeError(`MTU must be between ${MIN_MTU} and ${MAX_BUFFER_SIZE}`);
+    if (!Number.isInteger(mtu) || mtu < MIN_MTU || mtu > MAX_BUFFER_SIZE) {
+      throw new RangeError(`MTU must be an integer between ${MIN_MTU} and ${MAX_BUFFER_SIZE}`);
     }
 
     try {
