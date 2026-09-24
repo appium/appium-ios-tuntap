@@ -31,6 +31,20 @@ interface NativeTuntapModule {
 
 const nativeTuntap = require('node-gyp-build')(getPkgRoot()) as NativeTuntapModule;
 
+const openDevices = new Set<TunTap>();
+
+// Signal handling is the caller's responsibility — libraries should not
+// install global signal handlers. The kernel cleans up the TUN fd on exit.
+process.once('exit', () => {
+  for (const device of openDevices) {
+    try {
+      device.close();
+    } catch (err: unknown) {
+      log.error('Error closing TUN device during cleanup:', (err as Error).message);
+    }
+  }
+});
+
 /**
  * High-level wrapper around the native TUN device with IPv6-only configuration helpers.
  *
@@ -41,7 +55,6 @@ export class TunTap {
   private readonly platformBackend: TunTapPlatform;
   private _isOpen: boolean;
   private _isClosed: boolean;
-  private removeExitListener: (() => void) | null = null;
 
   /**
    * @param name — optional interface name hint for the native layer
@@ -52,24 +65,6 @@ export class TunTap {
     this.platformBackend = createTunTapPlatform(platform);
     this._isOpen = false;
     this._isClosed = false;
-
-    // Register cleanup on process exit only.
-    // Signal handling is the caller's responsibility — libraries should not
-    // install global signal handlers. The kernel cleans up the TUN fd on exit.
-    const cleanup = () => {
-      if (this._isOpen && !this._isClosed) {
-        try {
-          this.close();
-        } catch (err: unknown) {
-          log.error('Error closing TUN device during cleanup:', (err as Error).message);
-        }
-      }
-    };
-
-    process.once('exit', cleanup);
-    this.removeExitListener = () => {
-      process.removeListener('exit', cleanup);
-    };
   }
 
   /** Whether {@link TunTap.open} has succeeded and {@link TunTap.close} has not run. */
@@ -128,6 +123,7 @@ export class TunTap {
         }
         throw new TunTapDeviceError(message, {cause: err});
       }
+      openDevices.add(this);
     }
     return this._isOpen;
   }
@@ -139,10 +135,7 @@ export class TunTap {
    * @throws {TunTapError} on native close failure
    */
   close(): boolean {
-    if (this.removeExitListener) {
-      this.removeExitListener();
-      this.removeExitListener = null;
-    }
+    openDevices.delete(this);
 
     if (!this._isClosed) {
       try {
