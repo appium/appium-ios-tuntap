@@ -1,3 +1,9 @@
+## [2.0.13](https://github.com/appium/appium-ios-tuntap/compare/v2.0.12...v2.0.13) (2026-09-25)
+
+### Bug Fixes
+
+* use a single process exit listener for all TunTap devices ([#114](https://github.com/appium/appium-ios-tuntap/issues/114)) ([2b61330](https://github.com/appium/appium-ios-tuntap/commit/2b6133054fc9b7a9a87864b31182020c9a4a78cc))
+
 ## [2.0.12](https://github.com/appium/appium-ios-tuntap/compare/v2.0.11...v2.0.12) (2026-09-20)
 
 ### Bug Fixes
