@@ -1,5 +1,7 @@
 # TunTap Bridge
 
+> **This repository has moved.** Development now continues in the [appium-ios monorepo](https://github.com/appium/appium-ios/tree/main/packages/tuntap).
+
 A native TUN/TAP interface module for Node.js that works on macOS, Linux, and Windows, with enhanced error handling and thread safety.
 
 ## Description
